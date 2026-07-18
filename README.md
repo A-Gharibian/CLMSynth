@@ -3,35 +3,35 @@
 Generates synthetic label columns on top of existing or generated cluster
 geometries, with mathematically controlled agreement (recall, class balance,
 spatial placement, or a solved target metric) against the ground-truth
-clusters — per the Cluster-Label Matching (CLM) specification.
+clusters, per the Cluster-Label Matching (CLM) specification.
 
 A generated dataset therefore carries three things, strictly row-aligned:
-the original features, the ground-truth cluster ids, and one or more synthetic
-labels whose relationship to those clusters is authored by configuration
-rather than measured after the fact.
+the original features, the ground-truth cluster IDs, and one or more synthetic
+labels whose relationship to those clusters is characterised by user-defined
+configuration, rather than measured after the execution and synthesis.
 
 ## Project layout
 
 | File                      | Role                                                                                                                                                                                                                                                     |
 |---------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `main.py`                 | Entry point. Reads a config YAML (path optional; defaults to `test_data_config.yaml`), runs the pipeline, packages each run into a self-contained output folder.                                                                                         |
-| `dataset_sources.py`      | Three interchangeable data sources: `clustbench` (real Gagolewski benchmark downloads), `mdcgen` (synthetic, via `mdcgenpy`), `dummy` (offline fallback, no deps).                                                                                       |
-| `fabricated_generator.py` | Engineered-feature generator with perfect-separation labels, used by the `dummy` source.                                                                                                                                                                 |
+| `main.py`                 | Entry point. Reads a config YAML (path optional; defaults to `test_data_config.yaml`), runs the pipeline, and packages each run into a self-contained output folder.                                                                                         |
+| `dataset_sources.py`      | Four interchangeable data sources: `clustbench` (real Gagolewski benchmark downloads), `mdcgen` (synthetic, via `mdcgenpy`), `fabricated` (offline fallback, no deps), and Bring your own clusters (BYOC) as a comma-delimited file.                                                                                       |
+| `fabricated_generator.py` | Engineered-feature generator with perfect-separation labels, used by the `fabricated` source.                                                                                                                                                                 |
 | `byoc_source.py`          | Bring-your-own-clusters source: reads a user CSV (feature columns + exactly one cluster-id column), with optional min-max standardization on import.                                                                                                     |
-| `label_context.py`        | `DatasetContext` — holds features, every ground-truth labeling, and every generated label, strictly row-aligned; rejects any misaligned column.                                                                                                          |
+| `label_context.py`        | `DatasetContext` — holds features, every ground-truth labeling, and every generated label; rejects any misaligned column.                                                                                                          |
 | `label_generator.py`      | Orchestrates label generation: calls the CLM engine per `n_labels`, or falls back to simple noise-flipping if no `clm_label` config is given.                                                                                                            |
 | `clm_label_engine.py`     | The CLM label-assignment math: proportions/skew, matching modes, recall targets, feasibility-checked allocation, spillover, structured competing noise, spatial (centroid) placement, and the global target-metric solver.                               |
-| `clm_errors.py`           | Central registry of coded diagnostics: message templates keyed by a stable `[CLM-###]` code (1xx `ValueError`, 15x `InfeasibleAllocationError`, 3xx warnings) plus helpers. `InfeasibleAllocationError` is defined here and re-exported from the engine. |
-| `metrics.py`              | Standalone evaluation: `clustering_mcc` (Hungarian-matched multiclass MCC / Gorodkin R_K), `clustering_ari` (adjusted Rand index), and `evaluate_cluster_label_matching` (internal-validity CLM diagnostic, requires `pyivm`).                           |
+| `clm_errors.py`           | Diagnostics: message templates keyed by a `[CLM-###]` code (1xx `ValueError`, 15x `InfeasibleAllocationError`, 3xx warnings) plus helpers. `InfeasibleAllocationError` is defined here and re-exported from the engine. |
+| `metrics.py`              | Standalone evaluation: `clustering_mcc` (Hungarian-matched multiclass MCC / Gorodkin R_K), `clustering_ari` (adjusted Rand index), and `evaluate_cluster_label_matching` (internal-validity CLM measure, requires `pyivm`).                           |
 | `visualization.py`        | Scatter-plot rendering for any two features, colored by a chosen label column, annotated with MCC/ARI and the generating config.                                                                                                                         |
 | `config_template.py`      | The YAML template string used to render a config.                                                                                                                                                                                                        |
-| `generate_config.py`      | Renders `config_template.py` into a real `test_data_config.yaml`, given a Python dict of upstream values.                                                                                                                                                |
-| `config_wizard.py`        | Interactive CLI wizard: asks and explains every option in plain language, then writes a runnable config YAML (all sources, including `byoc`) and can launch the run.                                                                                     |
+| `generate_config.py`      | Renders `config_template.py` into a real `config.yaml`, given a Python dictionary of upstream values.                                                                                                                                                |
+| `config_wizard.py`        | Interactive CLI wizard: asks and explains every option in plain language, then writes a config YAML (all sources, including `byoc`) and can launch the run.                                                                                     |
 | `test_data_config.yaml`   | The default config `main.py` reads. Generated by `generate_config.py`, or hand-edited, or passed explicitly as `python main.py my_config.yaml`.                                                                                                          |
 
 ## Install
 
-Requires Python 3.11 or newer. Exact pinned versions are in `requirements.txt`:
+Requires Python 3.11 or newer. Exact dependency versions are in `requirements.txt`:
 
 ```bash
 pip install -r requirements.txt
@@ -43,14 +43,11 @@ pip install faker                                    # only used by the dummy so
 pip install git+https://github.com/CN-TU/mdcgenpy    # only needed for data_source: "mdcgen"
 pip install pyivm                                     # only needed for metrics.evaluate_cluster_label_matching
 ```
-> **Note on `pyivm`:** its exact package name/API on PyPI hasn't been independently verified. If `evaluate_cluster_label_matching` silently returns `{}` even after installing something, confirm the installed package actually exposes `pyivm.silhouette(X, labels, adjusted=True)` etc. before trusting the result.
 
 ## Quick start
 
-**The wizard:** run `python config_wizard.py`. It asks a plain-language
-question for every setting (explaining each as it goes), writes the config YAML,
-and offers to run the pipeline for you. Works for every source, including your own
-CSV (`byoc`). No YAML editing required.
+**The wizard:** run `python config_wizard.py`. It asks a question for every setting, writes the config YAML,
+and can run the pipeline. Works for every source, including user-provided (`byoc`) data. No YAML editing required.
 
 Or configure it yourself:
 
@@ -68,7 +65,7 @@ Or configure it yourself:
 
 ## Output
 
-Each run creates one self-contained, time-stamped folder:
+Each run creates a time-stamped folder:
 
 ```
 OUTPUT/{DDMMYY}_{Source}_{HHMMSS}/
@@ -80,15 +77,14 @@ OUTPUT/{DDMMYY}_{Source}_{HHMMSS}/
 ```
 
 - `{Source}` is the human-facing generator name: `clustbench` → **Gagolewski**,
-  `mdcgen` → **MDCGen**, `dummy` → **Fabricated**.
+  `mdcgen` → **MDCGen**, `dummy` → **Fabricated**, `byoc` → Bring Your Own CLusters.
 - The base folder is `global_settings.output_dir` (default `OUTPUT`); a numeric
   suffix is appended if two runs land in the same second.
-- **Column naming:** ground-truth labelings become `Cluster_0`, `Cluster_1`, …
+- **Column naming:** ground-truth class labelings such as `Cluster_0`, `Cluster_1`, …
   (by position — `source_labeling: labels0` surfaces as `Cluster_0`); generated
   labels become `Label_0`, `Label_1`, … (0-indexed, one per `n_labels`).
 - The MCC/ARI printed in each plot subtitle and in the `.txt` summary are
-  computed from the written CSV columns themselves (single source of truth — no
-  hand-entered numbers).
+  computed from the written CSV columns themselves (single source of truth).
 
 ## Config schema
 
@@ -156,7 +152,7 @@ label_generation:
                                      # label, placed at that cluster's boundary/
                                      # core/random. Deliberately bypasses
                                      # 'proportions' (like uniform/concentrated)
-                                     # and changes the achieved MCC/ARI, that
+                                     # and changes the achieved MCC/ARI; that
                                      # structured-vs-random contrast is its point.
 ```
 
@@ -164,7 +160,7 @@ label_generation:
 
 - **`clustbench`** — real, fixed geometries downloaded from Gagolewski's benchmark suite (v1.1.0). Every available reference labeling (`labels0`, `labels1`, …) is fetched. Use for reproducible research results.
 - **`mdcgen`** — fully synthetic geometries via `mdcgenpy`, seeded for reproducibility. Use when you need geometric properties (dimensionality, overlap, outliers) the fixed clustbench datasets don't cover.
-- **`dummy`** — no network, no extra dependencies. Offline fallback. Note: cluster ids under this source are strings (`"Class_0"`, …), not integers — `single_match`/`assignment_matrix` cluster references must match that type.
+- **`dummy`** — no network, no extra dependencies. Offline fallback. Note: cluster IDs under this source are strings (`"Class_0"`, …), not integers — `single_match`/`assignment_matrix` cluster references must match that type.
 - **`byoc`** — bring-your-own-clusters: your own CSV with feature columns and exactly one cluster-id column (see below).
 
 ### Bring-your-own-clusters (`byoc`)
@@ -212,7 +208,7 @@ If the target is above what the geometry/proportions can reach, the solver
 returns its closest feasible value and logs a non-convergence warning rather
 than crashing or fabricating a hit.
 
-> **What metric is being solved.** The MCC here is the multiclass Gorodkin
+> **What metric is being solved. **** The MCC here is the multiclass Gorodkin
 > `R_K` that `clustering_mcc` computes (permutation-invariant via Hungarian
 > matching), and `clustering_ari` is the adjusted Rand index. The global
 > `R_K`/ARI between an `M`-label and a `K`-cluster partition has no closed
@@ -225,9 +221,8 @@ than crashing or fabricating a hit.
 
 Every error and warning the engine raises carries a stable `[CLM-###]` code
 (`1xx` config `ValueError`, `15x` `InfeasibleAllocationError`, `3xx` warnings),
-defined once in `clm_errors.py`. The full catalogue — every precondition,
-incompatibility, silently-ignored setting, and each code's reason + fix — is in
-`Latex/troubleshooting.tex`.
+defined once in `clm_errors.py`. The full catalogue is available in the CLMSynth
+User Manual under the Troubleshooting section.
 
 ## Known limitations
 
@@ -238,22 +233,22 @@ incompatibility, silently-ignored setting, and each code's reason + fix — is i
   cluster at least as large as the label's budget, or use `custom` mode.
 - **Target metric can be unreachable (structural ceiling).** MCC/ARI between an
   `M`-label partition and a `K`-cluster partition is structurally bounded when
-  `M < K`. For `K` equally sized clusters the ceiling of a balanced `M`-coarsening
+  `M < K`. For `K` equally sized clusters, the ceiling of a balanced `M`-coarsening
   has the closed form **`MCC = sqrt(M(M-1) / (K(K-1)))`** (verified exact — e.g.
   4 labels over 20 clusters cap MCC at `0.178`; see the ceiling appendix in
   `Latex/main.tex`).
   For unequal clusters, or a specific rule set, the reachable ceiling is the MCC
   the rules achieve at full recall (`alpha = 1`). A chosen skew (e.g.
   `dominant_minority`) constrains it further via fixed label sizes. When the
-  target exceeds the ceiling the solver reports best-effort + a `[CLM-306]`
+  target exceeds the ceiling, the solver reports best-effort + a `[CLM-306]`
   non-convergence warning.
 - **`perfect` requires `num_classes == K`** (the true cluster count), else it
   raises.
 - **Proportions are only honored with `spillover_rule: proportional_to_marginal`.**
   `uniform`/`concentrated` deliberately do not preserve the target label counts.
-- **`competing_noise` also breaks proportions, by design.** Each entry converts
+- **`competing_noise` also breaks proportions, by design. **** Each entry converts
   leftover points of one cluster into one specific competing label (placed
-  boundary/core/random), so achieved label counts deviate from `proportions`
+  boundary/core/random), so achieved label counts deviate from `proportions.`
   and the achieved MCC/ARI differs from random-spillover noise — that contrast
   is the feature's purpose. Only valid under `single`/`custom`; a warned no-op
   under `perfect` (no leftover capacity); rejected under `random`.
@@ -261,6 +256,6 @@ incompatibility, silently-ignored setting, and each code's reason + fix — is i
 - **`skew_rule: dirichlet`** is stochastic but reproducible: it draws once from
   the run seed, so a fixed seed yields fixed proportions.
 - **`pyivm` package identity/API unverified** (see Install).
-- **Source label types differ:** `clustbench`/`mdcgen` cluster ids are integers,
+- **Source label types differ:** `clustbench`/`mdcgen` cluster IDs are integers,
   `dummy` are strings — `clm_label` configs are not automatically portable
   across sources without checking id types.
