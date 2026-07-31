@@ -9,7 +9,7 @@ description = "Synthetic label generator with configurable cluster-label matchin
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE.txt"]
 # Authorship (the method and the accompanying article) is shared; the program
 # itself is written, owned, and maintained by Arootin Gharibian.
 authors = [

@@ -1,5 +1,10 @@
 # CLM Benchmark Data Synthesizer
 
+[![Version](https://img.shields.io/badge/version-0.5.0-brightgreen)](CHANGELOG.md)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](LICENSE.txt)
+[![Cite](https://img.shields.io/badge/cite-CITATION.cff-blueviolet)](CITATION.cff)
+
 Generates synthetic label columns on top of existing or generated cluster
 geometries, with mathematically controlled agreement (recall, class balance,
 spatial placement, or a solved target metric) against the ground-truth
