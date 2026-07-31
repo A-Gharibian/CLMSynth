@@ -1,5 +1,5 @@
-# Core dependencies for CLMSynth (main.py and the clm_label engine).
-# Requires Python 3.11 or higher; tested on Python 3.14.
+# Core dependencies for the CLMSynth pipeline (main.py and the clm_label engine).
+# Requires Python 3.11+; pinned to the versions used for verification (Python 3.14).
 numpy==2.5.1
 pandas==3.0.3
 PyYAML==6.0.3
