@@ -5,7 +5,7 @@ global_settings:
 # --- fabricated_data_suite CONFIGURATION ---
 fabricated_data_suite:
   batteries: ["fabricated"]
-  datasets: ["baseline_4class"]    # n=800, 4 string clusters "Class_0".."Class_3"
+  datasets: ["baseline_4class"]    # n=800, 4 clusters with integer ids 0..3
   seed: 42
 
 # --- LABEL GENERATION ---
@@ -26,16 +26,15 @@ label_generation:
     skew_rule: "geometric"         # unused here (proportions present)
 
     # 3. MATCHING MODE
-    matching_mode: "custom"        # near-bijection: label i -> cluster Class_i
+    matching_mode: "custom"        # near-bijection: label i -> cluster i
     single_match:
       cluster: null
       label: null
-    # NOTE: fabricated_data cluster ids are STRINGS, so clusters are quoted names.
     assignment_matrix:
-      - {clusters: ["Class_0"], label: 0, recall_target: 0.8}
-      - {clusters: ["Class_1"], label: 1, recall_target: 0.8}
-      - {clusters: ["Class_2"], label: 2, recall_target: 0.8}
-      - {clusters: ["Class_3"], label: 3, recall_target: 0.8}
+      - {clusters: [0], label: 0, recall_target: 0.8}
+      - {clusters: [1], label: 1, recall_target: 0.8}
+      - {clusters: [2], label: 2, recall_target: 0.8}
+      - {clusters: [3], label: 3, recall_target: 0.8}
 
     # 4. DISTRIBUTION OF NON-TARGET (NOISE) LABELS
     split_rule: "proportional_to_size"

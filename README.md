@@ -186,7 +186,7 @@ label_generation:
 
 - **`clustbench`**, real, fixed geometries downloaded from Gagolewski's benchmark suite (v1.1.0). Every available reference labeling (`labels0`, `labels1`, …) is fetched. Use for reproducible research results.
 - **`mdcgen`**, fully synthetic geometries via `mdcgenpy`, seeded for reproducibility. Use when you need geometric properties (dimensionality, overlap, outliers) the fixed clustbench datasets don't cover.
-- **`fabricated_data`**, no network, no extra dependencies. Offline fallback. Note: cluster IDs under this source are strings (`"Class_0"`, …), not integers, `single_match`/`assignment_matrix` cluster references must match that type.
+- **`fabricated_data`**, no network, no extra dependencies. Offline fallback. Cluster IDs are integers `0..K-1`, as in the other generated sources; the generator's readable class names are mapped to codes on import.
 - **`byoc`**, bring-your-own-clusters: your own CSV with feature columns and exactly one cluster-id column (see below).
 
 ### Bring-your-own-clusters (`byoc`)

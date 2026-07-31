@@ -62,8 +62,8 @@ def plot_feature_scatter(
         # treats a numeric hue as continuous and samples the legend down to a
         # few representative ticks (e.g. 1,3,4,6,7,8 for 8 categories), dropping
         # the rest. Cast to an order-preserving categorical so every id gets its
-        # own discrete color and a full legend entry. (String ids, e.g. the
-        # fabricated_data source's "Class_0", are already categorical, so are untouched.)
+        # own discrete color and a full legend entry. (String ids, which a byoc
+        # CSV's cluster column may hold, are already categorical, so are untouched.)
         plot_df = df
         if hue_col is not None and pd.api.types.is_numeric_dtype(df[hue_col]):
             plot_df = df.copy()

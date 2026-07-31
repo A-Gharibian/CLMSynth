@@ -364,8 +364,9 @@ def fetch_fabricated_data(
         seed: int = 42,
         **kwargs
 ) -> Optional[pd.DataFrame]:
-    """Generates one offline dataset via fabricated_generator; cluster ids
-    are strings ("Class_0", ...), unlike the integer ids of other sources."""
+    """Generates one offline dataset via fabricated_generator; cluster ids are
+    integers 0..K-1, matching clustbench/mdcgen, so one clm_label config ports
+    across sources without retyping cluster references."""
     from . import fabricated_generator  # deferred, mirrors mdcgenpy's lazy import
 
     preset = FABRICATED_CONFIGS.get(dataset_name)
@@ -388,8 +389,22 @@ def fetch_fabricated_data(
                   "must be True). Skipping, label_generation has nothing to key off.")
         return None
 
-    df["GroundTruth_labels0"] = df["Cohort_Class"]
+    # Cluster ids are emitted as integers 0..K-1, like every other source, so a
+    # clm_label config's `clusters:`/`single_match.cluster` values port across
+    # sources unchanged. The generator deliberately produces READABLE labels
+    # ("Class_0", or Faker company names when use_faker is set) -- collapsing
+    # those to codes is this adapter's job, not the generator's, which keeps its
+    # own standalone CSV human-readable. Cohort_Class is left as-is; build_context
+    # drops it, so only the integer labeling reaches the output frame.
+    gt = df["Cohort_Class"]
+    codes = (gt.cat.codes if isinstance(gt.dtype, pd.CategoricalDtype)
+             # qcut's category order is the percentile order, so cat.codes is
+             # meaningful (0 = lowest bin); factorize covers the non-categorical
+             # path (the random, non-perfect-separation branch of the generator).
+             else pd.Series(pd.factorize(gt, sort=True)[0], index=gt.index))
+    df["GroundTruth_labels0"] = codes.astype(int)
 
     log.info(f"Generated fabricated_data '{dataset_name}': {df.shape[0]} rows, "
-             f"{df.shape[1] - 2} feature(s), 1 labeling(s) (values are strings, e.g. 'Class_0').")
+             f"{df.shape[1] - 2} feature(s), 1 labeling(s) "
+             f"(cluster ids 0..{df['GroundTruth_labels0'].nunique() - 1}).")
     return df
