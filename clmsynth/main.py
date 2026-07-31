@@ -184,10 +184,12 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
                         noise=label_cfg.get("noise", 0.1), seed=label_cfg.get("seed", 42),
                     )
                 except (KeyError, InfeasibleAllocationError) as e:
-                    # KeyError: source_labeling missing for this dataset.
-                    # InfeasibleAllocationError: this dataset's cluster sizes can't
-                    # satisfy the configured rules, skip it, but let config typos
-                    # (other ValueErrors) still fail on the first dataset.
+                    # Both are per-DATASET problems, so the batch continues:
+                    #   KeyError: source_labeling missing for this dataset.
+                    #   InfeasibleAllocationError [CLM-15x]: this dataset's cluster
+                    #   sizes can't satisfy the rules, but another dataset's might.
+                    # Coded config errors [CLM-1xx] deliberately escape to the
+                    # handler below, which aborts the whole run.
                     log.error(f"Skipping label generation for {battery}/{dataset}: {e}")
 
             final_df = context.to_dataframe()
@@ -255,6 +257,18 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
             # is the CSV/labels written earlier, so a plot failure alone does not
             # make this dataset a failed run.
             n_ok += 1
+        except ValueError as e:
+            # A coded [CLM-1xx] error means the *configuration* is wrong, which is
+            # equally wrong for every remaining dataset. Abort now rather than
+            # repeat the identical message once per dataset and exit having
+            # written nothing. InfeasibleAllocationError (15x) is per-dataset and
+            # is already handled inline above, so it never reaches here; the
+            # isinstance check keeps that true even if a future caller re-raises.
+            if getattr(e, "code", None) is not None and not isinstance(e, InfeasibleAllocationError):
+                log.critical(f"Configuration error, aborting run: {e}")
+                raise
+            log.error(f"Skipping {battery}/{dataset}: unexpected error: {e}")
+            continue
         except Exception as e:
             log.error(f"Skipping {battery}/{dataset}: unexpected error: {e}")
             continue
@@ -298,7 +312,15 @@ def main() -> None:
     # Copy the exact config used into the run folder for provenance.
     shutil.copy(config_path, run_dir / Path(config_path).name)
 
-    n_ok = run_pipeline(data_source, config, csv_dir, png_dir, txt_dir)
+    try:
+        n_ok = run_pipeline(data_source, config, csv_dir, png_dir, txt_dir)
+    except ValueError:
+        # Coded [CLM-1xx] configuration error re-raised by run_pipeline, which has
+        # already logged it at CRITICAL. Exit quietly with a code distinct from
+        # "ran, but produced nothing" (1), rather than repeating the message or
+        # dumping a traceback the coded message already explains.
+        sys.exit(2)
+
     if n_ok == 0:
         log.error("No datasets were successfully processed.")
         sys.exit(1)

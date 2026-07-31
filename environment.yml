@@ -1,4 +1,4 @@
-# Conda environment for the CLMSynth pipeline.
+# Conda environment for CLMSynth.
 #   conda env create -f environment.yml
 #   conda activate clmsynth
 # Versions mirror requirements.txt (the set used for verification).

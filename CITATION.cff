@@ -1,0 +1,51 @@
+# Citation File Format 1.2.0 -- https://citation-file-format.github.io/
+# Validate with:  pip install cffconvert && cffconvert --validate
+
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "CLMSynth: A Synthetic Data Generator for Cluster and Label Matching Evaluation"
+abstract: >-
+  CLMSynth generates a label L(x) and attaches it to an existing set of cluster
+  IDs c(x) (ground truth or algorithm output), with the relationship between L
+  and c specified by a configuration file rather than measured afterwards.
+  Unlike clustering benchmarks that implicitly equate clusters with classes, it
+  treats cluster formation and class assignment as independent processes with
+  configurable matching outcomes, supporting mathematically controlled agreement
+  through recall targets, class balance, spatial placement, and a solved target
+  metric (multiclass Gorodkin R_K, a closed-form single-pair Matthews phi, or
+  the adjusted Rand index).
+type: software
+
+authors:
+  - family-names: Gharibian
+    given-names: Arootin
+    email: arootin.gharibian@vsb.cz
+    affiliation: "VSB - Technical University of Ostrava"
+    orcid: "https://orcid.org/0000-0001-7819-0842"
+  - family-names: Kudelka
+    given-names: Milos
+    affiliation: "VSB - Technical University of Ostrava"
+    # orcid: "https://orcid.org/0000-0002-7219-1008"
+
+version: 0.5.0
+date-released: 2026-07-31
+license: MIT
+repository-code: "https://github.com/A-Gharibian/CLMSynth"
+
+keywords:
+  - synthetic-data
+  - cluster-label matching
+  - class imbalance
+
+# ----------------------------------------------------
+# preferred-citation:
+#   type: article
+#   title: "<article title>"
+#   authors:
+#     - family-names: Gharibian
+#       given-names: Arootin
+#     - family-names: Kudelka
+#       given-names: Milos
+#   journal: "<journal>"
+#   year: <year>
+#   doi: "<doi>"

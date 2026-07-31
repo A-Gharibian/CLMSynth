@@ -1,7 +1,7 @@
 TESTING/
 OUTPUT/
 .claude
-
+tests/
 Inspection/
 wizard_config.yaml
 

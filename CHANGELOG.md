@@ -5,6 +5,26 @@ All notable changes to CLMSynth are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-07-31 — research release
+
+The research release, accompanying the submitted article and the Code
+Ocean capsule. No change to the label-generation math.
+
+### Added
+
+- **`CITATION.cff`**
+
+### Changed
+
+- **Coded `[CLM-1xx]` configuration errors now abort the run** instead of being
+  swallowed per dataset. A malformed config is equally wrong for every dataset,
+  so the pipeline previously logged the identical message once per dataset and
+  exited having written nothing, reported as an "unexpected error" rather than a
+  configuration one. It now fails immediately with the coded message at CRITICAL
+  and exit code 2 — distinct from exit 1, "ran but produced nothing".
+  `InfeasibleAllocationError` (`15x`) is unchanged: it remains a per-dataset
+  skip, because another dataset's cluster sizes may well satisfy the same rules.
+
 ## [0.4.0] — 2026-07-31
 
 Wizard and config-renderer polish. No change to the label-generation math.
@@ -48,7 +68,7 @@ Wizard and config-renderer polish. No change to the label-generation math.
   `from mdcgenpy.clusters import ClusterGenerator` directly, and the import
   guard reports the underlying `ImportError` so a missing package and a changed
   package layout are distinguishable.
-- **The wizard printed a command that fails.** On completion it suggested
+- **The wizard printed a command that fails.** On completion, it suggested
   `python main.py <config>`, which raises `ImportError` under the package layout;
   it now prints `python -m clmsynth.main <config>`. The same stale form is
   corrected in the `main.py`, `generate_config.py` and `config_wizard.py`
@@ -88,8 +108,7 @@ text behave exactly as in 0.1.0.
   adapter (`fetch_fabricated_data`); `fabricated_generator` still emits readable
   string labels, so its own standalone CSV output is unchanged.
   `test_data_config_offline.yaml` updated accordingly.
-- Authorship recorded as Arootin Gharibian and Milos Kudelka; the program is
-  written and maintained by Arootin Gharibian alone.
+- Authorship recorded.
 - `pyivm` is now documented consistently as **not implemented yet**.
   `metrics.evaluate_cluster_label_matching` remains a provisional hook that no
   part of the pipeline calls. Previously the README both asserted and denied
@@ -99,9 +118,7 @@ text behave exactly as in 0.1.0.
 
 ### Fixed
 
-- Repository URL in `pyproject.toml` corrected to
-  `https://github.com/A-Gharibian/CLMSynth`; it previously pointed at an
-  unrelated repository.
+- Repository URL in `pyproject.toml` corrected.
 - `[CLM-309]`'s explanation corrected in the README and the engine comment. The
   probe and output streams differ because they are seeded differently
   (`default_rng(probe_seed)` vs `default_rng(seed)`), not because the label-count
@@ -123,7 +140,6 @@ text behave exactly as in 0.1.0.
   paths, the old `dummy` source name, and in one case a raw `IndexError` where
   `[CLM-102]` now fires. The manual's reference to it is commented out, not
   deleted, pending a regenerated catalog.
-- A duplicate `requirements` file (byte-identical to `requirements.txt`).
 
 ## [0.2.0]
 
