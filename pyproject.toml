@@ -61,5 +61,10 @@ clmsynth = "clmsynth.main:main"
 clmsynth-config = "clmsynth.generate_config:main"
 clmsynth-wizard = "clmsynth.config_wizard:main"
 
-[tool.setuptools]
-packages = ["clmsynth"]
+# src-layout: the package lives at src/clmsynth/, so the import name and the
+# distribution name both remain "clmsynth" -- only the on-disk location changes.
+# Note this means the package must be installed (`pip install -e .`) before
+# `python -m clmsynth.main` resolves; src/ is deliberately not on sys.path, which
+# is what stops a stale working tree from shadowing the installed package.
+[tool.setuptools.packages.find]
+where = ["src"]
