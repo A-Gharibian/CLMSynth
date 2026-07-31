@@ -1,0 +1,36 @@
+# Template for generate_config.py.
+# This file is the minimal configuration;
+# generate_config.py renders it into a full config.
+#
+# Usage:
+#   python generate_config.py                             # reads this file
+#   python generate_config.py my_payload.yaml             # or an explicit payload
+#   python generate_config.py my_payload.yaml out.yaml    # and an explicit output
+
+data_source: "clustbench"        # clustbench | mdcgen | fabricated_data | byoc
+batteries: ["g2mg"]
+datasets: ["g2mg_4_20"]
+source_seed: 42
+
+n_labels: 1
+source_labeling: "labels0"
+label_seed: 42
+
+# g2mg_4_20 has 2 ground-truth clusters (ids 1 & 2, 1024 points each).
+num_classes: 2
+proportions: [0.5, 0.5]
+balance: "unbalanced"            # explicit proportions take precedence; skew_rule is the fallback
+skew_rule: "geometric"           # unused here (proportions present); kept for the template
+matching_mode: "custom"
+single_match: {cluster: null, label: null}
+# One rule per cluster: route 90% of each label's points into its paired
+# cluster. Feasible (needs 922 <= 1024 per cluster) and produces a strong,
+# measurable cluster-label match rather than an infeasible request.
+assignment_matrix:
+  - {clusters: [1], label: 0, recall_target: 0.9}
+  - {clusters: [2], label: 1, recall_target: 0.9}
+split_rule: "equal"
+spillover_rule: "proportional_to_marginal"   # honors 'proportions'; uniform/concentrated do not
+centroid_enabled: true
+centroid_profile: "linear"
+centroid_favors: "boundary"

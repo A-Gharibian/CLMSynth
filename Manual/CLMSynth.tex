@@ -1,0 +1,288 @@
+\documentclass[a4paper,12pt]{article}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{appendix}
+\usepackage{vhistory}
+\usepackage[utf8]{inputenc}
+
+\usepackage{listings}
+\usepackage{xcolor}
+
+% YAML language definition for listings
+\lstdefinelanguage{yaml}{
+  morekeywords={true,false,null,y,n},
+  sensitive=false,
+  morecomment=[l]{\#},
+  morestring=[b]"
+}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{amssymb}   % \checkmark in the test-data table
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=none,                    
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+\lstset{style=mystyle}
+
+\title{CLMSynth v.0.1}
+\author{Arootin Gharibian, Milos Kudelka}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+CLMSynth generates a label $L(x)$ and attaches it to an existing set of cluster IDs $c(x)$ (ground truth or algorithm output), with the relationship between $L$ and $c$ specified by a configuration file rather than measured afterward. A synthetic dataset generated with this program can be used to benchmark and evaluate cluster and label matching under user-definable parameters: well-defined clusters with random class assignments, and balanced or imbalanced clusters with varying degrees of cluster-label matching. Unlike existing clustering benchmarks that implicitly equate clusters with classes, the generator treats cluster formation and class assignment as independent processes with configurable matching outcomes.  Each dataset instance includes ground-truth cluster membership, class labels, and metrics to enable reproducible, comparative benchmarking of cluster-label matching.
+
+\end{abstract}
+
+\subsection*{License Summary}
+CLMSynth Documentation is licensed under the \href{https://creativecommons.org/licenses/by-sa/4.0/}{Creative Commons Attribution-ShareAlike 4.0 International} license. The source code for the program is published under the MIT License at \href{https://github.com/A-Gharibian/CLMSynth}{GitHub}.
+
+\newpage
+\section{Introduction}
+Existing synthetic datasets for clustering performance measurement assume equivalence between latent cluster structure and assigned class labels. The dataset presented here addresses the natural occurrence of classes within latent clusters by treating cluster generation and class assignment as independent, configurable processes with explicitly defined cluster-class matching. This design supports multiple benchmarks, including non-clusterable data with strong class separability, well-defined clusters with randomly assigned classes, and both balanced and imbalanced clusters with varying degrees of class–cluster matching. For each regime, the dataset provides ground-truth cluster membership and class labels, along with reproducible parameter settings and summary diagnostics characterizing clusterability and alignment. By enabling systematic comparison across controlled alignment scenarios, this resource complements existing clustering benchmarks and supports evaluation of methods that assess or exploit relationships between clustering structure and class labels.
+
+\subsection{Possible Outcomes}
+Possible Outcomes are assessed by the degree to which a feature subset confirms or supports known classes or labels by:
+\begin{enumerate}
+    \item Clusterability (C): The extent to which the feature subset induces distinct, stable groups in the data.
+    \item Cluster-label matching (P): The effectiveness of the feature subset in predicting ground-truth clinical class labels.
+\end{enumerate}
+\vspace{1em}
+\noindent
+These together characterize outcomes associated with a selected feature subset, evaluated in terms of both its induced cluster structure and its alignment with class labels. Each scenario describes how a given feature subset performs across clustering, classification, and interpretability.
+\noindent
+The CLMSynth dataset is specifically designed to test Cases 1.1.1 through 1.1.3 below. Case 1.1.4 is intentionally excluded; because it lacks latent cluster structure entirely, it represents a pure classification problem rather than a cluster-label matching problem.
+\newpage
+\subsubsection{Structurally Informative Feature Subset}
+In this scenario, the selected feature subset is informative for both clustering
+and classification tasks. The same latent structure that provides high predictive 
+power for accurate class prediction also gives rise to well-separated, meaningful 
+clusters. The resulting clusters can be summarized as interpretable profiles, 
+defined by coherent subsets of features.
+
+\subsubsection{Predictive but Non-Clusterable Feature Subset}
+The selected feature subset yields strong predictive power for classification but
+does not induce a meaningful cluster structure. Although the features contain
+sufficient information to accurately predict clinical labels, the data points
+do not form distinct or stable clusters. As a result, the feature subset is
+predictive but not cluster-discriminative, limiting its usefulness for discovery
+despite its value for supervised prediction.
+
+\subsubsection{Clusterable but Class-Discordant Feature Subset}
+In this case, the selected feature subset reveals a clear latent cluster structure;
+however, the resulting clusters do not align with the class labels (lacking 
+predictive power for the target). The feature subset captures intrinsic patterns 
+in the data that are orthogonal to the target classes. This scenario indicates 
+the presence of interpretable subgroups that are not directly predictive of the 
+predefined labels, highlighting a disconnect between structural organization 
+and classification relevance.
+
+\subsubsection{Uninformative Feature Subset}
+In the worst case, the selected feature subset is uninformative for both clustering
+and classification. The features fail to reveal a meaningful latent structure
+and lack the predictive power needed for accurate classification. Consequently,
+neither subgroup discovery nor predictive modeling benefits from this subset.
+
+
+
+\newpage
+\section{Configuration file definition}
+\noindent The \texttt{clm\_label\_engine} serves as its core module for label synthesis. The configuration parameters for the core module are defined as follows:
+\begin{lstlisting}[language=yaml]
+clm_label:
+  num_classes: M                   # 1 <= M <= 64; the data's own K is capped the
+                                   # same way (CLM-126 / CLM-127)
+  balance: balanced | unbalanced   # balanced: uniform 1/M, proportions ignored
+  proportions: [...]               # unbalanced: used directly when given
+  skew_rule: geometric | dominant_minority | dirichlet
+                                   # unbalanced fallback when no proportions
+  skew_params:
+    ratio: 0.5                     # geometric: p_i ~ ratio^i
+    dominant_index: 0              # dominant_minority
+    dominant_share: 0.5            # dominant_minority
+    alpha: 1.0                     # dirichlet: Dirichlet(alpha,...,alpha)
+  matching_mode: perfect | single | random | custom
+  single_match: {cluster: k*, label: l*}    # required if matching_mode: single
+  assignment_matrix:                         # required if matching_mode: custom
+    - {label: l, clusters: [k1, ...], recall_target: r}
+  split_rule: proportional_to_size | equal   # how a rule's mass splits over its clusters
+  spillover_rule: proportional_to_marginal | uniform | concentrated
+  concentrated_labels: [l, ...]    # spillover_rule: concentrated only
+                                   # (default: the single largest label)
+  target_metric:                   # optional (single/custom only)
+    type: mcc | ari
+    value: 0.7
+    scope: global | pair           # global (default): one recall solved
+                                   #   numerically for the whole partition.
+                                   # pair: exact closed form for the
+                                   #   single_match pair; requires type: mcc
+                                   #   and matching_mode: single. tolerance and
+                                   #   max_iter are not read in this mode.
+    tolerance: 0.01                # global only
+    max_iter: 40                   # global only, bisection budget
+  competing_noise:                 # optional (single/custom): structured noise.
+                                   # Converts a share of ONE cluster's UNCLAIMED
+                                   # points to one competing label. Bypasses the
+                                   # target proportions by design (CLM-304).
+    - cluster: k
+      label: l_comp
+      share: 1.0                   # fraction of that cluster's leftover points
+      favors: boundary | core | random
+  centroid_dependence:
+    enabled: true | false
+    profile: linear | exponential | step
+    favors: core | boundary
+    steepness: 3.0                 # exponential only
+\end{lstlisting}
+
+\noindent Spatial placement (\texttt{centroid\_dependence}, or a
+\texttt{competing\_noise} entry favouring \texttt{core}/\texttt{boundary}) requires per-point
+feature vectors; a labels-only call without them raises \texttt{[CLM-125]}. The complete
+catalogue of coded errors and warnings is the companion troubleshooting reference.
+\newpage
+\subsection*{Usage}
+The input variables required for the generator (\texttt{X} and \texttt{c}; cluster centroids are derived internally from \texttt{X}) are expected to be supplied by external clustering benchmarks. CLMSynth is designed to work with established datasets, such as those from the Gagolewski clustering benchmark suite or datasets generated via MDCGen. The pipeline exposes four interchangeable data sources: \texttt{clustbench} (real Gagolewski geometries, fetched online), \texttt{mdcgen} (synthetic geometries via \texttt{mdcgenpy}), \texttt{fabricated\_data} (an offline fabricated-feature fallback needing no network), and \texttt{byoc} (\emph{bring-your-own-clusters}: a user CSV with feature columns and exactly one cluster-id column, with optional min--max standardization on import). The same \texttt{clm\_label} configuration applies unchanged across all four.
+
+\noindent The package installs three console entry points: \texttt{clmsynth} runs the batch pipeline over a configuration YAML, \texttt{clmsynth-config} renders a configuration from an upstream payload, and \texttt{clmsynth-wizard} generates one interactively. The engine can equally be called directly as a library:
+\begin{lstlisting}[language=Python]
+from clmsynth.clm_label_engine import generate_clm_labels
+
+config = {
+    "num_classes": 3,
+    "balance": "unbalanced",
+    "proportions": [0.5, 0.3, 0.2],
+    "matching_mode": "custom",
+    "assignment_matrix": [
+        {"clusters": [1, 2], "label": 0, "recall_target": 0.9},
+    ],
+    "split_rule": "proportional_to_size",
+    "spillover_rule": "proportional_to_marginal",
+    "centroid_dependence": {
+        "enabled": True,
+        "profile": "exponential",
+        "favors": "core",
+        "steepness": 4.0,
+    },
+}
+
+L = generate_clm_labels(
+    cluster_labels=c,   # shape (N,)
+    coords=X,           # shape (N, D)
+    cfg=config,
+    seed=42,
+)  # -> pandas Series, values in {0, ..., M-1}
+\end{lstlisting}
+\begin{enumerate}
+    \item \textbf{Validate} — structural checks fail fast: \texttt{num\_classes} and the data's own cluster count $K$ must each lie in $[1,64]$ (\texttt{[CLM-126]}/\texttt{[CLM-127]}, a coarse backstop rather than a reliability boundary); \texttt{perfect} requires $M = K$; \texttt{single} requires \texttt{single\_match}, $M \ge 2$, $K \ge 2$; \texttt{target\_metric} is only compatible with \texttt{single}/\texttt{custom}, and \texttt{scope: pair} additionally requires \texttt{type: mcc} and \texttt{matching\_mode: single}; any requested spatial placement requires per-point coordinates (\texttt{[CLM-125]}); unknown modes or rules raise immediately.
+    \item \textbf{Resolve proportions} $p$ — uniform if \texttt{balanced}; otherwise explicit \texttt{proportions} take precedence, with \texttt{skew\_rule} (\texttt{geometric} / \texttt{dominant\_minority} / \texttt{dirichlet}) as the fallback. Converted to exact integer counts via largest-remainder rounding (no drift from independent rounding).
+    \item \textbf{Matching mode} $\to$ alignment rules:
+    \begin{itemize}
+        \item \texttt{random} — a uniformly random permutation of the fixed multiset holding each label $\ell_i$ exactly $m_i$ times, rather than an independent draw from $p$ per point: the realized counts equal $m_i$ exactly, and the permutation consults neither $c(x)$ nor position, so independence from $c(x)$ holds by construction rather than in expectation.
+        \item \texttt{perfect} — bijection $\pi: \text{cluster} \to \text{label}$ in sorted order; label counts are forced to the paired cluster sizes; $L(x) = \pi(c(x))$.
+        \item \texttt{single} — one target pair $(k^*, \ell^*)$ aligned at full recall; all other points are governed by spillover.
+        \item \texttt{custom} — an \texttt{assignment\_matrix} of rules; each rule routes a \texttt{recall\_target} fraction of one label's point budget into a chosen set of clusters (enabling surjective, partial, and overlapping alignments).
+    \end{itemize}
+    \item \textbf{Allocation \& feasibility} — each rule's point mass is split across its clusters (\texttt{split\_rule}); demands exceeding cluster capacity raise an infeasibility error stating the maximum feasible recall. Remaining cluster capacity is filled by \texttt{spillover\_rule} draws (\texttt{proportional\_to\_marginal} preserves the target proportions exactly).
+    \item \textbf{Spatial placement} (optional) — within each cluster, \emph{which} points receive each label is chosen by weighted sampling without replacement, with weights derived from normalized distance to the cluster centroid (\texttt{profile}: \texttt{linear}/\texttt{exponential}/\texttt{step}; \texttt{favors}: \texttt{core}/\texttt{boundary}; \texttt{steepness} for exponential). Placement changes geometry only: the contingency table — and therefore MCC/ARI — is fixed by stages 2--4, so spatial structure can be varied at a constant metric value.
+    \item \textbf{Target metric} (optional) — in both scopes, the solver varies only the recall level; every setting above (\texttt{split\_rule}, \texttt{spillover\_rule}, \texttt{competing\_noise}, \texttt{proportions}) is held fixed across probes, so noise structure changes the solved recall rather than being applied after it. With \texttt{scope: global} (the default) one recall level is solved for the whole partition by a coarse grid scan followed by bisection, using common random numbers across probes; with \texttt{scope: pair} the single-pair MCC of the \texttt{single\_match} pair is inverted in closed form and no search runs. A target above the geometry's reachable ceiling terminates at the closest achievable value and logs \texttt{[CLM-306]}. Independently of that, the engine measures the labeling it actually writes and logs \texttt{[CLM-309]} if the delivered value falls outside tolerance: the search scores candidates on a fixed probe stream while the output is generated on the run's own stream, so a solve that converged internally can still land outside tolerance --- most visibly at small $N$, where spillover placement is a large share of the outcome. \textbf{The achieved value reported with each run is authoritative, not the requested one.}
+\end{enumerate}
+
+\vspace{0.5em}
+\noindent\textbf{Note on the achieved metric.} Three coefficients are exposed, and they answer different questions. \texttt{clustering\_mcc} is the multiclass Gorodkin $R_K$, made permutation-invariant by Hungarian matching of the cluster--label contingency table before delegation to scikit-learn; it is the value reported and solved for under \texttt{scope: global}. \texttt{clustering\_mcc\_pair} is the $2\times2$ Matthews $\phi$ of one cluster against one label, which needs no matching and is the quantity \texttt{scope: pair} targets. \texttt{clustering\_ari} is the adjusted Rand index.
+
+\vspace{0.3em}
+\noindent The global $R_K$/ARI between an $M$-label and a $K$-cluster partition has no closed form, which is why \texttt{scope: global} is solved numerically. The compact closed-form $TP^\star$ expression of the companion article inverts the \emph{single} $2\times2$ MCC exactly; it is not the multiclass quantity, but it is not merely illustrative either --- it is precisely what \texttt{scope: pair} evaluates, which is why that mode requires \texttt{type: mcc} and \texttt{matching\_mode: single} and reaches its target without a search.
+
+\vspace{0.3em}
+\noindent The adjusted Rand index measures agreement over \emph{pairs} of points rather than through any correspondence between label and cluster identifiers, and is chance-corrected so that independent partitions score $0$. Because it is a function of the contingency table's cell and marginal pair counts alone, it needs no alignment step: permuting the values of the generated label leaves it unchanged, it is symmetric in its two arguments, and it is defined for any $M$ and $K$. This is what distinguishes it from $R_K$, which is meaningful only after the Hungarian alignment \texttt{clustering\_mcc} applies internally. It is therefore reported as an independent second axis alongside the targeted coefficient --- except where ARI is itself the target, in which case it is the quantity being optimized rather than an independent check.
+
+\subsection*{Reference implementation}
+The complete reference implementation, together with the pipeline scripts, configuration templates, and worked examples, is maintained in the project repository: \url{https://github.com/A-Gharibian/CLMSynth}. The source code is the authoritative description of the engine's behavior; this manual documents the configuration schema.
+
+\newpage
+
+\begin{versionhistory}
+  \vhEntry{0.1}{\today}{AG}{created}
+\end{versionhistory}
+
+\section*{Full License Text}
+
+\begin{verbatim}
+The MIT License
+
+Copyright (c) 2026 Arootin Gharibian <arootin.gharibian@vsb.cz>
+\end{verbatim}
+Permission is hereby granted, free of charge, to any person obtaining a copy of this Software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+
+\section*{Licenses for Python Packages and Libraries}
+\subsection*{Python Standard Library Packages}
+Python is distributed under the Python Software Foundation License V.2. Packages such as \texttt{sys}, \texttt{logging}, \texttt{datetime}, \texttt{pathlib}, \texttt{shutil}, \texttt{dataclasses}, and \texttt{typing} are part of the Python Standard Library and are distributed under the same license as Python itself.
+
+\subsection*{Third-Party Libraries}
+This project relies on several open-source third-party libraries, including \texttt{NumPy}, \texttt{Pandas}, \texttt{SciPy}, \texttt{scikit-learn}, \texttt{Matplotlib}, \texttt{Seaborn}, and \texttt{PyYAML}. Optional, feature-specific extras are \texttt{faker} (\texttt{fabricated\_data} source), \texttt{mdcgenpy} (\texttt{mdcgen} source), and \texttt{pyivm} (adjusted internal-validity measures). These packages are distributed under their respective licenses (primarily BSD 3-Clause, MIT, and Apache 2.0). Please refer to the official documentation of each package or the project repository for full third-party licensing details.
+
+\section{References}
+\begin{itemize}
+    \item Gagolewski, M. (2020). \textit{A framework for benchmarking clustering algorithms}. \url{https://clustering-benchmarks.gagolewski.com/weave/suite-v1.html}
+    \item Iglesias, F., Zseby, T., Ferreira, D. \textit{et al.} (2019). \textit{MDCGen: A Multidimensional Dataset Generator for Clustering}. Journal of Classification. \url{https://link.springer.com/article/10.1007/s00357-019-9312-3}
+    \item Jeon, H., Aupetit, M., Shin, D., Cho, A., Park, S., and Seo, J. (2025). \textit{Measuring the Validity of Clustering Validation Datasets}. IEEE Transactions on Pattern Analysis and Machine Intelligence, 47(6), 5045-5058. \url{https://doi.org/10.1109/TPAMI.2025.3548011}
+\end{itemize}
+
+\newpage
+
+\section{Test Data}
+
+\begin{table}[!h]
+\centering\tiny
+\begin{tabular}{@{}l p{3.5cm} p{4.0cm} p{4.6cm}@{}}
+\toprule
+\textbf{Cfg} & \textbf{Configuration} & \textbf{Expected} & \textbf{Actual} \\
+\midrule
+A1 & perfect, $M{=}K{=}2$ & bijection; MCC $\approx 1$ & MCC $=1.000$, ARI $=1.000$; counts \checkmark \\
+A2 & random, $M{=}4$ & no cluster info; MCC $\approx 0$ & MCC $=0.018$, ARI $=-0.000$; counts \checkmark \\
+A3 & single (cluster 1, $M{=}4$) & feasible here ($512<1024$); partial alignment & MCC $=0.279$, ARI $=0.166$; counts \checkmark \\
+A4 & custom, explicit recalls (0.8/0.5/0.3) & feasible; counts $[1024,614,410]$ & MCC $=0.527$, ARI $=0.393$; counts \checkmark \\
+B1 & custom + solve MCC$=0.6$ & reachable here; solver hits it within tol. & solved MCC $=0.608$ (target 0.6; \textbf{met}); counts \checkmark \\
+B2 & custom + solve ARI$=0.4$ & reachable here; solver hits it within tol. & solved ARI $=0.407$ (target 0.4; \textbf{met}); counts \checkmark \\
+B3 & custom + solve MCC$=0.99$, max\_iter 15 & unreachable; non-convergence + delivered-value check & solved MCC $=0.718$ (target 0.99; \textbf{not met}) \textsc{[clm-306]/[clm-309]}; counts \checkmark \\
+C1 & single largest + centroid linear/core & MCC $\approx$ A3 (placement in 4-D) & MCC $=0.279$, ARI $=0.166$; counts \checkmark \\
+C2 & single largest + centroid exp/boundary & same contingency as C1 & MCC $=0.279$, ARI $=0.166$; counts \checkmark \\
+C3 & single largest + centroid step/core & same contingency as C1 & MCC $=0.279$, ARI $=0.166$; counts \checkmark \\
+D1 & single (cluster 1, $M{=}2$) & fills cluster exactly; MCC $\approx 1$ & MCC $=1.000$, ARI $=1.000$; counts \checkmark \\
+\bottomrule
+\end{tabular}
+\caption{Cluster--label matching outcomes on \texttt{g2mg\_4\_20} ($N=2048$, 4-D, $K=2$ clusters of 1024 points), seed 42. Both clusters are large, so the single-match configurations A3 and D1 are feasible, and D1 fills its cluster exactly. A4 and B1--B3 share one rule set (labels sized $[1024,614,410]$, one rule per label); B1 and B2 request values this geometry can reach and the solver meets both within the $0.01$ tolerance, whereas B3 requests $\mathrm{MCC}=0.99$, which a 3-label partition of a 2-cluster geometry cannot attain: the solver returns its closest feasible value, flags non-convergence \texttt{[CLM-306]}, and the delivered-value check \texttt{[CLM-309]} confirms the written labeling is outside tolerance. C1--C3 differ only in spatial placement and are identical in every reported quantity, as the contingency table is fixed before placement runs. ``counts'' marks whether the achieved label counts equal the target counts.}
+\label{tab:g2mg-outcomes}
+\end{table}
+
+\end{document}

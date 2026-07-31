@@ -1,0 +1,750 @@
+# clm_label_engine.py
+"""
+Assigns synthetic labels L(x) to each point x given its existing
+ground-truth cluster c(x). Clusters and cluster membership are fixed
+inputs from upstream, this module only decides which label each point
+gets, per the clm_label config schema.
+"""
+
+import logging
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Sequence
+
+import numpy as np
+import pandas as pd
+
+from .metrics import clustering_mcc, clustering_ari, clustering_mcc_pair
+# Diagnostics registry (single source of truth for coded messages).
+# InfeasibleAllocationError is defined there and re-exported here so existing
+# imports (main.py: `from clm_label_engine import InfeasibleAllocationError`)
+# keep working unchanged.
+from .clm_errors import InfeasibleAllocationError, clm_error, clm_infeasible, clm_warn
+
+log = logging.getLogger(__name__)
+
+# Coarse safety backstop, not a validated reliability boundary: cluster-label
+# matching results are known (internal testing) to already be unreliable well
+# below this, but there is no statistical-significance module (yet) to compute
+# a real per-dataset limit. This just rejects runaway/typo configs (num_classes
+# or the dataset's own cluster count K) far past where any result is meaningful.
+MAX_CARDINALITY = 64
+
+
+# ---------------------------------------------------------------------------
+# Label totals: proportions / balance / skew_rule -> exact m_c per label
+# ---------------------------------------------------------------------------
+
+def _largest_remainder_counts(proportions: Sequence[float], total: int) -> List[int]:
+    """Converts float proportions into integer counts summing exactly to `total`."""
+    raw = [p * total for p in proportions]
+    floors = [int(np.floor(x)) for x in raw]
+    remainder = total - sum(floors)
+    order = sorted(range(len(raw)), key=lambda j: raw[j] - floors[j], reverse=True)
+    for i in order[:remainder]:
+        floors[i] += 1
+    return floors
+
+
+def _skewed_proportions(M: int, skew_rule: str, params: Dict,
+                         rng: Optional[np.random.Generator] = None) -> List[float]:
+    if skew_rule == "geometric":
+        r = params.get("ratio", 0.5)
+        raw = [r ** i for i in range(M)]
+    elif skew_rule == "dominant_minority":
+        dom_idx = params.get("dominant_index", 0)
+        dom_share = params.get("dominant_share", 0.5)
+        raw = [(1 - dom_share) / (M - 1)] * M
+        raw[dom_idx] = dom_share
+    elif skew_rule == "dirichlet":
+        # Stochastic-but-reproducible skew: one Dirichlet(alpha,...,alpha) draw.
+        # Small alpha -> near-degenerate imbalance, large alpha -> near-uniform.
+        # Allows batch benchmarks to sample many imbalance scenarios by seed
+        # instead of hand-picking proportion vectors.
+        alpha = params.get("alpha", 1.0)
+        rng = rng if rng is not None else np.random.default_rng(0)
+        raw = rng.dirichlet([alpha] * M).tolist()
+    else:
+        raise clm_error(107, skew_rule=skew_rule)
+    s = sum(raw)
+    return [x / s for x in raw]
+
+
+def resolve_label_counts(cfg: Dict, N: int,
+                          rng: Optional[np.random.Generator] = None) -> np.ndarray:
+    """balance='balanced' -> uniform 1/M, always (explicit proportions ignored;
+    a warning is logged). Anything else -> explicit `proportions` take
+    precedence, and `skew_rule` is the fallback when no proportions are given."""
+    M = cfg["num_classes"]
+    balance = cfg.get("balance", "balanced")
+
+    if balance == "balanced":
+        if cfg.get("proportions"):
+            clm_warn(log, 301)
+        proportions = [1.0 / M] * M
+    elif cfg.get("proportions"):
+        proportions = cfg["proportions"]
+        if abs(sum(proportions) - 1.0) > 1e-6:
+            raise clm_error(106, total=sum(proportions))
+    else:
+        proportions = _skewed_proportions(M, cfg["skew_rule"], cfg.get("skew_params", {}), rng)
+
+    return np.array(_largest_remainder_counts(proportions, N))
+
+
+# ---------------------------------------------------------------------------
+# matching_mode -> a uniform rule list: (label, clusters, recall_target)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Rule:
+    """One matching rule: route `recall_target` of label's budget into `clusters`."""
+    label: int
+    clusters: List[int]
+    recall_target: float
+
+
+def _check_pair(label: int, clusters: List, M: int, cluster_ids: List, where: str) -> None:
+    """Fail fast on out-of-range label / unknown cluster ids in a matching
+    rule, before allocate() would otherwise surface them as an uncoded numpy
+    IndexError (label >= M), a KeyError (unknown cluster), or silently wrong
+    output (negative label wrapping via numpy indexing).
+    Mirrors the up-front validation already done for competing_noise."""
+    try:                                   # accept Python/NumPy ints; reject
+        is_int = (label == int(label))     # floats like 2.5, strings, None
+    except (TypeError, ValueError):
+        is_int = False
+    if not is_int or not (0 <= label < M):
+        raise clm_error(104, where=where, label=label, hi=M - 1)
+    unknown = [k for k in clusters if k not in cluster_ids]
+    if unknown:
+        raise clm_error(105, where=where, unknown=unknown,
+                        available=sorted(cluster_ids, key=str))
+
+
+def build_rules(cfg: Dict, cluster_ids: List[int],
+                 recall_target_override: Optional[float] = None) -> List[Rule]:
+    """Normalizes the matching mode into a validated list of `Rule` records.
+
+    `recall_target_override` replaces every rule's recall with one global
+    value; the target-metric solver passes its solved alpha through it.
+    """
+    mode = cfg["matching_mode"]
+    M, K = cfg["num_classes"], len(cluster_ids)
+
+    if mode == "perfect":
+        if recall_target_override is not None:
+            raise clm_error(111, mode="perfect")
+        if M != K:
+            raise clm_error(102, M=M, K=K)
+        clm_warn(log, 302)
+        return [Rule(label=i, clusters=[cluster_ids[i]], recall_target=1.0) for i in range(K)]
+
+    if mode == "single":
+        if M < 2 or K < 2:
+            raise clm_error(103, M=M, K=K)
+        sm = cfg["single_match"]
+        _check_pair(sm["label"], [sm["cluster"]], M, cluster_ids, "single_match")
+        rt = recall_target_override if recall_target_override is not None else 1.0
+        return [Rule(label=sm["label"], clusters=[sm["cluster"]], recall_target=rt)]
+
+    if mode == "custom":
+        rules = []
+        for i, row in enumerate(cfg["assignment_matrix"]):
+            _check_pair(row["label"], row["clusters"], M, cluster_ids,
+                        f"assignment_matrix row {i}")
+            rt = recall_target_override if recall_target_override is not None else row["recall_target"]
+            rules.append(Rule(label=row["label"], clusters=row["clusters"], recall_target=rt))
+        return rules
+
+    raise clm_error(101, mode=mode)
+
+
+def _ensure_coords(cfg: Dict, coords, N: int) -> np.ndarray:
+    """[CLM-125] guard: spatial placement needs real per-point geometry.
+
+    Placement is requested by `centroid_dependence.enabled` or by any
+    competing_noise entry whose favors is 'core'/'boundary' (the default is
+    'boundary'). With placement requested, a missing/empty `coords` raises;
+    without it, a labels-only call may omit coords and a zero column is
+    substituted so the allocation pipeline can index rows.
+    """
+    cd = cfg.get("centroid_dependence") or {}
+    spatial_noise = [e for e in (cfg.get("competing_noise") or [])
+                     if e.get("favors", "boundary") != "random"]
+    placement = None
+    if cd.get("enabled"):
+        placement = "centroid_dependence.enabled"
+    elif spatial_noise:
+        placement = "competing_noise with favors 'core'/'boundary'"
+
+    if coords is None or np.size(coords) == 0:
+        if placement:
+            raise clm_error(125, placement=placement,
+                            got="missing" if coords is None else "empty")
+        return np.zeros((N, 1))
+    return np.asarray(coords)
+
+
+def _validate_target_metric_cfg(cfg: Dict, cluster_ids: List) -> None:
+    # An absent OR empty/null target_metric (e.g. `target_metric:` in YAML -> None)
+    # is a no-op; the caller gates the whole block on the same truthiness so the two
+    # can never disagree.
+    tm = cfg.get("target_metric")
+    if not tm:
+        return
+    mode = cfg["matching_mode"]
+    if mode not in ("single", "custom"):
+        raise clm_error(111, mode=mode)
+    if tm.get("type") not in ("mcc", "ari"):
+        raise clm_error(112, type=tm.get("type"))
+    if not (-1.0 <= tm.get("value", 0) <= 1.0):
+        raise clm_error(113, value=tm.get("value"))
+    scope = tm.get("scope", "global")
+    if scope not in ("pair", "global"):
+        raise clm_error(122, scope=scope)
+    if scope == "pair":
+        # The single-pair MCC inverts in closed form (see _pair_label_counts);
+        # ARI has no such inverse, and the pair is taken from single_match.
+        if tm["type"] != "mcc":
+            raise clm_error(123)
+        if mode != "single":
+            raise clm_error(124)
+        # Validate the (cluster, label) pair up front: _pair_label_counts indexes
+        # cluster_sizes[cluster] and m_counts[label] BEFORE build_rules' own
+        # _check_pair would run, so an unknown cluster / out-of-range label must
+        # surface here as [CLM-105]/[CLM-104], not a raw KeyError/IndexError.
+        sm = cfg["single_match"]
+        _check_pair(sm["label"], [sm["cluster"]], cfg["num_classes"], cluster_ids, "single_match")
+
+
+def _pair_label_counts(cfg: Dict, cluster_sizes: Dict[int, int],
+                       m_counts: np.ndarray, N: int) -> np.ndarray:
+    """Exact single-pair MCC target via the single-dominant construction
+    (target_metric.scope='pair', single mode).
+
+    The target label l* is sized so that placing *all* of it inside its cluster
+    k* (recall 1, so no leftover spills back in) makes the 2x2 Matthews phi of
+    the (k*, l*) pair equal the requested value. Inverting
+        phi = sqrt( m_c (N - n_k) / (n_k (N - m_c)) )
+    for the label size gives, with n_k = |k*|,
+        m_c* = phi^2 n_k N / (N - n_k (1 - phi^2)).
+    Returns a copy of `m_counts` with l*'s count set to m_c* and the remaining
+    labels rescaled to fill N - m_c*. No numerical search; the achieved phi
+    equals the target to within one point of integer rounding.
+    """
+    tm = cfg["target_metric"]
+    sm = cfg["single_match"]
+    lstar, n_k = sm["label"], cluster_sizes[sm["cluster"]]
+    phi = tm["value"]
+
+    # Reachable range of the single-dominant construction: placing m_c in [1, n_k]
+    # of label l* entirely inside k* yields a pair phi in [phi_min, 1.0], phi_min
+    # at m_c = 1 (phi_max = 1 at m_c = n_k, an exact 1:1 pair). A request outside
+    # the range is clamped to the nearest reachable value with [CLM-307]; the
+    # subset construction can never produce a negative phi.
+    phi_max = 1.0
+    phi_min = float(np.sqrt((N - n_k) / (n_k * (N - 1)))) if (n_k >= 1 and N > 1) else 0.0
+    if not (phi_min <= phi <= phi_max):
+        clm_warn(log, 307, target=phi, phi_min=phi_min, phi_max=phi_max)
+        phi = min(max(phi, phi_min), phi_max)
+
+    phi2 = phi * phi
+    denom = N - n_k * (1.0 - phi2)
+    m_star = n_k if (phi >= 1.0 or denom <= 0) else int(round(phi2 * n_k * N / denom))
+    m_star = min(max(m_star, 1), n_k)                # a present label, capped at the cluster
+    clm_warn(log, 308, label=lstar, m=m_star)
+
+    out = np.asarray(m_counts, dtype=int).copy()
+    others = [j for j in range(len(out)) if j != lstar]
+    if others:
+        # Rescale the other labels to fill N - m_star so the counts still sum to N.
+        # When they were all zero (o_sum == 0, reachable via a proportion of exactly
+        # 0 or an extreme skew), fall back to a uniform split instead of leaving them
+        # at zero, which would make sum(out) == m_star != N and later starve the
+        # proportional_to_marginal spillover pool (truncated fill -> -1 labels).
+        o_sum = int(sum(int(out[j]) for j in others))
+        props = ([int(out[j]) / o_sum for j in others] if o_sum > 0
+                 else [1.0 / len(others)] * len(others))
+        for idx, count in zip(others, _largest_remainder_counts(props, N - m_star)):
+            out[idx] = count
+    out[lstar] = m_star
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Feasibility + allocation
+# ---------------------------------------------------------------------------
+
+def _split_row_allocation(tp_row: int, clusters: List[int], sizes: Dict[int, int], split_rule: str) -> Dict[int, int]:
+    if len(clusters) == 1:
+        return {clusters[0]: tp_row}
+    if split_rule == "equal":
+        weights = [1.0] * len(clusters)
+    elif split_rule == "proportional_to_size":
+        weights = [sizes[k] for k in clusters]
+    else:
+        raise clm_error(108, split_rule=split_rule)
+    total_w = sum(weights)
+    counts = _largest_remainder_counts([w / total_w for w in weights], tp_row)
+    return dict(zip(clusters, counts))
+
+
+def allocate(cfg: Dict, rules: List[Rule], m_counts: np.ndarray, cluster_sizes: Dict[int, int]):
+    """Turns rules into integer per-(cluster, label) point demands.
+
+    Checks each rule's budget against its clusters' capacity ([CLM-150]) and
+    each cluster against the joint claims on it ([CLM-151]). Returns the
+    demand mapping and the per-cluster capacity left for spillover.
+    """
+    split_rule = cfg.get("split_rule", "proportional_to_size")
+    demand: Dict[int, Dict[int, int]] = {k: {} for k in cluster_sizes}
+
+    for rule in rules:
+        m_label = m_counts[rule.label]
+        tp_row = int(round(rule.recall_target * m_label))
+        capacity = sum(cluster_sizes[k] for k in rule.clusters)
+
+        if tp_row > capacity:
+            raise clm_infeasible(150, label=rule.label, rt=rule.recall_target, tp=tp_row,
+                                 m=m_label, clusters=rule.clusters, capacity=capacity,
+                                 max_recall=capacity / m_label)
+
+        for k, count in _split_row_allocation(tp_row, rule.clusters, cluster_sizes, split_rule).items():
+            demand[k][rule.label] = demand[k].get(rule.label, 0) + count
+
+    remaining_capacity = {}
+    for k, size in cluster_sizes.items():
+        claimed = sum(demand[k].values())
+        if claimed > size:
+            raise clm_infeasible(151, k=k, size=size, claimed=claimed, per_label=demand[k])
+        remaining_capacity[k] = size - claimed
+
+    return demand, remaining_capacity
+
+
+def _spillover_draws(cfg: Dict, m_counts: np.ndarray, used_per_label: np.ndarray,
+                      n_spillover: int, rng: np.random.Generator) -> List[int]:
+    rule_name = cfg.get("spillover_rule", "proportional_to_marginal")
+    M = len(m_counts)
+
+    if rule_name == "proportional_to_marginal":
+        # Clipped at 0: competing_noise can push a label past its target
+        # marginal, and negative repeats would crash np.repeat. The clipped
+        # pool is always >= the spillover need (clipping only enlarges the
+        # sum), and the per-cluster slicing in the pipeline truncates any
+        # excess. A no-op whenever competing_noise is absent.
+        remaining = np.clip(m_counts - used_per_label, 0, None)
+        draws = np.repeat(np.arange(M), remaining)
+        rng.shuffle(draws)
+        return draws.tolist()
+    if rule_name == "uniform":
+        return rng.integers(0, M, size=n_spillover).tolist()
+    if rule_name == "concentrated":
+        targets = cfg.get("concentrated_labels", [int(np.argmax(m_counts))])
+        return rng.choice(targets, size=n_spillover).tolist()
+    raise clm_error(109, rule_name=rule_name)
+
+
+# ---------------------------------------------------------------------------
+# Spatial placement (centroid_dependence)
+# ---------------------------------------------------------------------------
+
+def _weighted_pick(idx_avail: np.ndarray, count: int, coreness_avail: np.ndarray,
+                    profile: str, steepness: float, rng: np.random.Generator) -> np.ndarray:
+    """Selects `count` of the available point indices by the configured
+    profile, given each candidate's coreness score. Extracted verbatim from
+    the placement loop so competing_noise overrides can reuse the exact same
+    machinery with a per-label coreness sign."""
+    if profile == "step":
+        jitter = rng.random(len(idx_avail)) * 1e-9
+        order = np.argsort(-(coreness_avail + jitter))
+        return idx_avail[order[:count]]
+    if profile in ("linear", "exponential"):
+        span = coreness_avail.max() - coreness_avail.min()
+        scaled = (coreness_avail - coreness_avail.min()) / (span + 1e-12)
+        w = scaled if profile == "linear" else np.exp(steepness * (scaled - 1))
+        w += 1e-9
+        return rng.choice(idx_avail, size=count, replace=False, p=w / w.sum())
+    raise clm_error(110, profile=profile)
+
+
+def assign_points_in_cluster(
+        coords: np.ndarray,
+        label_targets: Dict[int, int],
+        spillover_label_draws: List[int],
+        centroid_cfg: Dict,
+        rng: np.random.Generator,
+        favors_overrides: Optional[Dict[int, str]] = None,
+) -> np.ndarray:
+    """Picks the concrete rows of ONE cluster for each demanded label.
+
+    Rule-claimed labels are placed first (centroid-weighted when
+    `centroid_dependence` is enabled, per-label `favors_overrides` from
+    competing_noise taking precedence), then the leftover rows consume the
+    spillover draws. Returns the cluster's label column.
+    """
+    n = len(coords)
+    out = np.full(n, -1, dtype=int)
+    available = np.ones(n, dtype=bool)
+
+    enabled = centroid_cfg.get("enabled", False)
+    profile = centroid_cfg.get("profile", "linear")
+    favors = centroid_cfg.get("favors", "core")
+    steepness = centroid_cfg.get("steepness", 3.0)
+
+    # Distances are needed by the global centroid_dependence AND by any
+    # competing_noise override, which places its label core/boundary even
+    # when the global setting is off.
+    if enabled or favors_overrides:
+        centroid = coords.mean(axis=0)
+        distances = np.linalg.norm(coords - centroid, axis=1)
+    else:
+        distances = None
+    coreness = ((-distances if favors == "core" else distances)
+                if enabled else np.zeros(n))
+
+    # Overridden (competing_noise) labels are placed FIRST: their location is
+    # the explicitly requested spatial structure, and placing them last would
+    # leave them no choice of points (e.g. share=1.0 exactly fills the
+    # cluster), silently ignoring 'favors'. Without overrides the key reduces
+    # to the original largest-count-first order (stable sort), so the base
+    # engine's behavior is untouched.
+    ordered = sorted(label_targets.items(),
+                     key=lambda kv: (((favors_overrides or {}).get(kv[0]) is None), -kv[1]))
+    for label, count in ordered:
+        if count == 0:
+            continue
+        idx_avail = np.where(available)[0]
+        count = min(count, len(idx_avail))
+
+        override = (favors_overrides or {}).get(label)
+        if override in ("core", "boundary"):
+            # competing_noise placement: per-label coreness sign, same profile
+            # machinery as the global setting (defaults to 'linear' when the
+            # global centroid_dependence is off).
+            sc = -distances if override == "core" else distances
+            chosen = _weighted_pick(idx_avail, count, sc[idx_avail], profile, steepness, rng)
+        elif override == "random" or not enabled:
+            chosen = rng.choice(idx_avail, size=count, replace=False)
+        else:
+            chosen = _weighted_pick(idx_avail, count, coreness[idx_avail], profile, steepness, rng)
+
+        out[chosen] = label
+        available[chosen] = False
+
+    leftover_idx = np.where(available)[0]
+    rng.shuffle(leftover_idx)
+    out[leftover_idx] = spillover_label_draws[: len(leftover_idx)]
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Optional structured noise (competing_noise)
+# ---------------------------------------------------------------------------
+
+def _competing_demand(cfg: Dict, remaining_capacity: Dict[int, int], M: int):
+    """
+    OPTIONAL feature, active only when the config carries a 'competing_noise'
+    list; with the key absent this function is never called and the engine
+    behaves exactly as before it existed (to disable the feature entirely,
+    remove its single call site in _run_allocation_pipeline).
+
+    Each entry converts `share` of ONE cluster's UNCLAIMED points (leftover
+    after all rules were allocated) into one specific competing label, placed
+    core/boundary/random within that cluster:
+
+        competing_noise:
+          - {cluster: 1, label: 2, share: 1.0, favors: boundary}
+
+    This bypasses the target proportions by design; contrasting structured
+    noise against random spillover is the point of the feature. Achieved
+    label counts will therefore deviate from 'proportions' (same caveat
+    class as the uniform/concentrated spillover rules).
+    """
+    extra: Dict[int, Dict[int, int]] = {}
+    overrides: Dict[int, Dict[int, str]] = {}
+
+    for entry in cfg["competing_noise"]:
+        k, label = entry["cluster"], entry["label"]
+        share = entry.get("share", 1.0)
+        favors = entry.get("favors", "boundary")
+
+        if k not in remaining_capacity:
+            raise clm_error(119, cluster=k, available=sorted(remaining_capacity, key=str))
+        if not (0 <= label < M):
+            raise clm_error(118, label=label, hi=M - 1)
+        if not (0.0 <= share <= 1.0):
+            raise clm_error(117, share=share)
+        if favors not in ("core", "boundary", "random"):
+            raise clm_error(116, favors=favors)
+
+        count = int(round(share * remaining_capacity[k]))
+        if count == 0:
+            clm_warn(log, 305, k=k, entry=entry)
+            continue
+        extra.setdefault(k, {})
+        extra[k][label] = extra[k].get(label, 0) + count
+        overrides.setdefault(k, {})[label] = favors
+
+    for k, per_label in extra.items():
+        claimed = sum(per_label.values())
+        if claimed > remaining_capacity[k]:
+            raise clm_infeasible(152, k=k, claimed=claimed, remaining=remaining_capacity[k])
+
+    if extra:
+        clm_warn(log, 304)
+    return extra, overrides
+
+
+# ---------------------------------------------------------------------------
+# Shared allocation pipeline (used both by the probe search and the final commit)
+# ---------------------------------------------------------------------------
+
+def _run_allocation_pipeline(cluster_labels, coords, cfg, rules, cluster_ids,
+                              cluster_sizes, m_counts, rng) -> np.ndarray:
+    demand, remaining_capacity = allocate(cfg, rules, m_counts, cluster_sizes)
+
+    # Optional structured competing-label noise (see _competing_demand).
+    # With no 'competing_noise' key this block is skipped and the pipeline
+    # is identical to the base engine.
+    favors_overrides: Dict[int, Dict[int, str]] = {}
+    if cfg.get("competing_noise"):
+        extra, favors_overrides = _competing_demand(cfg, remaining_capacity,
+                                                     cfg["num_classes"])
+        for k, per_label in extra.items():
+            for label, count in per_label.items():
+                demand[k][label] = demand[k].get(label, 0) + count
+                remaining_capacity[k] -= count
+
+    used_per_label = np.zeros(cfg["num_classes"], dtype=int)
+    for k in demand:
+        for label, count in demand[k].items():
+            used_per_label[label] += count
+
+    n_spillover_total = sum(remaining_capacity.values())
+    spillover_pool = _spillover_draws(cfg, m_counts, used_per_label, n_spillover_total, rng)
+
+    out = np.full(len(cluster_labels), -1, dtype=int)
+    cursor = 0
+    for k in cluster_ids:
+        idx = np.where(cluster_labels == k)[0]
+        n_here = remaining_capacity[k]
+        this_spill = spillover_pool[cursor: cursor + n_here]
+        cursor += n_here
+        out[idx] = assign_points_in_cluster(
+            coords[idx], demand[k], this_spill,
+            cfg.get("centroid_dependence", {"enabled": False}), rng,
+            favors_overrides=favors_overrides.get(k),
+        )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Global target-metric solving
+# ---------------------------------------------------------------------------
+
+_METRIC_FUNCS = {"mcc": clustering_mcc, "ari": clustering_ari}
+
+
+def _generate_for_alpha(cluster_labels, coords, cfg, alpha, rng,
+                         cluster_ids, cluster_sizes, m_counts) -> Optional[np.ndarray]:
+    """One probe evaluation. Returns None if this alpha is infeasible."""
+    try:
+        rules = build_rules(cfg, cluster_ids, recall_target_override=alpha)
+        return _run_allocation_pipeline(cluster_labels, coords, cfg, rules,
+                                         cluster_ids, cluster_sizes, m_counts, rng)
+    except InfeasibleAllocationError:
+        return None
+
+
+def solve_alpha_for_target_metric(cluster_labels, coords, cfg, cluster_ids,
+                                   cluster_sizes, m_counts) -> float:
+    """
+    Finds alpha in [0, 1] (substituted as every rule's recall_target) such
+    that the achieved global metric (clustering_mcc/clustering_ari between
+    `cluster_labels` and the generated label array) is as close as possible
+    to cfg['target_metric']['value'].
+
+    No closed form: the achieved global metric depends on every rule's
+    outcome jointly (unlike Layer1's original per-pair solve). This runs a
+    coarse grid scan first, both to bracket the target and to guard
+    against non-strict monotonicity, then bisects within the bracket.
+    All probe evaluations share a fixed seed (common random numbers) so
+    differences across candidates come from alpha, not randomization noise.
+
+    Feasibility is monotonic in alpha by construction: tp_row = round(alpha
+    * m_label) only grows with alpha, so once a rule's claim exceeds its
+    clusters' capacity, it stays exceeded for every higher alpha. That
+    guarantee does NOT extend to the achieved metric itself, hence the grid
+    scan rather than a blind bisection.
+    """
+    tm = cfg["target_metric"]
+    metric_fn = _METRIC_FUNCS[tm["type"]]
+    target = tm["value"]
+    tol = tm.get("tolerance", 0.01)
+    max_iter = tm.get("max_iter", 40)
+    probe_seed = tm.get("probe_seed", 0)
+
+    def achieved(alpha: float) -> Optional[float]:
+        rng = np.random.default_rng(probe_seed)
+        labels = _generate_for_alpha(cluster_labels, coords, cfg, alpha, rng,
+                                      cluster_ids, cluster_sizes, m_counts)
+        return None if labels is None else metric_fn(cluster_labels, labels)
+
+    grid = np.linspace(0.0, 1.0, 11)
+    scored = [(a, achieved(a)) for a in grid]
+    feasible = sorted((a, m) for a, m in scored if m is not None)
+
+    if not feasible:
+        raise clm_error(120)
+
+    best_alpha, best_metric = min(feasible, key=lambda am: abs(am[1] - target))
+    if abs(best_metric - target) <= tol:
+        log.info("target_metric: grid search hit tolerance directly "
+                 f"(alpha={best_alpha:.3f}, achieved={best_metric:.3f}, target={target:.3f}).")
+        return best_alpha
+
+    lo, lo_m = feasible[0]
+    hi, hi_m = feasible[-1]
+    for (a1, m1), (a2, m2) in zip(feasible, feasible[1:]):
+        if (m1 - target) * (m2 - target) <= 0:
+            lo, lo_m, hi, hi_m = a1, m1, a2, m2
+            break
+
+    for i in range(max_iter):
+        mid = (lo + hi) / 2
+        mid_m = achieved(mid)
+        if mid_m is None:
+            # infeasible mid-bracket, infeasibility only tracks upward with
+            # alpha (see docstring), so shrink from the top.
+            hi = mid
+            continue
+
+        if abs(mid_m - target) < abs(best_metric - target):
+            best_alpha, best_metric = mid, mid_m
+        if abs(mid_m - target) <= tol:
+            log.info(f"target_metric: converged in {i + 1} iteration(s) "
+                     f"(alpha={mid:.4f}, achieved={mid_m:.4f}, target={target:.3f}).")
+            return mid
+
+        if (mid_m - target) * (lo_m - target) <= 0:
+            hi, hi_m = mid, mid_m
+        else:
+            lo, lo_m = mid, mid_m
+
+    clm_warn(log, 306, max_iter=max_iter, best_alpha=best_alpha,
+             best_metric=best_metric, target=target, tol=tol)
+    return best_alpha
+
+
+# ---------------------------------------------------------------------------
+# Top-level entry point
+# ---------------------------------------------------------------------------
+
+def generate_clm_labels(cluster_labels: np.ndarray, coords: np.ndarray, cfg: Dict, seed: int = 42) -> pd.Series:
+    """Generates one synthetic label column for an existing clustering.
+
+    The public entry point of the engine: resolves label counts, builds and
+    validates the matching rules (solving the global recall first when
+    `target_metric` is set), runs the allocation pipeline, and returns the
+    labels as a Series aligned with `cluster_labels`.
+
+    `coords` may be None/empty only for labels-only configs; any spatial
+    placement (centroid_dependence, or competing_noise favoring
+    core/boundary) requires real feature vectors and raises [CLM-125].
+    """
+    rng = np.random.default_rng(seed)
+    N = len(cluster_labels)
+
+    # [CLM-126] cardinality guard: fail fast, before any coords/allocation work,
+    # on a num_classes far outside where CLM results are meaningful (also closes
+    # off num_classes=0's unguarded 1/M ZeroDivisionError as a side effect).
+    M = cfg["num_classes"]
+    if not (1 <= M <= MAX_CARDINALITY):
+        raise clm_error(126, M=M, max_val=MAX_CARDINALITY)
+
+    coords = _ensure_coords(cfg, coords, N)   # [CLM-125] placement needs geometry
+    cluster_ids = sorted(np.unique(cluster_labels).tolist())
+    cluster_sizes = {k: int(np.sum(cluster_labels == k)) for k in cluster_ids}
+
+    # [CLM-127] same backstop, for the dataset's own (derived, not configured)
+    # cluster count K.
+    K = len(cluster_ids)
+    if K > MAX_CARDINALITY:
+        raise clm_error(127, K=K, max_val=MAX_CARDINALITY)
+
+    m_counts = resolve_label_counts(cfg, N, rng)
+
+    if cfg["matching_mode"] == "perfect":
+        # M == K must be checked HERE, before the per-cluster indexing below:
+        # with M > K, cluster_ids[i] would raise a raw, uncoded IndexError
+        # before build_rules' own [CLM-102] guard is ever reached. (build_rules
+        # keeps that guard too, for when it is called directly.)
+        if cfg["num_classes"] != len(cluster_ids):
+            raise clm_error(102, M=cfg["num_classes"], K=len(cluster_ids))
+        m_counts = np.array([cluster_sizes[cluster_ids[i]] for i in range(cfg["num_classes"])])
+
+    if cfg["matching_mode"] == "random":
+        # Truthiness (not membership): a null/empty target_metric is "not set", so
+        # it must NOT trip [CLM-114] here.
+        if cfg.get("target_metric"):
+            raise clm_error(114)
+        if cfg.get("competing_noise"):
+            raise clm_error(115)
+        draws = np.repeat(np.arange(cfg["num_classes"]), m_counts)
+        rng.shuffle(draws)
+        return pd.Series(draws, name="clm_label")
+
+    _validate_target_metric_cfg(cfg, cluster_ids)
+
+    # Resolve once and gate every branch on truthiness. `"target_metric" in cfg`
+    # would be True for a null/empty value (`target_metric:` in YAML), then crash
+    # at `.get(...)` on None; validation above already treats that as unset.
+    tm = cfg.get("target_metric")
+    alpha = None  # solved recall level; stays None unless target_metric is set
+    if tm:
+        if any("recall_target" in row for row in cfg.get("assignment_matrix", [])):
+            clm_warn(log, 303)
+        if tm.get("scope", "global") == "pair":
+            # Exact closed-form single-pair MCC: size the target label so all of
+            # it fits its cluster (recall 1), no numerical search.
+            m_counts = _pair_label_counts(cfg, cluster_sizes, m_counts, N)
+            alpha = 1.0
+        else:
+            alpha = solve_alpha_for_target_metric(cluster_labels, coords, cfg, cluster_ids,
+                                                   cluster_sizes, m_counts)
+        rules = build_rules(cfg, cluster_ids, recall_target_override=alpha)
+    else:
+        rules = build_rules(cfg, cluster_ids)
+
+    out = _run_allocation_pipeline(cluster_labels, coords, cfg, rules, cluster_ids,
+                                    cluster_sizes, m_counts, rng)
+
+    achieved_counts = np.bincount(out, minlength=cfg["num_classes"])
+    log.info(f"CLM labels generated. Target counts: {m_counts.tolist()}, achieved: {achieved_counts.tolist()}.")
+
+    if tm:
+        if tm.get("scope", "global") == "pair":
+            sm = cfg["single_match"]
+            achieved = clustering_mcc_pair(cluster_labels, out, sm["cluster"], sm["label"])
+            log.info(f"target_metric: final achieved pair mcc={achieved:.4f} "
+                     f"(target was {tm['value']}, pair cluster={sm['cluster']}/label={sm['label']}).")
+        else:
+            final_metric = _METRIC_FUNCS[tm["type"]](cluster_labels, out)
+            log.info(f"target_metric: final achieved {tm['type']}={final_metric:.4f} "
+                     f"(target was {tm['value']}, alpha={alpha:.4f}).")
+            # [CLM-309] Verify the DELIVERED labeling, not just the solver's own
+            # estimate. solve_alpha_for_target_metric scores candidates under a
+            # fixed probe stream (common random numbers, so candidates compare
+            # fairly), but this final allocation runs on the main rng, which
+            # resolve_label_counts has already advanced. The two streams place
+            # spillover differently, so a solve that converged on the probe
+            # stream can still deliver a labeling outside tolerance -- most
+            # visibly on small N, where spillover placement is a large share of
+            # the outcome. Without this check that miss is silent.
+            tol = tm.get("tolerance", 0.01)
+            if abs(final_metric - tm["value"]) > tol:
+                clm_warn(log, 309, type=tm["type"], achieved=final_metric,
+                         target=tm["value"], tol=tol, alpha=alpha)
+
+    return pd.Series(out, name="clm_label")

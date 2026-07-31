@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clmsynth"
+version = "0.1.0"
+description = "Synthetic label generator with configurable cluster-label matching (CLM) against ground-truth clusters"
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Arootin Gharibian", email = "arootin.gharibian@vsb.cz" },
+]
+keywords = ["synthetic-data", "clustering", "benchmark", "cluster-label-matching", "evaluation"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# Compatible ranges for installation as a package; requirements.txt keeps the
+# exact pins used for verification.
+dependencies = [
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "PyYAML>=6.0",
+    "scipy>=1.11",
+    "scikit-learn>=1.4",
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+]
+
+[project.optional-dependencies]
+faker = ["faker"]
+dev = ["pandas-stubs", "scipy-stubs"]
+# NOTE: two optional dependencies are deliberately NOT extras:
+#   * mdcgenpy is only available as a git repository, and PyPI rejects
+#     uploads whose metadata contains direct-URL dependencies. Install with:
+#         pip install git+https://github.com/CN-TU/mdcgenpy
+#   * pyivm 0.1.0 declares numpy<2.0, which would downgrade this project's
+#     numpy during dependency resolution. It runs correctly against numpy 2.x;
+#     install it with:
+#         pip install --no-deps pyivm
+
+[project.urls]
+Repository = "https://github.com/A-Gharibian/Bioinformatics"
+
+[project.scripts]
+clmsynth = "clmsynth.main:main"
+clmsynth-config = "clmsynth.generate_config:main"
+clmsynth-wizard = "clmsynth.config_wizard:main"
+
+[tool.setuptools]
+packages = ["clmsynth"]

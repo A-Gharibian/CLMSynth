@@ -1,0 +1,48 @@
+global_settings:
+  data_source: "fabricated_data"   # offline: no network, no optional deps
+  output_dir: "OUTPUT"
+
+# --- fabricated_data_suite CONFIGURATION ---
+fabricated_data_suite:
+  batteries: ["fabricated"]
+  datasets: ["baseline_4class"]    # n=800, 4 string clusters "Class_0".."Class_3"
+  seed: 42
+
+# --- LABEL GENERATION ---
+label_generation:
+  n_labels: 1
+  source_labeling: "labels0"
+  noise: 0.1
+  seed: 42
+
+  # --- CLUSTER-LABEL MATCHING (CLM) CONFIGURATION ---
+  clm_label:
+    # 1. CARDINALITY & PROPORTIONS
+    num_classes: 4
+    proportions: [0.25, 0.25, 0.25, 0.25]
+
+    # 2. BALANCE
+    balance: "unbalanced"          # proportions above are used directly
+    skew_rule: "geometric"         # unused here (proportions present)
+
+    # 3. MATCHING MODE
+    matching_mode: "custom"        # near-bijection: label i -> cluster Class_i
+    single_match:
+      cluster: null
+      label: null
+    # NOTE: fabricated_data cluster ids are STRINGS, so clusters are quoted names.
+    assignment_matrix:
+      - {clusters: ["Class_0"], label: 0, recall_target: 0.8}
+      - {clusters: ["Class_1"], label: 1, recall_target: 0.8}
+      - {clusters: ["Class_2"], label: 2, recall_target: 0.8}
+      - {clusters: ["Class_3"], label: 3, recall_target: 0.8}
+
+    # 4. DISTRIBUTION OF NON-TARGET (NOISE) LABELS
+    split_rule: "proportional_to_size"
+    spillover_rule: "proportional_to_marginal"
+
+    # 5. SPATIAL ASSIGNMENT (CENTROID PROXIMITY) -- exercises the [CLM-125] guard
+    centroid_dependence:
+      enabled: true
+      profile: "linear"
+      favors: "core"

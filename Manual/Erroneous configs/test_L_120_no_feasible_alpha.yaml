@@ -1,0 +1,37 @@
+global_settings:
+  data_source: dummy
+  output_dir: OUTPUT
+dummy_suite:
+  batteries:
+  - fabricated
+  datasets:
+  - baseline_4class
+  seed: 42
+label_generation:
+  n_labels: 1
+  source_labeling: labels0
+  noise: 0.1
+  seed: 42
+  clm_label:
+    num_classes: 3
+    matching_mode: custom
+    balance: balanced
+    target_metric:
+      type: mcc
+      value: 0.5
+      tolerance: 0.01
+    assignment_matrix:
+    - label: 0
+      clusters:
+      - Class_0
+    split_rule: proportional_to_size
+    spillover_rule: proportional_to_marginal
+    competing_noise:
+    - cluster: Class_1
+      label: 1
+      share: 1.0
+      favors: boundary
+    - cluster: Class_1
+      label: 2
+      share: 1.0
+      favors: boundary

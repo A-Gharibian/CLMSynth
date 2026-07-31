@@ -1,0 +1,21 @@
+global_settings:
+  data_source: dummy
+  output_dir: OUTPUT
+dummy_suite:
+  batteries:
+  - fabricated
+  datasets:
+  - baseline_2class
+  seed: 42
+label_generation:
+  n_labels: 1
+  source_labeling: labels0
+  noise: 0.1
+  seed: 42
+  clm_label:
+    num_classes: 2
+    matching_mode: single
+    balance: balanced
+    single_match:
+      cluster: Class_0
+      label: 9
