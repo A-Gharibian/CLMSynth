@@ -257,18 +257,17 @@ applied after it.
 
 ### Diagnostics
 
-Every error and warning the engine raises carries a stable `[CLM-###]` code
+Every error and warning the engine raises carries a `[CLM-###]` code
 (`1xx` config `ValueError`, `15x` `InfeasibleAllocationError`, `3xx` warnings),
 defined once in `clm_errors.py`. The full catalogue is available in the CLMSynth
-User Manual under the Troubleshooting section.
+User Manual under the Troubleshooting appendix.
 
 ## Known limitations
 
 - **`single` mode is budget-into-`k*`, not drain-`k*`-into-`l*`.** It tries to
   place label `l*`'s full budget `m_{l*}` inside cluster `k*`, so it raises
   `InfeasibleAllocationError` whenever `|k*| < m_{l*}`, e.g. pointing
-  `single_match` at the *smallest* cluster with a large label budget. Use a
-  cluster at least as large as the label's budget, or use `custom` mode.
+  `single_match` at the *smallest* cluster with a large label budget.
 - **Target metric can be unreachable (structural ceiling).** MCC/ARI between an
   `M`-label partition and a `K`-cluster partition is structurally bounded when
   `M < K`. For `K` equally sized clusters, the ceiling of a balanced `M`-coarsening
@@ -279,8 +278,6 @@ User Manual under the Troubleshooting section.
   `dominant_minority`) constrains it further via fixed label sizes. When the
   target exceeds the ceiling, the solver reports best-effort + a `[CLM-306]`
   non-convergence warning.
-- **`perfect` requires `num_classes == K`** (the true cluster count), else it
-  raises.
 - **Proportions are only honored with `spillover_rule: proportional_to_marginal`.**
   `uniform`/`concentrated` deliberately do not preserve the target label counts.
 - **`competing_noise` also breaks proportions, by design. **** Each entry converts
@@ -292,20 +289,12 @@ User Manual under the Troubleshooting section.
 - **`balance: balanced` ignores `proportions`** (enforces uniform 1/M) and warns.
 - **`skew_rule: dirichlet`** is stochastic but reproducible: it draws once from
   the run seed, so a fixed seed yields fixed proportions.
-- **`pyivm` is not implemented yet.** `evaluate_cluster_label_matching` is a
-  provisional hook only: the dependency is not adopted or verified, and no part
-  of the pipeline calls it. Unsupported until a later release (see Install).
-- **Source label types differ:** `clustbench`/`mdcgen` cluster IDs are integers,
-  `fabricated_data` are strings, `clm_label` configs are not automatically portable
-  across sources without checking id types.
+- **`pyivm` is not implemented yet.** `evaluate_cluster_label_matching` is unsupported until a later release (see Install).
 - **A solved `target_metric` is verified against the delivered labeling, and can
   miss.** `solve_alpha_for_target_metric` scores candidate recalls on a fixed
   probe stream (`default_rng(probe_seed)`, `probe_seed` defaulting to 0) so that
   candidates compare fairly, but the labeling that is written out is generated on
-  the run's own stream (`default_rng(seed)`) — two different streams by
-  construction. (Under `skew_rule: dirichlet` the run stream is additionally
-  advanced by the label-count draw, widening the gap further.) The two place
-  spillover differently, so a search that converged
+  the run's own stream (`default_rng(seed)`).
   internally can still deliver a labeling outside tolerance. The generator now
   measures what it actually writes and raises **`[CLM-309]`** when that value
   falls outside tolerance, *treat the achieved value as authoritative, not the
@@ -315,27 +304,14 @@ User Manual under the Troubleshooting section.
 - **The target-metric search grid cannot see inside a narrow feasible band.**
   Candidate recalls are bracketed on 11 grid points (step 0.1); only feasible
   ones are usable, so the interval between the last feasible grid point and the
-  true feasibility boundary is never explored. If the whole feasible band is
-  narrower than 0.1, the only feasible probe is `alpha=0` and the solver cannot
-  target at all. This needs a severe label-budget/cluster-capacity mismatch,
-  e.g. a cluster-blind skew (`dirichlet`) on a strongly imbalanced geometry.
-- **`num_classes` and the dataset's cluster count `K` are capped at 64**
-  (`[CLM-126]`/`[CLM-127]`). This is a coarse safety backstop, not a validated
-  statistical-significance boundary, internal testing already finds results
-  unreliable well below this ceiling (`K` above ~15, `M` above ~20); computing
-  a real per-dataset significance limit would need a dedicated module (or
-  manual guidance) this project doesn't have yet. Enforced once, at the
-  `generate_clm_labels` entry point.
+  true feasibility boundary is never explored.
 - **`plot_feature_scatter` is not thread-safe.** matplotlib's default (TkAgg)
   backend requires plotting on the main thread; `main.py` only calls it
-  sequentially, so this doesn't affect the shipped CLI, but calling it from
-  multiple threads (e.g. a parallelized dataset loop) will silently drop
-  plots and can corrupt Tk state at interpreter shutdown.
+  sequentially.
 
 ## Possible future additions
 
-Two extensions worth recording as candidates, not commitments, each has a
-real design tension worth resolving *before* implementation, not during.
+Two extensions as candidates:
 
 - **SYNLABEL, scoped to `fabricated_generator.py`, not the CLM engine.**
   SYNLABEL derives a noiseless functional labeling from a feature space and
@@ -345,14 +321,7 @@ real design tension worth resolving *before* implementation, not during.
   more principled synthetic ground truth for the offline source. The
   boundary matters: SYNLABEL must produce `c(x)`/`X` *before* the CLM engine
   ever sees them, staying strictly in the data-source layer (alongside
-  `clustbench`/`mdcgen`/`byoc`), because CLMSynth's whole contribution rests on
-  clusters being fixed, read-only input, the paper's own Impact section
-  already frames SYNLABEL and CLMSynth as complementary but distinct
-  (supervised label-vs-feature synthesis vs.\ unsupervised label-vs-cluster
-  synthesis), and folding one into the other's core engine would blur exactly
-  that distinction. Would also add a new (and presently unverified: license,
-  API stability, packaging) dependency, the same category of risk already
-  flagged above for `pyivm`.
+  `clustbench`/`mdcgen`/`byoc`).
 - **`fabricated_generator.py` emitting more than one ground-truth column.**
   Real `clustbench` datasets already ship multiple reference labelings
   (`GroundTruth_labels0`, `GroundTruth_labels1`, ...), and `DatasetContext`
@@ -367,7 +336,4 @@ real design tension worth resolving *before* implementation, not during.
   framework and adjusted internal-validity-measure work (Gagolewski, 2022,
   *SoftwareX*; Jeon et al., 2025, *TPAMI*) explore for real datasets, characterizing a
   dataset by more than one structural criterion at once, applied here to a
-  synthetic one. Lower risk than the SYNLABEL item: no new dependency, no
-  architectural boundary to defend, just new rules inside one existing
-  module. The open design question is which mathematical properties are
-  worth shipping as defaults versus leaving user-configurable.
+  synthetic one.
