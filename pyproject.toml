@@ -4,13 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clmsynth"
-version = "0.1.0"
+version = "0.3.0"
 description = "Synthetic label generator with configurable cluster-label matching (CLM) against ground-truth clusters"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
 license = "MIT"
 license-files = ["LICENSE"]
+# Authorship (the method and the accompanying article) is shared; the program
+# itself is written, owned, and maintained by Arootin Gharibian.
 authors = [
+    { name = "Arootin Gharibian", email = "arootin.gharibian@vsb.cz" },
+    { name = "Milos Kudelka" },
+]
+maintainers = [
     { name = "Arootin Gharibian", email = "arootin.gharibian@vsb.cz" },
 ]
 keywords = ["synthetic-data", "clustering", "benchmark", "cluster-label-matching", "evaluation"]
@@ -48,7 +54,7 @@ dev = ["pandas-stubs", "scipy-stubs"]
 #         pip install --no-deps pyivm
 
 [project.urls]
-Repository = "https://github.com/A-Gharibian/Bioinformatics"
+Repository = "https://github.com/A-Gharibian/CLMSynth"
 
 [project.scripts]
 clmsynth = "clmsynth.main:main"

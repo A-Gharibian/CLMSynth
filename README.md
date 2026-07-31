@@ -18,11 +18,11 @@ configuration, rather than measured after the execution and synthesis.
 | `clmsynth/dataset_sources.py`      | Four interchangeable data sources: `clustbench` (Gagolewski benchmark downloads), `mdcgen` (synthetic, via `mdcgenpy`), `fabricated_data` (offline fallback, no deps), and Bring your own clusters (BYOC) as a comma-delimited file.                                                                                                                                                                     |
 | `clmsynth/fabricated_generator.py` | Engineered-feature generator with perfect-separation labels, used by the `fabricated_data` source.                                                                                                                                                                                                                                                                                                       |
 | `clmsynth/byoc_source.py`          | Bring-your-own-clusters source: reads a user CSV (feature columns + exactly one cluster-id column), with optional min-max standardization on import.                                                                                                                                                                                                                                                     |
-| `clmsynth/label_context.py`        | `DatasetContext` — holds features, every ground-truth labeling, and every generated label; rejects any misaligned column.                                                                                                                                                                                                                                                                                |
+| `clmsynth/label_context.py`        | `DatasetContext`, holds features, every ground-truth labeling, and every generated label; rejects any misaligned column.                                                                                                                                                                                                                                                                                 |
 | `clmsynth/label_generator.py`      | Orchestrates label generation: calls the CLM engine per `n_labels`, or falls back to simple noise-flipping if no `clm_label` config is given.                                                                                                                                                                                                                                                            |
 | `clmsynth/clm_label_engine.py`     | The CLM label-assignment math: proportions/skew, matching modes, recall targets, feasibility-checked allocation, spillover, structured competing noise, spatial (centroid) placement, and the global target-metric solver.                                                                                                                                                                               |
 | `clmsynth/clm_errors.py`           | Diagnostics: message templates keyed by a `[CLM-###]` code (1xx `ValueError`, 15x `InfeasibleAllocationError`, 3xx warnings) plus helpers. `InfeasibleAllocationError` is defined here and re-exported from the engine.                                                                                                                                                                                  |
-| `clmsynth/metrics.py`              | Standalone evaluation. Two families: `clustering_mcc` (Hungarian-matched multiclass MCC / Gorodkin R_K) and `clustering_ari` (adjusted Rand index) are external measures, comparing two labelings row by row without looking at the features; `evaluate_cluster_label_matching` (requires `pyivm`) is an internal-validity measure, scoring one labeling against the feature geometry via adjusted IVMs. |
+| `clmsynth/metrics.py`              | Standalone evaluation. Three external measures compare two labelings row by row without looking at the features: `clustering_mcc` (Hungarian-matched multiclass MCC / Gorodkin R_K), `clustering_mcc_pair` (the 2x2 Matthews phi of one cluster against one label, the quantity `target_metric.scope: pair` targets), and `clustering_ari` (adjusted Rand index). `evaluate_cluster_label_matching` is a **provisional, not-yet-implemented** internal-validity hook (see Known limitations); the pipeline never calls it. |
 | `clmsynth/visualization.py`        | Scatter-plot rendering for any two features, colored by a chosen label column, annotated with MCC/ARI and the generating config.                                                                                                                                                                                                                                                                         |
 | `clmsynth/config_template.py`      | The YAML template string used to render a config.                                                                                                                                                                                                                                                                                                                                                        |
 | `clmsynth/generate_config.py`      | Renders `config_template.py` into a runnable config YAML from an upstream payload file (default `upstream_payload.yaml`).                                                                                                                                                                                                                                                                                |
@@ -56,12 +56,11 @@ Optional, depending on which source/utility you use:
 ```bash
 pip install faker                                    # only used by the fabricated_data source, has a fallback if absent
 pip install git+https://github.com/CN-TU/mdcgenpy    # only needed for data_source: "mdcgen"
-pip install --no-deps pyivm                          # only needed for metrics.evaluate_cluster_label_matching
 ```
-> `pyivm` 0.1.0 is verified to expose `silhouette`/`calinski_harabasz`/`davies_bouldin`
-> with `adjusted=True` and to run correctly against this project's pinned numpy.
-> Its own metadata declares `numpy<2.0`, so install it with `--no-deps` to keep
-> the pinned numpy in place.
+> **`pyivm` is not implemented yet.** `metrics.evaluate_cluster_label_matching`
+> ships as a provisional hook against the adjusted internal-validity measures,
+> but the dependency has not been adopted or verified and nothing in the
+> pipeline calls it. Treat that function as unsupported until a later release.
 
 ## Quick start
 
@@ -100,7 +99,7 @@ OUTPUT/{DDMMYY}_{Source}_{HHMMSS}/
 - The base folder is `global_settings.output_dir` (default `OUTPUT`); a numeric
   suffix is appended if two runs land in the same second.
 - **Column naming:** ground-truth class labeling such as `Cluster_0`, `Cluster_1`, …
-  (by position — `source_labeling: labels0` surfaces as `Cluster_0`); generated
+  (by position, `source_labeling: labels0` surfaces as `Cluster_0`); generated
   labels become `Label_0`, `Label_1`, … (0-indexed, one per `n_labels`).
 - The MCC/ARI printed in each plot subtitle and in the `.txt` summary are
   computed from the written CSV columns themselves (single source of truth).
@@ -185,14 +184,14 @@ label_generation:
 
 ### Data sources
 
-- **`clustbench`** — real, fixed geometries downloaded from Gagolewski's benchmark suite (v1.1.0). Every available reference labeling (`labels0`, `labels1`, …) is fetched. Use for reproducible research results.
-- **`mdcgen`** — fully synthetic geometries via `mdcgenpy`, seeded for reproducibility. Use when you need geometric properties (dimensionality, overlap, outliers) the fixed clustbench datasets don't cover.
-- **`fabricated_data`** — no network, no extra dependencies. Offline fallback. Note: cluster IDs under this source are strings (`"Class_0"`, …), not integers — `single_match`/`assignment_matrix` cluster references must match that type.
-- **`byoc`** — bring-your-own-clusters: your own CSV with feature columns and exactly one cluster-id column (see below).
+- **`clustbench`**, real, fixed geometries downloaded from Gagolewski's benchmark suite (v1.1.0). Every available reference labeling (`labels0`, `labels1`, …) is fetched. Use for reproducible research results.
+- **`mdcgen`**, fully synthetic geometries via `mdcgenpy`, seeded for reproducibility. Use when you need geometric properties (dimensionality, overlap, outliers) the fixed clustbench datasets don't cover.
+- **`fabricated_data`**, no network, no extra dependencies. Offline fallback. Note: cluster IDs under this source are strings (`"Class_0"`, …), not integers, `single_match`/`assignment_matrix` cluster references must match that type.
+- **`byoc`**, bring-your-own-clusters: your own CSV with feature columns and exactly one cluster-id column (see below).
 
 ### Bring-your-own-clusters (`byoc`)
 
-Point the pipeline at your own CSV — feature columns plus **exactly one** cluster-id column — and it generates CLM labels against *your* clusters:
+Point the pipeline at your own CSV, feature columns plus **exactly one** cluster-id column, and it generates CLM labels against *your* clusters:
 
 ```yaml
 global_settings:
@@ -215,16 +214,16 @@ label_generation:
 ```
 
 - Every **numeric** column other than `cluster_column` becomes a feature (original names are kept, so plot axes show *your* names); non-numeric columns are ignored with a warning.
-- Exactly one `cluster_column` is required — the run is **rejected** (logged, dataset skipped) if it is missing or names more than one column.
-- `standardize: true` min-max rescales the features to `[0, 1]` at import — applied once, before both the geometry/centroid math and the written CSV. Off by default.
+- Exactly one `cluster_column` is required, the run is **rejected** (logged, dataset skipped) if it is missing or names more than one column.
+- `standardize: true` min-max rescales the features to `[0, 1]` at import, applied once, before both the geometry/centroid math and the written CSV. Off by default.
 - Cluster ids may be integers or strings; if you use `single_match`/`assignment_matrix`, match that id type.
 
 ### `matching_mode` reference
 
-- `perfect` — fixed cluster↔label bijection; label counts are forced to the paired cluster sizes. Requires `num_classes == K`. Proportions/balance/skew_rule are ignored (logged).
-- `single` — routes label `l*`'s point budget into cluster `k*`. **Note:** the current implementation places up to `recall_target × m_{l*}` points of `l*` into `k*`, so it requires `|k*| ≥ m_{l*}` (see Known limitations).
-- `random` — labels drawn from the resolved proportions, ignoring cluster structure entirely.
-- `custom` — one or more explicit `assignment_matrix` rules, each routing a `recall_target` fraction of one label's budget into a set of clusters. Supports surjective (many clusters → one label), partial, and overlapping alignments. Unclaimed cluster capacity follows `spillover_rule`.
+- `perfect`, fixed cluster↔label bijection; label counts are forced to the paired cluster sizes. Requires `num_classes == K`. Proportions/balance/skew_rule are ignored (logged).
+- `single`, routes label `l*`'s point budget into cluster `k*`. **Note:** the current implementation places up to `recall_target × m_{l*}` points of `l*` into `k*`, so it requires `|k*| ≥ m_{l*}` (see Known limitations).
+- `random`, labels drawn from the resolved proportions, ignoring cluster structure entirely.
+- `custom`, one or more explicit `assignment_matrix` rules, each routing a `recall_target` fraction of one label's budget into a set of clusters. Supports surjective (many clusters → one label), partial, and overlapping alignments. Unclaimed cluster capacity follows `spillover_rule`.
 
 ### Target-metric solving
 
@@ -234,14 +233,14 @@ solver varies only the recall level; every setting above (`split_rule`,
 probes, so noise structure changes the solved recall rather than being
 applied after it.
 
-- **`scope: "global"` (default)** — targets the whole-partition metric. A single
+- **`scope: "global"` (default)**, targets the whole-partition metric. A single
   global recall level is solved (coarse grid scan → bisection, common random
   numbers across probes) so the achieved MCC or ARI meets the requested value
   within tolerance. If the target exceeds what the geometry/proportions can
   reach, the solver returns its closest feasible value and logs a
   non-convergence warning rather than crashing or fabricating a hit. Works for
   `type: mcc` and `type: ari`.
-- **`scope: "pair"` (`type: mcc`, `single` mode only)** — targets the `2×2` MCC
+- **`scope: "pair"` (`type: mcc`, `single` mode only)**, targets the `2×2` MCC
   of the `single_match` cluster/label pair (that cluster vs. the rest against
   that label vs. the rest). This inverts in **closed form**, so it is hit
   exactly and instantly with no search: the label is sized to sit entirely
@@ -267,15 +266,14 @@ User Manual under the Troubleshooting section.
 
 - **`single` mode is budget-into-`k*`, not drain-`k*`-into-`l*`.** It tries to
   place label `l*`'s full budget `m_{l*}` inside cluster `k*`, so it raises
-  `InfeasibleAllocationError` whenever `|k*| < m_{l*}` — e.g. pointing
+  `InfeasibleAllocationError` whenever `|k*| < m_{l*}`, e.g. pointing
   `single_match` at the *smallest* cluster with a large label budget. Use a
   cluster at least as large as the label's budget, or use `custom` mode.
 - **Target metric can be unreachable (structural ceiling).** MCC/ARI between an
   `M`-label partition and a `K`-cluster partition is structurally bounded when
   `M < K`. For `K` equally sized clusters, the ceiling of a balanced `M`-coarsening
-  has the closed form **`MCC = sqrt(M(M-1) / (K(K-1)))`** (verified exact — e.g.
-  4 labels over 20 clusters cap MCC at `0.178`; see the ceiling appendix in
-  `Latex/main.tex`).
+  has the closed form **`MCC = sqrt(M(M-1) / (K(K-1)))`** (verified exact, e.g.
+  4 labels over 20 clusters cap MCC at `0.178`).
   For unequal clusters, or a specific rule set, the reachable ceiling is the MCC
   the rules achieve at full recall (`alpha = 1`). A chosen skew (e.g.
   `dominant_minority`) constrains it further via fixed label sizes. When the
@@ -288,24 +286,29 @@ User Manual under the Troubleshooting section.
 - **`competing_noise` also breaks proportions, by design. **** Each entry converts
   leftover points of one cluster into one specific competing label (placed
   boundary/core/random), so achieved label counts deviate from `proportions.`
-  and the achieved MCC/ARI differs from random-spillover noise — that contrast
+  and the achieved MCC/ARI differs from random-spillover noise, that contrast
   is the feature's purpose. Only valid under `single`/`custom`; a warned no-op
   under `perfect` (no leftover capacity); rejected under `random`.
 - **`balance: balanced` ignores `proportions`** (enforces uniform 1/M) and warns.
 - **`skew_rule: dirichlet`** is stochastic but reproducible: it draws once from
   the run seed, so a fixed seed yields fixed proportions.
-- **`pyivm` package identity/API unverified** (see Install).
+- **`pyivm` is not implemented yet.** `evaluate_cluster_label_matching` is a
+  provisional hook only: the dependency is not adopted or verified, and no part
+  of the pipeline calls it. Unsupported until a later release (see Install).
 - **Source label types differ:** `clustbench`/`mdcgen` cluster IDs are integers,
-  `fabricated_data` are strings — `clm_label` configs are not automatically portable
+  `fabricated_data` are strings, `clm_label` configs are not automatically portable
   across sources without checking id types.
 - **A solved `target_metric` is verified against the delivered labeling, and can
   miss.** `solve_alpha_for_target_metric` scores candidate recalls on a fixed
-  probe stream (common random numbers), but the labeling that is written out is
-  generated on the run's own stream, which the label-count draw has already
-  advanced. The two place spillover differently, so a search that converged
+  probe stream (`default_rng(probe_seed)`, `probe_seed` defaulting to 0) so that
+  candidates compare fairly, but the labeling that is written out is generated on
+  the run's own stream (`default_rng(seed)`) — two different streams by
+  construction. (Under `skew_rule: dirichlet` the run stream is additionally
+  advanced by the label-count draw, widening the gap further.) The two place
+  spillover differently, so a search that converged
   internally can still deliver a labeling outside tolerance. The generator now
   measures what it actually writes and raises **`[CLM-309]`** when that value
-  falls outside tolerance — *treat the achieved value as authoritative, not the
+  falls outside tolerance, *treat the achieved value as authoritative, not the
   requested one*. Magnitude is governed by `N`: ≤0.009 at `N=3000`, ≤0.007 at
   `N=8000`, but up to 0.07 at `N`≈120–280. Does not affect `scope: pair`
   (closed-form, no search).
@@ -314,11 +317,11 @@ User Manual under the Troubleshooting section.
   ones are usable, so the interval between the last feasible grid point and the
   true feasibility boundary is never explored. If the whole feasible band is
   narrower than 0.1, the only feasible probe is `alpha=0` and the solver cannot
-  target at all. This needs a severe label-budget/cluster-capacity mismatch —
+  target at all. This needs a severe label-budget/cluster-capacity mismatch,
   e.g. a cluster-blind skew (`dirichlet`) on a strongly imbalanced geometry.
 - **`num_classes` and the dataset's cluster count `K` are capped at 64**
   (`[CLM-126]`/`[CLM-127]`). This is a coarse safety backstop, not a validated
-  statistical-significance boundary — internal testing already finds results
+  statistical-significance boundary, internal testing already finds results
   unreliable well below this ceiling (`K` above ~15, `M` above ~20); computing
   a real per-dataset significance limit would need a dedicated module (or
   manual guidance) this project doesn't have yet. Enforced once, at the
@@ -331,19 +334,19 @@ User Manual under the Troubleshooting section.
 
 ## Possible future additions
 
-Two extensions worth recording as candidates, not commitments — each has a
+Two extensions worth recording as candidates, not commitments, each has a
 real design tension worth resolving *before* implementation, not during.
 
 - **SYNLABEL, scoped to `fabricated_generator.py`, not the CLM engine.**
   SYNLABEL derives a noiseless functional labeling from a feature space and
-  injects measured noise by resampling features — useful here because
+  injects measured noise by resampling features, useful here because
   `fabricated_generator.py`'s current ground truth is a single crude rule
   (a percentile split on `Feature_1`). A SYNLABEL-derived labeling would be a
   more principled synthetic ground truth for the offline source. The
   boundary matters: SYNLABEL must produce `c(x)`/`X` *before* the CLM engine
   ever sees them, staying strictly in the data-source layer (alongside
   `clustbench`/`mdcgen`/`byoc`), because CLMSynth's whole contribution rests on
-  clusters being fixed, read-only input — the paper's own Impact section
+  clusters being fixed, read-only input, the paper's own Impact section
   already frames SYNLABEL and CLMSynth as complementary but distinct
   (supervised label-vs-feature synthesis vs.\ unsupervised label-vs-cluster
   synthesis), and folding one into the other's core engine would blur exactly
@@ -356,14 +359,14 @@ real design tension worth resolving *before* implementation, not during.
   already consumes any number of them generically (`build_context` collects
   every `GroundTruth_*` column). The offline fabricator currently produces
   exactly one. Extending it to emit several labelings derived from different
-  mathematical properties of the same synthetic feature space — e.g. a radial
-  split, a linear combination, a nonlinear boundary — would let the offline
+  mathematical properties of the same synthetic feature space, e.g. a radial
+  split, a linear combination, a nonlinear boundary, would let the offline
   source mimic that same multi-labeling structure without touching
   `label_context.py` or the label engine at all; the plumbing already
   supports it. This is the same territory Gagolewski's benchmarking
-  framework and adjusted internal-validity-measure work (already cited,
-  `gagolewski2022`/`jeon2025`) explore for real datasets — characterizing a
-  dataset by more than one structural criterion at once — applied here to a
+  framework and adjusted internal-validity-measure work (Gagolewski, 2022,
+  *SoftwareX*; Jeon et al., 2025, *TPAMI*) explore for real datasets, characterizing a
+  dataset by more than one structural criterion at once, applied here to a
   synthetic one. Lower risk than the SYNLABEL item: no new dependency, no
   architectural boundary to defend, just new rules inside one existing
   module. The open design question is which mathematical properties are

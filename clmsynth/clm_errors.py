@@ -2,7 +2,7 @@
 """
 Central registry of CLM engine diagnostics: the single source of truth for the
 message text behind every *explicitly* raised error and logged warning, keyed
-by a stable numeric code so users can cross-reference Latex/troubleshooting.tex.
+by a stable numeric code so users can cross-reference Manual/troubleshooting.tex.
 
 Bands:
     1xx  ValueError:                invalid configuration / incompatible options

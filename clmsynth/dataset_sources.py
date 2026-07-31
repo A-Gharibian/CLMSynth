@@ -1,10 +1,18 @@
 # dataset_sources.py
 """
-Consolidated cluster/dataset generation module. Three sources, one shared
+Consolidated cluster/dataset generation module. Four sources, one shared
 registry shape:
-    "clustbench" -> fetch_clustbench_data   (real, fixed geometries, network)
-    "mdcgen"     -> fetch_mdcgen_data        (synthetic, needs mdcgenpy)
-    "fabricated_data"      -> fetch_fabricated_data         (fabricated features with perfect-separation labels, offline)
+    "clustbench"      -> fetch_clustbench_data  (real, fixed geometries, network)
+    "mdcgen"          -> fetch_mdcgen_data      (synthetic, needs mdcgenpy)
+    "fabricated_data" -> fetch_fabricated_data  (fabricated features with
+                                                 perfect-separation labels, offline)
+    "byoc"            -> fetch_byoc_data        (bring-your-own-clusters: a user CSV
+                                                 with one cluster-id column; lives in
+                                                 byoc_source.py)
+
+The registry shape (SOURCE_METADATA / SOURCE_DATASETS / HEAVY_BATTERIES, keyed by
+source name) is what makes a source pluggable; more are expected, so add entries to
+those dicts rather than special-casing a new fetcher downstream.
 """
 
 import gzip

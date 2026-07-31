@@ -566,7 +566,8 @@ def solve_alpha_for_target_metric(cluster_labels, coords, cfg, cluster_ids,
     to cfg['target_metric']['value'].
 
     No closed form: the achieved global metric depends on every rule's
-    outcome jointly (unlike Layer1's original per-pair solve). This runs a
+    outcome jointly (unlike the single-pair solve of scope='pair', which
+    inverts exactly in _pair_label_counts). This runs a
     coarse grid scan first, both to bracket the target and to guard
     against non-strict monotonicity, then bisects within the bracket.
     All probe evaluations share a fixed seed (common random numbers) so
@@ -735,13 +736,16 @@ def generate_clm_labels(cluster_labels: np.ndarray, coords: np.ndarray, cfg: Dic
                      f"(target was {tm['value']}, alpha={alpha:.4f}).")
             # [CLM-309] Verify the DELIVERED labeling, not just the solver's own
             # estimate. solve_alpha_for_target_metric scores candidates under a
-            # fixed probe stream (common random numbers, so candidates compare
-            # fairly), but this final allocation runs on the main rng, which
-            # resolve_label_counts has already advanced. The two streams place
-            # spillover differently, so a solve that converged on the probe
-            # stream can still deliver a labeling outside tolerance -- most
-            # visibly on small N, where spillover placement is a large share of
-            # the outcome. Without this check that miss is silent.
+            # fixed probe stream (default_rng(probe_seed), probe_seed defaulting
+            # to 0, so candidates compare fairly), but this final allocation runs
+            # on the main rng, default_rng(seed) -- two different streams by
+            # construction, whatever the run's seed. (Under skew_rule 'dirichlet'
+            # resolve_label_counts additionally advances the main stream, widening
+            # the gap.) The two streams place spillover differently, so a solve
+            # that converged on the probe stream can still deliver a labeling
+            # outside tolerance -- most visibly on small N, where spillover
+            # placement is a large share of the outcome. Without this check that
+            # miss is silent.
             tol = tm.get("tolerance", 0.01)
             if abs(final_metric - tm["value"]) > tol:
                 clm_warn(log, 309, type=tm["type"], achieved=final_metric,
