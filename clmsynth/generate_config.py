@@ -9,6 +9,7 @@ as a script to render a payload file.
 
 import logging
 import sys
+from typing import List
 
 import yaml
 
@@ -37,6 +38,25 @@ def format_list_or_all(value) -> str:
     return f"[{', '.join(repr(v) for v in value)}]"
 
 
+def _yaml_scalar(value) -> str:
+    """Renders one payload value as a YAML scalar: bools lowercased, strings
+    quoted, numbers as-is. Booleans are checked first, since bool is a subclass
+    of int and would otherwise render as True/False rather than true/false."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return f'"{value}"'
+    return str(value)
+
+
+def _optional_block(lines: List[str]) -> str:
+    """Joins one optional clm_label block, or returns '' when there is nothing
+    to emit. Each block supplies its own leading newline so an omitted one
+    leaves no blank line in the rendered YAML, the same trick `byoc_extra` uses
+    for the byoc-only suite keys."""
+    return ("\n" + "\n".join(lines)) if lines else ""
+
+
 def generate_base_config(upstream_data: dict, output_path: str = "test_data_config.yaml"):
     """Generates the YAML configuration using upstream dynamic data."""
 
@@ -58,6 +78,71 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
     if balance == "unbalanced" and not has_proportions and skew_rule not in VALID_SKEW_RULES:
         log.warning(f"skew_rule '{skew_rule}' is not implemented by clm_label_engine.py "
                     f"(valid: {VALID_SKEW_RULES}). This config will fail at runtime unless fixed.")
+
+    # --- optional clm_label blocks ------------------------------------------
+    # Every one of these is documented in the manual but had no template slot,
+    # so the payload path could not express them at all. Each renders only when
+    # the payload carries it: a minimal payload still produces the exact config
+    # this renderer produced before they were added.
+    mode = upstream_data.get("matching_mode", "custom")
+    target_metric = upstream_data.get("target_metric") or {}
+    competing_noise = upstream_data.get("competing_noise") or []
+
+    if target_metric and mode not in ("single", "custom"):
+        log.warning(f"target_metric is set but matching_mode is '{mode}': the engine rejects "
+                    "this ([CLM-111]/[CLM-114]). Use 'single'/'custom', or drop target_metric.")
+    if target_metric.get("scope") == "pair" and (
+            target_metric.get("type") != "mcc" or mode != "single"):
+        log.warning("target_metric.scope 'pair' requires type 'mcc' and matching_mode 'single' "
+                    "([CLM-123]/[CLM-124]); this config will fail at runtime unless fixed.")
+    if competing_noise and mode == "random":
+        log.warning("competing_noise is set with matching_mode 'random': the engine rejects this "
+                    "([CLM-115]). Use 'single' or 'custom'.")
+
+    skew_params = upstream_data.get("skew_params") or {}
+    skew_params_block = _optional_block(
+        ["    skew_params:"] + [f"      {k}: {_yaml_scalar(v)}" for k, v in skew_params.items()]
+        if skew_params else []
+    )
+
+    concentrated = upstream_data.get("concentrated_labels") or []
+    concentrated_block = _optional_block(
+        [f"    concentrated_labels: [{', '.join(str(x) for x in concentrated)}]"
+         "  # spillover_rule 'concentrated' only"] if concentrated else []
+    )
+
+    competing_lines: List[str] = []
+    if competing_noise:
+        competing_lines = [
+            "",
+            "    # STRUCTURED COMPETING NOISE (single/custom only). Converts a share of ONE",
+            "    # cluster's UNCLAIMED points to one competing label; bypasses 'proportions'.",
+            "    competing_noise:",
+        ]
+        for entry in competing_noise:
+            inner = ", ".join(f"{k}: {_yaml_scalar(v)}" for k, v in entry.items())
+            competing_lines.append(f"      - {{{inner}}}")
+    competing_block = _optional_block(competing_lines)
+
+    target_lines: List[str] = []
+    if target_metric:
+        target_lines = [
+            "",
+            "    # TARGET METRIC (single/custom only): solves the recall level for you.",
+            "    # scope 'global' (default) searches numerically; 'pair' is exact but needs",
+            "    # type 'mcc' AND matching_mode 'single'. tolerance/max_iter are global-only.",
+            "    target_metric:",
+        ]
+        for key in ("type", "value", "scope", "tolerance", "max_iter"):
+            if key in target_metric:
+                target_lines.append(f"      {key}: {_yaml_scalar(target_metric[key])}")
+    target_block = _optional_block(target_lines)
+
+    steepness = upstream_data.get("centroid_steepness")
+    steepness_block = _optional_block(
+        [f"      steepness: {steepness}  # exponential profile only"]
+        if steepness is not None and upstream_data.get("centroid_profile") == "exponential" else []
+    )
 
     proportions_str = f"[{', '.join(map(str, upstream_data.get('proportions', [])))}]"
     single_match_yaml = format_yaml_snippet(upstream_data.get("single_match", {"cluster": None, "label": None}))
@@ -94,7 +179,7 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
         proportions=proportions_str,
         balance=balance,
         skew_rule=skew_rule,
-        matching_mode=upstream_data.get("matching_mode", "custom"),
+        matching_mode=mode,
         single_match=single_match_yaml,
         assignment_matrix=assignment_matrix_yaml,
         split_rule=upstream_data.get("split_rule", "proportional_to_size"),
@@ -102,6 +187,13 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
         centroid_enabled=centroid_enabled,
         centroid_profile=upstream_data.get("centroid_profile", "exponential"),
         centroid_favors=upstream_data.get("centroid_favors", "core"),
+
+        # Optional blocks: '' unless the payload asked for them.
+        skew_params=skew_params_block,
+        concentrated_labels=concentrated_block,
+        competing_noise=competing_block,
+        target_metric=target_block,
+        steepness=steepness_block,
     )
 
     try:
@@ -113,7 +205,8 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
 
 
 def main() -> None:
-    """CLI entry point: ``python generate_config.py [payload.yaml] [output.yaml]``.
+    """CLI entry point: ``python -m clmsynth.generate_config [payload.yaml] [output.yaml]``
+    (or the ``clmsynth-config`` console script).
 
     Loads the upstream payload from the given YAML file (default
     ``upstream_payload.yaml``) and renders the pipeline config (default

@@ -276,7 +276,8 @@ def build_run_dir(base_dir: Path, friendly_source: str) -> Path:
 
 
 def main() -> None:
-    """CLI entry point: ``python main.py [config.yaml]``."""
+    """CLI entry point: ``python -m clmsynth.main [config.yaml]`` (or the
+    ``clmsynth`` console script)."""
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     log.info("Starting Test Data Orchestrator...")
 

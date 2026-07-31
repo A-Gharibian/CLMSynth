@@ -17,7 +17,7 @@ from .metrics import (
     evaluate_cluster_label_matching,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "InfeasibleAllocationError",

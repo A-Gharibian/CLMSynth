@@ -5,6 +5,63 @@ All notable changes to CLMSynth are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-07-31
+
+Wizard and config-renderer polish. No change to the label-generation math.
+
+### Added
+
+- **`generate_config.py` can now emit every documented `clm_label` option.**
+  `skew_params`, `concentrated_labels`, `competing_noise`, `target_metric`
+  (including `scope`, `tolerance`, `max_iter`) and `centroid_dependence.steepness`
+  previously had no template slot, so the payload path could not express features
+  the manual documents in full — they could only be added by hand-editing the
+  rendered YAML. Each block renders only when the payload carries it, so an
+  existing payload produces the same config as before.
+- **Render-time warnings for configs the engine will reject**, matching the
+  existing `skew_rule`/`data_source` checks: `target_metric` outside
+  `single`/`custom` (`[CLM-111]`/`[CLM-114]`), `scope: pair` without `type: mcc`
+  *and* `matching_mode: single` (`[CLM-123]`/`[CLM-124]`), and `competing_noise`
+  under `random` (`[CLM-115]`).
+- **Wizard now asks for `spillover_rule` in `single` mode.** It was a
+  `custom`-only question, so a `single` run silently took the default even though
+  spillover governs every point the rule does not claim.
+- **Wizard now asks for `concentrated_labels`** when `spillover_rule:
+  concentrated` is chosen, instead of leaving the engine to fall back to the
+  single largest label.
+
+### Fixed
+
+- **`generate_config` raised `NameError` on import under Python 3.11–3.13.**
+  The new optional-block renderers annotated `List[str]` without importing
+  `List` from `typing`. Python 3.14 defers annotation evaluation (PEP 649) so
+  the module imported cleanly there, masking the fault on the only interpreter
+  it was exercised with; on 3.11–3.13 annotations are evaluated at definition
+  time and `clmsynth-config` failed outright. Caught by static inspection, not
+  by running it.
+- **The `mdcgen` source could never run.** `fetch_mdcgen_data` did
+  `import mdcgenpy` and then reached for `mdcgenpy.clusters.ClusterGenerator`,
+  but importing a package does not bind its submodules, so every run failed with
+  `module 'mdcgenpy' has no attribute 'clusters'`. Because the access sat inside
+  the generic generation-failure handler, it was reported as a data-generation
+  error rather than an import problem. Now imports
+  `from mdcgenpy.clusters import ClusterGenerator` directly, and the import
+  guard reports the underlying `ImportError` so a missing package and a changed
+  package layout are distinguishable.
+- **The wizard printed a command that fails.** On completion it suggested
+  `python main.py <config>`, which raises `ImportError` under the package layout;
+  it now prints `python -m clmsynth.main <config>`. The same stale form is
+  corrected in the `main.py`, `generate_config.py` and `config_wizard.py`
+  docstrings and in `upstream_payload.yaml`, all of which now also name the
+  console-script equivalent.
+- **The wizard crashed on empty input at the cluster-id prompts.** Pressing Enter
+  at `single_match.cluster` or a `competing_noise` cluster raised an uncaught
+  `IndexError`; an empty cluster list in a `custom` rule was accepted silently and
+  surfaced much later as a confusing `[CLM-150]` (zero capacity). All three
+  prompts now re-ask.
+- README: a sentence in the `[CLM-309]` limitation had been severed mid-clause,
+  and a stray `****` rendered as literal asterisks in the `competing_noise` entry.
+
 ## [0.3.0] — 2026-07-31
 
 A documentation-consistency pass ahead of the first public release. No change to

@@ -738,12 +738,12 @@ def generate_clm_labels(cluster_labels: np.ndarray, coords: np.ndarray, cfg: Dic
             # estimate. solve_alpha_for_target_metric scores candidates under a
             # fixed probe stream (default_rng(probe_seed), probe_seed defaulting
             # to 0, so candidates compare fairly), but this final allocation runs
-            # on the main rng, default_rng(seed) -- two different streams by
+            # on the main rng, default_rng(seed), two different streams by
             # construction, whatever the run's seed. (Under skew_rule 'dirichlet'
             # resolve_label_counts additionally advances the main stream, widening
-            # the gap.) The two streams place spillover differently, so a solve
+            # the gap.) The two streams place spillover differently, so a solution
             # that converged on the probe stream can still deliver a labeling
-            # outside tolerance -- most visibly on small N, where spillover
+            # outside tolerance, most visibly on small N, where spillover
             # placement is a large share of the outcome. Without this check that
             # miss is silent.
             tol = tm.get("tolerance", 0.01)

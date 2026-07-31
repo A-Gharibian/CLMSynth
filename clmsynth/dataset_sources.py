@@ -315,11 +315,16 @@ def fetch_mdcgen_data(
 ) -> Optional[pd.DataFrame]:
     """Generates one synthetic dataset via mdcgenpy (optional dependency)
     from the registered preset, seeded; None if unavailable or failing."""
+    # Import the SUBMODULE, not just the package: `import mdcgenpy` alone leaves
+    # `mdcgenpy.clusters` unbound (mdcgenpy/__init__.py does not import it), so
+    # `mdcgenpy.clusters.ClusterGenerator` raised AttributeError on every run --
+    # caught by the generic handler below and reported as a generation failure
+    # rather than an import problem.
     try:
-        import mdcgenpy
-    except ImportError:
-        log.error("mdcgenpy is not installed. Please install it via: "
-                   "pip install git+https://github.com/CN-TU/mdcgenpy")
+        from mdcgenpy.clusters import ClusterGenerator
+    except ImportError as e:
+        log.error(f"mdcgenpy is unavailable ({e}). Install it via: "
+                  "pip install git+https://github.com/CN-TU/mdcgenpy")
         return None
 
     if dataset_group not in SOURCE_METADATA["mdcgen"]:
@@ -338,7 +343,7 @@ def fetch_mdcgen_data(
     config["seed"] = seed  # confirmed kwarg name: ClusterGenerator.__init__(self, seed=1, ...)
 
     try:
-        cluster_gen = mdcgenpy.clusters.ClusterGenerator(**config)
+        cluster_gen = ClusterGenerator(**config)
         data, labels = cluster_gen.generate_data()
     except Exception as e:
         log.error(f"Failed to generate dataset using mdcgenpy: {e}")
@@ -392,7 +397,7 @@ def fetch_fabricated_data(
     # Cluster ids are emitted as integers 0..K-1, like every other source, so a
     # clm_label config's `clusters:`/`single_match.cluster` values port across
     # sources unchanged. The generator deliberately produces READABLE labels
-    # ("Class_0", or Faker company names when use_faker is set) -- collapsing
+    # ("Class_0", or Faker company names when use_faker is set), collapsing
     # those to codes is this adapter's job, not the generator's, which keeps its
     # own standalone CSV human-readable. Cohort_Class is left as-is; build_context
     # drops it, so only the integer labeling reaches the output frame.

@@ -280,9 +280,9 @@ User Manual under the Troubleshooting appendix.
   non-convergence warning.
 - **Proportions are only honored with `spillover_rule: proportional_to_marginal`.**
   `uniform`/`concentrated` deliberately do not preserve the target label counts.
-- **`competing_noise` also breaks proportions, by design. **** Each entry converts
+- **`competing_noise` also breaks proportions, by design.** Each entry converts
   leftover points of one cluster into one specific competing label (placed
-  boundary/core/random), so achieved label counts deviate from `proportions.`
+  boundary/core/random), so achieved label counts deviate from `proportions`,
   and the achieved MCC/ARI differs from random-spillover noise, that contrast
   is the feature's purpose. Only valid under `single`/`custom`; a warned no-op
   under `perfect` (no leftover capacity); rejected under `random`.
@@ -294,7 +294,7 @@ User Manual under the Troubleshooting appendix.
   miss.** `solve_alpha_for_target_metric` scores candidate recalls on a fixed
   probe stream (`default_rng(probe_seed)`, `probe_seed` defaulting to 0) so that
   candidates compare fairly, but the labeling that is written out is generated on
-  the run's own stream (`default_rng(seed)`).
+  the run's own stream (`default_rng(seed)`), so a search that converged
   internally can still deliver a labeling outside tolerance. The generator now
   measures what it actually writes and raises **`[CLM-309]`** when that value
   falls outside tolerance, *treat the achieved value as authoritative, not the

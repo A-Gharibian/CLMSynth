@@ -2,7 +2,9 @@ TESTING/
 OUTPUT/
 .claude
 
-# Python build artifacts
+Inspection/
+wizard_config.yaml
+
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -10,3 +12,5 @@ build/
 dist/
 .venv/
 venv/
+.idea
+.idea/

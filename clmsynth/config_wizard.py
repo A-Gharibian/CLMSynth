@@ -1,7 +1,10 @@
 # config_wizard.py
 """
 Configuration Generator (CLI wizard).
-    python config_wizard.py
+    python -m clmsynth.config_wizard      (or the `clmsynth-wizard` console script)
+
+Run as a module, not as a file: the relative imports below only resolve inside
+the package.
 """
 
 import subprocess
@@ -105,6 +108,42 @@ def _parse_ids(raw):
         except ValueError:
             out.append(tok)
     return out
+
+
+def ask_cluster_ids(prompt, explain=None) -> List:
+    """Asks for one or more cluster ids, re-asking on empty input.
+
+    Cluster ids come straight from the data (ints for every generated source,
+    possibly strings for a byoc CSV), so they are read as free text rather than
+    offered as a choice. Empty input used to slip through as an empty list,
+    which then either crashed on [0] or produced a rule with no clusters (zero
+    capacity -> a confusing [CLM-150] much later); it re-asks instead.
+    """
+    _explain(explain)
+    while True:
+        ids = _parse_ids(input(f"  {prompt}: "))
+        if ids:
+            return ids
+        print("    (at least one cluster id is required)")
+
+
+def ask_cluster_id(prompt, explain=None):
+    """Asks for exactly ONE cluster id; extra ids are ignored."""
+    return ask_cluster_ids(prompt, explain)[0]
+
+
+def ask_ints(prompt, explain=None) -> List[int]:
+    """Asks for a comma-separated list of whole numbers (e.g. label ids)."""
+    _explain(explain)
+    while True:
+        raw = input(f"  {prompt} (comma-separated): ").strip()
+        try:
+            vals = [int(x) for x in raw.split(",") if x.strip()]
+        except ValueError:
+            print("    (enter whole numbers separated by commas)"); continue
+        if vals:
+            return vals
+        print("    (at least one value is required)")
 
 
 def ask_floats(prompt, explain=None) -> List[float]:
@@ -311,17 +350,24 @@ def build_clm(known_k=None) -> Dict[str, Any]:
 
     if mode == "single":
         clm["single_match"] = {
-            "cluster": _parse_ids(input("  Which cluster id becomes the aligned label? "
-                                        "(an id from your cluster column, e.g. 1): "))[0],
+            "cluster": ask_cluster_id("Which cluster id becomes the aligned label? "
+                                      "(an id from your cluster column, e.g. 1)"),
             "label": ask_int("Which label value (0..M-1) it becomes", 0, minv=0),
         }
     elif mode == "custom":
         clm["assignment_matrix"] = _build_rules(omit_recall=use_target)
+        # split_rule only bites when a rule spans more than one cluster, which
+        # 'single' never does, so it stays a custom-only question.
         clm["split_rule"] = ask_choice(
             "If a rule targets several clusters, how to split the label between them",
             ["proportional_to_size", "equal"], "proportional_to_size",
             explain="proportional_to_size : bigger clusters get more of the label (usual choice).\n"
                     "equal                : each targeted cluster gets the same amount.")
+
+    # Spillover applies to BOTH single and custom: either way the rules leave
+    # unclaimed points behind. It used to be asked only under 'custom', so a
+    # 'single' run silently took the default.
+    if mode in ("single", "custom"):
         clm["spillover_rule"] = ask_choice(
             "After the rules, how to fill the leftover points",
             ["proportional_to_marginal", "uniform", "concentrated"], "proportional_to_marginal",
@@ -330,6 +376,11 @@ def build_clm(known_k=None) -> Dict[str, Any]:
                     "                             proportions (recommended, keeps your split).\n"
                     "  uniform                  : spread evenly, this CHANGES your proportions.\n"
                     "  concentrated             : dump all leftovers into one label.")
+        if clm["spillover_rule"] == "concentrated":
+            clm["concentrated_labels"] = ask_ints(
+                "Which label value(s) should absorb the leftovers",
+                explain="All leftover points go to these labels. Leave one value for the\n"
+                        "usual case; the default without this is the single largest label.")
 
     if mode in ("single", "custom") and ask_bool(
             "Give one cluster's leftover points a specific competing label (structured noise)?",
@@ -347,7 +398,7 @@ def build_clm(known_k=None) -> Dict[str, Any]:
         while True:
             print(f"\n  Competing-noise entry {len(entries) + 1}:")
             entries.append({
-                "cluster": _parse_ids(input("    which cluster id gets the competing label: "))[0],
+                "cluster": ask_cluster_id("  which cluster id gets the competing label"),
                 "label": ask_int("    which label value (0..M-1) competes there", 0, minv=0),
                 "share": ask_float("    share of that cluster's LEFTOVER points to convert (0..1)",
                                     1.0, lo=0.0, hi=1.0),
@@ -432,7 +483,7 @@ def _build_rules(omit_recall):
         print(f"\n  Rule {i + 1}:")
         rule: Dict[str, Any] = {
             "label": ask_int("    which label value (0..M-1)", 0, minv=0),
-            "clusters": _parse_ids(input("    into which cluster id(s), comma-separated: "))}
+            "clusters": ask_cluster_ids("  into which cluster id(s), comma-separated")}
         if not omit_recall:
             rule["recall_target"] = ask_float(
                 "    recall_target, share of THAT label's points to put here "
@@ -469,7 +520,7 @@ def main() -> None:
         out = "config_" + out                # last-ditch guard against a folder/file name clash
     Path(out).write_text(yaml.dump(config, sort_keys=False, default_flow_style=False), encoding="utf-8")
     print(f"\n  Wrote '{out}'.")
-    print(f"  Run it any time with:  python main.py {out}")
+    print(f"  Run it any time with:  python -m clmsynth.main {out}")
     if ask_bool("Run the pipeline now?", default=True):
         subprocess.run([sys.executable, "-m", "clmsynth.main", out])
 

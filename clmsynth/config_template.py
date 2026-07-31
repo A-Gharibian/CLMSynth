@@ -1,7 +1,12 @@
 # config_template.py
 """The commented YAML template that generate_config.py renders into a
 runnable pipeline config. Placeholders are filled via str.format, so the
-braces here are template slots, not f-string expressions."""
+braces here are template slots, not f-string expressions.
+
+Optional clm_label blocks (skew_params, concentrated_labels, competing_noise,
+target_metric, steepness) are rendered by generate_config.py and carry their own
+leading newline, so a payload that omits them produces exactly the config this
+template produced before they existed, with no stray blank lines."""
 
 YAML_TEMPLATE = """\
 global_settings:
@@ -34,7 +39,7 @@ label_generation:
     balance: "{balance}"
     # Only consulted if balance != 'balanced' AND proportions is empty/unset.
     # Options: 'geometric', 'dominant_minority', 'dirichlet'
-    skew_rule: "{skew_rule}"
+    skew_rule: "{skew_rule}"{skew_params}
 
     # 3. MATCHING MODE
     # Options: 'perfect', 'single', 'random', 'custom'
@@ -52,11 +57,11 @@ label_generation:
     # Options: 'proportional_to_size' or 'equal'
     split_rule: "{split_rule}"
     # Options: 'proportional_to_marginal', 'uniform', 'concentrated'
-    spillover_rule: "{spillover_rule}"
+    spillover_rule: "{spillover_rule}"{concentrated_labels}{competing_noise}{target_metric}
 
     # 5. SPATIAL ASSIGNMENT (CENTROID PROXIMITY)
     centroid_dependence:
       enabled: {centroid_enabled}  # If False, labels are randomly distributed
       profile: "{centroid_profile}"  # Options: 'linear', 'exponential', 'step'
-      favors: "{centroid_favors}"    # Options: 'core', 'boundary'
+      favors: "{centroid_favors}"    # Options: 'core', 'boundary'{steepness}
 """
