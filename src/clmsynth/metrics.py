@@ -1,12 +1,5 @@
 # metrics.py
 """Evaluation metrics for cluster-label agreement.
-
-Two families:
-    * external agreement between two labeling of the same rows:
-      clustering_mcc (Hungarian-matched Gorodkin R_K) and clustering_ari;
-    * internal validity of one labeling against the feature geometry:
-      evaluate_cluster_label_matching (adjusted IVMs via the optional
-      pyivm package).
 """
 import logging
 from typing import Dict
@@ -20,21 +13,13 @@ from sklearn.metrics import matthews_corrcoef, adjusted_rand_score
 try:
     import pyivm
 except ImportError:
-    pyivm = None  # optional dependency; evaluate_cluster_label_matching returns {} without it
+    pyivm = None
 
 log = logging.getLogger(__name__)
-
 
 def clustering_ari(labels_true, labels_pred) -> float:
     """
     Adjusted Rand Index between two clusterings.
-
-    Unlike `clustering_mcc`, this needs no Hungarian-matching step: ARI is
-    computed directly from the contingency table's cell and marginal pair
-    counts, which is already invariant to how cluster/label IDs are ordered;
-    it never assumes label i in one array means the same category as
-    label i in the other. sklearn's `adjusted_rand_score` implements this
-    directly.
     """
     return adjusted_rand_score(np.asarray(labels_true), np.asarray(labels_pred))
 
@@ -66,10 +51,7 @@ def clustering_mcc(labels_true, labels_pred):
     where cluster IDs are arbitrary and the number of clusters can differ
     between the ground truth and a candidate partition.
 
-    This wrapper adds the missing step, finding the best correspondence
-    between true and predicted clusters via the Hungarian algorithm on the
-    contingency table, then delegates the actual R_K arithmetic to
-    scikit-learn.
+    This wrapper adds the missing step.
 
     Parameters
     ----------
@@ -94,8 +76,7 @@ def clustering_mcc(labels_true, labels_pred):
 
     # Best one-to-one correspondence maximizing total overlap.
     # linear_sum_assignment handles rectangular matrices natively,
-    # returning min(n_true, n_pred) matched pairs, this is what makes
-    # unequal cluster counts work.
+    # returning min(n_true, n_pred) matched pairs.
     row_ind, col_ind = linear_sum_assignment(-C)
 
     # Relabel predicted clusters: a matched one takes its matched true
@@ -143,8 +124,6 @@ def evaluate_cluster_label_matching(
 
     # 2. Handle string/categorical labels by converting them to integers
     # (pyivm, like most clustering metrics, requires numeric labels).
-    # Checked via the pandas dtype API: np.issubdtype cannot interpret
-    # pandas extension dtypes such as StringDtype (pandas 3.0 default).
     if not pd.api.types.is_numeric_dtype(df[label_col]):
         _, labels = np.unique(df[label_col].astype(str).to_numpy(), return_inverse=True)
     else:

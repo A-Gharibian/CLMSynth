@@ -1,11 +1,4 @@
 # label_context.py
-"""
-Holds features, every reference labeling, and every generated 'add_labels_n'
-column for one dataset, strictly row-aligned. This is the single handoff
-object between the fetcher, the label-generation engine, and the CSV/plot
-writers, so a generated column can never silently drift out of alignment
-with the geometry or ground truth it was derived from.
-"""
 
 import logging
 from dataclasses import dataclass, field
@@ -15,11 +8,8 @@ import pandas as pd
 
 log = logging.getLogger(__name__)
 
-
 @dataclass
 class DatasetContext:
-    """Row-aligned bundle of one dataset's features, ground truths, and
-    generated labels; the single handoff object between pipeline stages."""
     battery: str
     dataset: str
     features: pd.DataFrame

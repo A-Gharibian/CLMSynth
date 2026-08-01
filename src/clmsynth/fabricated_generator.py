@@ -2,8 +2,7 @@
 """Offline synthetic-feature generator backing the "fabricated_data" data source.
 
 Produces six engineered numeric features plus an optional categorical
-column with enforced perfect separation, so the pipeline can run without
-network access or extra dependencies.
+column.
 """
 
 import logging
@@ -26,16 +25,13 @@ log = logging.getLogger(__name__)
 
 def generate_faker_categories(n_samples: int, labels: list, seed: int) -> pd.Series:
     """Generates categorical labels using Faker, falling back to numpy if unavailable."""
-    # Local Generator, not the global np.random state: the rest of the codebase
     # uses default_rng, and mutating global RNG state is not thread/process-safe.
     rng = np.random.default_rng(seed)
     if Faker is not None:
         Faker.seed(seed)
         fake = Faker()
         # Create a mapping of generic labels to realistic Fake categories (e.g., medical conditions or cohorts)
-        # For this example, we'll map them to realistic sounding company/group names as a proxy
         group_mapping = {label: fake.company() for label in labels}
-
         # Randomly assign the base labels to maintain distribution, then map to the Faker strings
         base_assignments = rng.choice(labels, size=n_samples)
         faker_assignments = [group_mapping[val] for val in base_assignments]
@@ -62,8 +58,7 @@ def generate_synthetic_data(
         config_dict = {}
 
     log.info(f"Generating synthetic data (Seed: {seed})...")
-    # Local Generator instead of the global np.random state (thread/process-safe,
-    # and consistent with default_rng used everywhere else). Deterministic per seed.
+    # Deterministic per seed.
     rng = np.random.default_rng(seed)
     index_start = 1000
 
@@ -92,7 +87,7 @@ def generate_synthetic_data(
     cat_config = config_dict.get("feature_generators", {}).get("categorical_features", {})
     ground_truths = config_dict.get("ground_truths", {})
 
-    final_dfs_to_concat: list = [scaled_df]  # holds the feature frame plus label Series
+    final_dfs_to_concat: list = [scaled_df]
 
     if cat_config.get("enable", False):
         labels = cat_config.get("labels", ["Class_0", "Class_1"])

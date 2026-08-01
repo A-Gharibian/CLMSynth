@@ -1,12 +1,7 @@
 # config_template.py
 """The commented YAML template that generate_config.py renders into a
 runnable pipeline config. Placeholders are filled via str.format, so the
-braces here are template slots, not f-string expressions.
-
-Optional clm_label blocks (skew_params, concentrated_labels, competing_noise,
-target_metric, steepness) are rendered by generate_config.py and carry their own
-leading newline, so a payload that omits them produces exactly the config this
-template produced before they existed, with no stray blank lines."""
+braces here are template slots, not f-string expressions."""
 
 YAML_TEMPLATE = """\
 global_settings:

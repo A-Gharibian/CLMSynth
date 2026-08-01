@@ -1,10 +1,7 @@
 # generate_config.py
 """Renders config_template.YAML_TEMPLATE into a runnable pipeline config.
 
-The input is a flat "upstream payload" mapping (see upstream_payload.yaml);
-the output is the full, commented YAML that main.py reads. Import
-generate_base_config to drive it from another system, or run this module
-as a script to render a payload file.
+The input is a flat "upstream payload" mapping (see upstream_payload.yaml).
 """
 
 import logging
@@ -17,7 +14,7 @@ from .config_template import YAML_TEMPLATE
 
 log = logging.getLogger(__name__)
 
-VALID_SKEW_RULES = {"geometric", "dominant_minority", "dirichlet"}  # only what clm_label_engine.py actually implements
+VALID_SKEW_RULES = {"geometric", "dominant_minority", "dirichlet"}
 VALID_SOURCES = {"clustbench", "mdcgen", "fabricated_data", "byoc"}
 
 
@@ -80,10 +77,7 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
                     f"(valid: {VALID_SKEW_RULES}). This config will fail at runtime unless fixed.")
 
     # --- optional clm_label blocks ------------------------------------------
-    # Every one of these is documented in the manual but had no template slot,
-    # so the payload path could not express them at all. Each renders only when
-    # the payload carries it: a minimal payload still produces the exact config
-    # this renderer produced before they were added.
+
     mode = upstream_data.get("matching_mode", "custom")
     target_metric = upstream_data.get("target_metric") or {}
     competing_noise = upstream_data.get("competing_noise") or []
@@ -149,9 +143,6 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
     assignment_matrix_yaml = format_yaml_snippet(upstream_data.get("assignment_matrix", []))
     centroid_enabled = "true" if upstream_data.get("centroid_enabled", True) else "false"
 
-    # byoc carries three extra suite keys the other sources don't have; they are
-    # appended under the suite block only when the source is byoc (empty otherwise
-    # so the template stays valid for clustbench/mdcgen/fabricated_data).
     if data_source == "byoc":
         byoc_extra = (
             f"\n  input_dir: {upstream_data.get('input_dir', 'INPUT')!r}"

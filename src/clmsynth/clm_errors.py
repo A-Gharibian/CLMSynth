@@ -1,23 +1,16 @@
 # clm_errors.py
 """
-Central registry of CLM engine diagnostics: the single source of truth for the
-message text behind every *explicitly* raised error and logged warning, keyed
-by a stable numeric code so users can cross-reference Manual/troubleshooting.tex.
+Central registry of CLM engine diagnostics: reference Manual/troubleshooting.tex.
 
 Bands:
     1xx  ValueError:                invalid configuration / incompatible options
     15x  InfeasibleAllocationError: a ValueError subclass; valid config, counts don't fit
+    2xx  raw Python KeyError, a required config key is missing (NOT represented here)
     3xx  Warning:                   non-fatal; logged, execution continues
 
-NOT represented here (documentation-only in troubleshooting.tex, by design):
-    2xx  raw Python KeyError, a required config key is missing
-    121  proportions length != num_classes, surfaces as a NumPy broadcasting error
+ (documentation-only in troubleshooting.tex, by design):
 
-Every coded error carries the code twice: as a "[CLM-###]" message prefix (for
-humans / logs) and as an ``exc.code`` attribute (for programmatic handling).
-
-Codes are a public contract: never renumber or reuse an assigned code; new
-diagnostics get new numbers.
+Codes are a public contract: new diagnostics get new numbers.
 """
 
 
@@ -62,6 +55,8 @@ CODES = {
     120: "target_metric: no feasible alpha in [0, 1], every candidate recall_target "
          "produced an infeasible allocation. Check that your rule clusters have enough "
          "capacity for the configured num_classes/proportions.",
+    121: "proportions has {n} entries but num_classes is {M}; it must have exactly one "
+         "entry per label. {detail}",
     122: "target_metric.scope must be 'pair' or 'global' (got {scope!r}).",
     123: "target_metric.scope 'pair' requires target_metric.type 'mcc': the single-pair "
          "MCC has an exact closed-form inverse, ARI does not.",
@@ -72,6 +67,26 @@ CODES = {
          "centroid_dependence and any competing_noise favors 'core'/'boundary'.",
     126: "num_classes must be between 1 and {max_val} (got {M}).",
     127: "the dataset's cluster count K={K} exceeds the supported maximum of {max_val}.",
+    128: "spillover_rule 'concentrated': concentrated_labels must be a LIST of integer "
+         "label ids, each in 0..{hi}; got {given!r}. Values reaching the output "
+         "unchecked would put labels in the dataset that num_classes never declared. "
+         "Note a bare number is not a shorthand for a list: numpy reads it as a RANGE, "
+         "scattering the remainder over that many labels, the opposite of "
+         "'concentrated'. A non-integer (e.g. 1.5) is silently truncated on write, so "
+         "it is rejected rather than guessed.",
+
+    129: "centroid_dependence: favors must be 'core' or 'boundary', got {favors!r}. "
+         "Matching is case-sensitive and exact; any other value would silently be "
+         "treated as 'boundary', placing labels at the cluster rim when the core was "
+         "intended.",
+
+    130: "target_metric.scope 'pair' is incompatible with {what}. The closed-form "
+         "construction sizes label {label} so that ALL of it sits inside cluster "
+         "{cluster}; inverting the 2x2 phi depends on that. {what} can place that label "
+         "outside the cluster, which breaks the identity and silently delivers a "
+         "different value. Use spillover_rule 'proportional_to_marginal' (its leftover "
+         "pool for the target label is empty by construction), keep competing_noise off "
+         "label {label}, or switch to scope 'global'.",
 
     # --- 15x : InfeasibleAllocationError (valid config, counts don't fit) ---
     150: "Infeasible rule: label {label} needs recall_target={rt} ({tp} of its {m} points) "
@@ -82,6 +97,12 @@ CODES = {
          "them across more clusters.",
     152: "competing_noise: entries for cluster {k} jointly claim {claimed} points but only "
          "{remaining} are unclaimed there. Lower the 'share' values.",
+    153: "Infeasible configuration: {n_rules} assignment_matrix rules name label {label} "
+         "and jointly claim {claimed} points, but that label's budget is only {budget}. "
+         "Each rule's recall_target is a fraction of the label's WHOLE budget, not a share "
+         "of it, so recall targets on the same label add up: {breakdown}. Either lower them "
+         "so they sum to at most 1.0, or write one rule listing all the clusters and let "
+         "split_rule divide the budget between them.",
 
     # --- 3xx : Warnings (non-fatal) -----------------------------------------
     301: "balance='balanced': explicit 'proportions' are ignored (uniform 1/M split "
@@ -103,6 +124,11 @@ CODES = {
          "nearest reachable value.",
     308: "target_metric scope 'pair': label {label} is sized to {m} points (a subset of "
          "its cluster) to meet the target MCC; any explicit proportion for it is overridden.",
+    310: "target_metric scope 'pair': the DELIVERED labeling achieves pair mcc="
+         "{achieved:.4f}, outside the requested {target} +/- {tol}. The closed-form "
+         "construction assumes every point of label {label} lies inside cluster {cluster}, "
+         "but {outside} of its {total} points lie outside. Treat the achieved value above "
+         "as authoritative, not the requested one.",
     309: "target_metric: the DELIVERED labeling achieves {type}={achieved:.4f}, outside the "
          "requested {target} +/- {tol} (solved alpha={alpha:.4f}). The solver scores candidates "
          "on a fixed probe stream while this output is generated on the run's own stream, so a "

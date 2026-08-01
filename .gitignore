@@ -1,10 +1,14 @@
+src/engine_internals.md
+CHANGELOG.md
+docs/troubleshooting_catalog/
 TESTING/
 OUTPUT/
+ROADMAP.txt
 .claude
 tests/
 Inspection/
 wizard_config.yaml
-
+Article/
 __pycache__/
 *.py[cod]
 *.egg-info/

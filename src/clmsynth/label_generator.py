@@ -21,8 +21,7 @@ def generate_additional_labels(
     """Attaches `n_labels` generated label columns to `context`.
 
     Each label i uses seed + i, so labels differ but the run is reproducible.
-    With a `clm_config` the CLM engine is used; without one the legacy
-    noise-flip fallback corrupts the ground truth at rate `noise`.
+    With a `clm_config` the CLM engine is used.
     """
     if source_labeling not in context.ground_truths:
         raise KeyError(f"'{source_labeling}' not found for {context.battery}/{context.dataset}; "

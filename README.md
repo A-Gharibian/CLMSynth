@@ -1,9 +1,10 @@
 # CLM Benchmark Data Synthesizer
 
-[![Version](https://img.shields.io/badge/version-0.5.0-brightgreen)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.0-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](LICENSE.txt)
 [![Cite](https://img.shields.io/badge/cite-CITATION.cff-blueviolet)](CITATION.cff)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21751081.svg)](https://doi.org/10.5281/zenodo.21751081)
 
 Generates synthetic label columns on top of existing or generated cluster
 geometries, with mathematically controlled agreement (recall, class balance,
@@ -27,7 +28,7 @@ configuration, rather than measured after the execution and synthesis.
 | `src/clmsynth/label_generator.py`      | Orchestrates label generation: calls the CLM engine per `n_labels`, or falls back to simple noise-flipping if no `clm_label` config is given.                                                                                                                                                                                                                                                            |
 | `src/clmsynth/clm_label_engine.py`     | The CLM label-assignment math: proportions/skew, matching modes, recall targets, feasibility-checked allocation, spillover, structured competing noise, spatial (centroid) placement, and the global target-metric solver.                                                                                                                                                                               |
 | `src/clmsynth/clm_errors.py`           | Diagnostics: message templates keyed by a `[CLM-###]` code (1xx `ValueError`, 15x `InfeasibleAllocationError`, 3xx warnings) plus helpers. `InfeasibleAllocationError` is defined here and re-exported from the engine.                                                                                                                                                                                  |
-| `src/clmsynth/metrics.py`              | Standalone evaluation. Three external measures compare two labelings row by row without looking at the features: `clustering_mcc` (Hungarian-matched multiclass MCC / Gorodkin R_K), `clustering_mcc_pair` (the 2x2 Matthews phi of one cluster against one label, the quantity `target_metric.scope: pair` targets), and `clustering_ari` (adjusted Rand index). `evaluate_cluster_label_matching` is a **provisional, not-yet-implemented** internal-validity hook (see Known limitations); the pipeline never calls it. |
+| `src/clmsynth/metrics.py`              | Standalone evaluation. Three external measures compare two labeling row by row without looking at the features: `clustering_mcc` (Hungarian-matched multiclass MCC / Gorodkin R_K), `clustering_mcc_pair` (the 2x2 Matthews phi of one cluster against one label, the quantity `target_metric.scope: pair` targets), and `clustering_ari` (adjusted Rand index). `evaluate_cluster_label_matching` is a **provisional, not-yet-implemented** internal-validity hook (see Known limitations); the pipeline never calls it. |
 | `src/clmsynth/visualization.py`        | Scatter-plot rendering for any two features, colored by a chosen label column, annotated with MCC/ARI and the generating config.                                                                                                                                                                                                                                                                         |
 | `src/clmsynth/config_template.py`      | The YAML template string used to render a config.                                                                                                                                                                                                                                                                                                                                                        |
 | `src/clmsynth/generate_config.py`      | Renders `config_template.py` into a runnable config YAML from an upstream payload file (default `upstream_payload.yaml`).                                                                                                                                                                                                                                                                                |
@@ -291,6 +292,17 @@ User Manual under the Troubleshooting appendix.
   non-convergence warning.
 - **Proportions are only honored with `spillover_rule: proportional_to_marginal`.**
   `uniform`/`concentrated` deliberately do not preserve the target label counts.
+- **`concentrated_labels` must be a *list* of existing label ids.** Under
+  `spillover_rule: concentrated` the value is drawn from directly and written
+  into the label column, so it is validated up front (`[CLM-128]`): every entry
+  must be an integer in `0..num_classes-1`. Two forms are rejected rather than
+  guessed at, because both used to corrupt the output silently — a bare number
+  (`concentrated_labels: 99`) is read by numpy as a *range*, scattering the
+  remainder over that many labels instead of concentrating it, and a
+  non-integer (`[1.5]`) is truncated to `[1]` when written to the integer label
+  column. Validation runs *before* the `target_metric` solver, so a solved score
+  can never be reported for a labeling that contains an undeclared label. Omit
+  the key to take the default, the single largest label.
 - **`competing_noise` also breaks proportions, by design.** Each entry converts
   leftover points of one cluster into one specific competing label (placed
   boundary/core/random), so achieved label counts deviate from `proportions`,
@@ -320,31 +332,5 @@ User Manual under the Troubleshooting appendix.
   backend requires plotting on the main thread; `main.py` only calls it
   sequentially.
 
-## Possible future additions
-
-Two extensions as candidates:
-
-- **SYNLABEL, scoped to `fabricated_generator.py`, not the CLM engine.**
-  SYNLABEL derives a noiseless functional labeling from a feature space and
-  injects measured noise by resampling features, useful here because
-  `fabricated_generator.py`'s current ground truth is a single crude rule
-  (a percentile split on `Feature_1`). A SYNLABEL-derived labeling would be a
-  more principled synthetic ground truth for the offline source. The
-  boundary matters: SYNLABEL must produce `c(x)`/`X` *before* the CLM engine
-  ever sees them, staying strictly in the data-source layer (alongside
-  `clustbench`/`mdcgen`/`byoc`).
-- **`fabricated_generator.py` emitting more than one ground-truth column.**
-  Real `clustbench` datasets already ship multiple reference labelings
-  (`GroundTruth_labels0`, `GroundTruth_labels1`, ...), and `DatasetContext`
-  already consumes any number of them generically (`build_context` collects
-  every `GroundTruth_*` column). The offline fabricator currently produces
-  exactly one. Extending it to emit several labelings derived from different
-  mathematical properties of the same synthetic feature space, e.g. a radial
-  split, a linear combination, a nonlinear boundary, would let the offline
-  source mimic that same multi-labeling structure without touching
-  `label_context.py` or the label engine at all; the plumbing already
-  supports it. This is the same territory Gagolewski's benchmarking
-  framework and adjusted internal-validity-measure work (Gagolewski, 2022,
-  *SoftwareX*; Jeon et al., 2025, *TPAMI*) explore for real datasets, characterizing a
-  dataset by more than one structural criterion at once, applied here to a
-  synthetic one.
+Planned work — uncoded errors still to be given diagnostics, and candidate
+source/generator extensions — is tracked in [`ROADMAP.txt`](ROADMAP.txt).

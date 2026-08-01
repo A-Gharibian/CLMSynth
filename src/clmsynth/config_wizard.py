@@ -3,8 +3,7 @@
 Configuration Generator (CLI wizard).
     python -m clmsynth.config_wizard      (or the `clmsynth-wizard` console script)
 
-Run as a module, not as a file: the relative imports below only resolve inside
-the package.
+Run as a module, not as a file.
 """
 
 import subprocess
@@ -112,12 +111,6 @@ def _parse_ids(raw):
 
 def ask_cluster_ids(prompt, explain=None) -> List:
     """Asks for one or more cluster ids, re-asking on empty input.
-
-    Cluster ids come straight from the data (ints for every generated source,
-    possibly strings for a byoc CSV), so they are read as free text rather than
-    offered as a choice. Empty input used to slip through as an empty list,
-    which then either crashed on [0] or produced a rule with no clusters (zero
-    capacity -> a confusing [CLM-150] much later); it re-asks instead.
     """
     _explain(explain)
     while True:

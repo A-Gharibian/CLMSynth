@@ -1,7 +1,5 @@
 # visualization.py
-"""Scatter-plot rendering for the pipeline outputs: any two feature columns,
-colored by a chosen label column, with optional subtitle (metrics) and a
-right-margin CLM-config annotation box."""
+"""Scatter-plot rendering for the pipeline outputs."""
 
 import logging
 from typing import Optional
@@ -58,12 +56,7 @@ def plot_feature_scatter(
     fig, ax = plt.subplots(figsize=(9, 6))
 
     try:
-        # Cluster/label ids are categorical, not a continuous scale. seaborn
-        # treats a numeric hue as continuous and samples the legend down to a
-        # few representative ticks (e.g. 1,3,4,6,7,8 for 8 categories), dropping
-        # the rest. Cast to an order-preserving categorical so every id gets its
-        # own discrete color and a full legend entry. (String ids, which a byoc
-        # CSV's cluster column may hold, are already categorical, so are untouched.)
+        # Cluster/label ids are categorical, not a continuous scale.
         plot_df = df
         if hue_col is not None and pd.api.types.is_numeric_dtype(df[hue_col]):
             plot_df = df.copy()
@@ -83,8 +76,7 @@ def plot_feature_scatter(
         )
 
         # Fixed axes rectangle: the scatter panel occupies the same position and
-        # width on every plot, so the right margin (legend + CLM box) can grow or
-        # shrink without ever moving or resizing the data panel.
+        # width on every plot.
         fig.subplots_adjust(left=0.09, right=0.68, top=0.88, bottom=0.10)
 
         # Bold title, with an optional smaller gray subtitle stacked beneath it.
@@ -129,5 +121,4 @@ def plot_feature_scatter(
         log.error(f"[PLOT-FAIL] Failed to generate scatter plot: {e}")
         return False
     finally:
-        # Close the figure to free memory and prevent leaks in loops
         plt.close(fig)

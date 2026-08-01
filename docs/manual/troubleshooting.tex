@@ -20,7 +20,7 @@
 
 \usepackage{hyperref}
 \hypersetup{colorlinks=true, linkcolor=headblue, urlcolor=headblue}
-
+\setlength{\LTcapwidth}{0.9\textwidth}
 % - ragged left-aligned fixed-width columns (no overfull hboxes) 
 \newcolumntype{L}[1]{>{\RaggedRight\arraybackslash}p{#1}}
 
@@ -30,10 +30,10 @@
 \newcommand{\wcode}[1]{\textcolor{warnamber}{\bfseries\ttfamily #1}}
 
 % - compatibility-matrix glyphs 
-\newcommand{\cok}{\textcolor{okgreen}{\checkmark}} % used / required
-\newcommand{\cign}{\textcolor{gray}{$\circ$}} % ignored / no effect
-\newcommand{\cno}{\textcolor{valred}{$\times$}} % not allowed (error)
-\newcommand{\cna}{\textcolor{gray}{--}} % not applicable / not read
+\newcommand{\cok}{\textcolor{okgreen}{\checkmark}} 
+\newcommand{\cign}{\textcolor{gray}{$\circ$}} 
+\newcommand{\cno}{\textcolor{valred}{$\times$}} 
+\newcommand{\cna}{\textcolor{gray}{--}} 
 
 \newcommand{\headrow}{\rowcolor{headblue}}
 \newcommand{\hc}[1]{\textcolor{white}{\bfseries #1}}
@@ -49,23 +49,24 @@
 \maketitle
 \vspace{0.2em}
 
-\noindent This reference documents every configuration condition that is either an incompatibility or is an ignored setting, and diagnostic message of the CLMSynth label engine. It is intended to help users \emph{plan} a valid configuration and \emph{interpret} what the engine does with it.
+\noindent This reference documents every configuration condition that is either an incompatibility or an ignored setting, as well as the diagnostic message of the CLMSynth label engine. It is intended to help users \emph{plan} a valid configuration and \emph{interpret} what the engine does with it.
 
 \vspace{0.4em}
-\noindent\textbf{How the codes work.} The identifiers below are a documentation index for this manual; the core label synthesizer engine raises standard Python exceptions with a messages banded by type:
+\noindent\textbf{How the code works.} The identifiers below are a documentation index for this manual; the core label synthesizer engine raises standard Python exceptions with messages banded by type:
 
 \begin{center}
 \small
 \begin{tabular}{@{}ll@{}}
-\vcode{1xx} & \textbf{ValueError} invalid value or incompatible option (\vcode{100}--\vcode{149}); \\
- & \textbf{InfeasibleAllocationError} (\texttt{ValueError} subclass), Infeasible outcome (\vcode{150}--\vcode{169}). \\
+\vcode{1xx} & \textbf{ValueError} invalid value (\vcode{100}--\vcode{110}) or\\
+ & \textbf{Incompatible} option (\vcode{111}--\vcode{149}) or \\
+ & \textbf{InfeasibleAllocationError}, Infeasible outcome (\vcode{150}--\vcode{169}). \\
 \kcode{2xx} & \textbf{KeyError} a required configuration key is missing (message is just the key name). \\
 \wcode{3xx} & \textbf{Warning} non-fatal; logged via \texttt{logging.warning}, execution continues. \\
 \end{tabular}
 \end{center}
 
 % ===========================================================================
-\section{At a glance: option \texorpdfstring{$\times$}{x} matching\_mode compatibility}
+\section{Configuration option compatibility at a glance}
 % ===========================================================================
 \begin{table}[!h]
 \centering\small
@@ -75,33 +76,20 @@
 \headrow
 \hc{Option} & \hc{perfect} & \hc{single} & \hc{random} & \hc{custom} \\
 \midrule
-\texttt{proportions} / \texttt{balance} / \texttt{skew\_rule} & \cign & \cok & \cok & \cok \\
+\texttt{proportions} / \texttt{balance} \texttt{skew\_rule} & \cign & \cok & \cok & \cok \\
 \texttt{single\_match} & \cna & \cok\,req & \cna & \cna \\
 \texttt{assignment\_matrix} & \cna & \cna & \cna & \cok\,req \\
 \texttt{split\_rule} & \cna & \cign & \cna & \cok \\
 \texttt{spillover\_rule} & \cign & \cok & \cna & \cok \\
-% UPDATED: competing_noise moved directly under spillover_rule -- the two share one
-% pool (competing noise is withdrawn from it first), and the README config schema
-% now groups them the same way.
 \texttt{competing\_noise} & \cign & \cok & \cno & \cok \\
 \texttt{target\_metric} & \cno & \cok & \cno & \cok \\
-% UPDATED: pair scope added with the closed-form single-pair MCC target.
 \texttt{target\_metric.scope: pair} & \cna & \cok & \cna & \cno \\
-% UPDATED: random column \cna -> \cign; _ensure_coords reads centroid_dependence
-% BEFORE the random early return, so it can still raise [CLM-125].
 \texttt{centroid\_dependence} & \cign & \cok & \cign & \cok \\
 \bottomrule
 \end{tabular}
-\caption{\cok~used / required, \cign~accepted but ignored or no visible effect, \cno~not allowed (raises an error), \cna~not read / not applicable. (\texttt{split\_rule} under \texttt{single}/\texttt{custom} only matters when a rule targets more than one cluster.)}
+\caption{Option \texorpdfstring{$\times$}{x} matching\_mode compatibility: \cok~used / required (\textbf{ValueError} or \textbf{KeyError} if required but not provided), \cna~not read / not applicable, \cign~accepted but ignored or no visible effect (with \textbf{Warning}), \cno~not allowed (raises a \textbf{ValueError} of type \textit{Incompatible}).}
 \end{threeparttable}
 \end{table}
-
-% COMMENTED OUT (v0.3): the erroneous-config catalog was removed from the repo --
-% the shipped logs had been captured from a pre-package layout and no longer matched
-% the current engine (stale paths, old 'dummy' source name, and a raw IndexError
-% where [CLM-102] now fires). Regenerate the catalog against the current package,
-% then uncomment this paragraph.
-%\noindent A cataloged configurations of erroneous values is available in the project directory, reporting error and issue should follow after checking this catalog.
 
 \newpage
 
@@ -109,7 +97,7 @@
 \section{\texorpdfstring{\quad Requirements \& Restrictions}{Requirements \& Restrictions}}
 % ===========================================================================
 \subsection{\texorpdfstring{\quad Requirements}{Requirements} (planning)}
-The user needs to provide through a configuration file (such as \texttt{test\_data\_config.yaml}) a required set of configuration settings (Table~2). It is necessary to plan the required configuration before executing the label synthesizer; An independent CLI wizard module (\texttt{config\_wizard} is provisioned for step-by-step generation of the configuration file.
+The user needs to provide, through a configuration file, a required set of configuration settings (Table~2). It is necessary to plan the required configuration before executing the label synthesizer; an independent CLI wizard module (\texttt{config\_wizard}) provides step-by-step generation of the file.
 
 \begin{longtable}{@{}L{4.2cm} L{12.0cm}@{}}
 \toprule
@@ -118,26 +106,27 @@ The user needs to provide through a configuration file (such as \texttt{test\_da
 \endfirsthead
 \headrow \hc{Setting} & \hc{Requires} \\ \midrule
 \endhead
-\texttt{num\_classes} ($M$) & Integer in $[1,64]$ ($\geq 2$ under \texttt{single}); the dataset's own cluster count $K$ is capped the same way. A coarse safety backstop (\vcode{126}/\vcode{127}), not a validated reliability boundary --- internal testing already finds results unreliable well below this, at $K\gtrsim15$ or $M\gtrsim20$. \\
+\texttt{num\_classes} ($M$) & Integer in $[1,64]$ ($\geq 2$ under \texttt{single}); the dataset's own cluster count $K$ is capped the same way. A coarse safety backstop (\vcode{126}/\vcode{127}), not a validated reliability boundary, internal testing already finds results unreliable well below this, at $K\gtrsim15$ or $M\gtrsim20$. \\
 \texttt{matching\_mode} & One of \texttt{perfect}, \texttt{single}, \texttt{random}, \texttt{custom}. \\
-\texttt{balance: unbalanced} & Either explicit \texttt{proportions} (summing to $1$) \emph{or} a \texttt{skew\_rule}. Rules have defaults, so \texttt{skew\_params} may be omitted. \\
+\texttt{balance: unbalanced} & Either explicit \texttt{proportions} \emph{or} a \texttt{skew\_rule}. Explicit proportions need exactly \texttt{num\_classes} entries (\vcode{121}) summing to $1$ (\vcode{106}). Rules have defaults, so \texttt{skew\_params} may be omitted. \\
 \texttt{skew\_params} & \texttt{skew\_params} for its type: \texttt{geometric}$\to$\texttt{ratio}; \texttt{dominant\_minority}$\to$\texttt{dominant\_index},\texttt{dominant\_share}; \texttt{dirichlet}$\to$\texttt{alpha}. \\
 \texttt{matching\_mode:}\\
 \texttt{perfect} & \texttt{num\_classes} $==$ number of clusters ($M=K$); a bijection needs one label per cluster.\\
-\texttt{single} & $M\geq2$, $K\geq2$, and \texttt{single\_match:\{cluster,label\}}; the cluster must exist and the label be in $0..M{-}1$. Refer to \texttt{target\_metric.scope} \\
+\texttt{single} & $M\geq2$, $K\geq2$, and \texttt{single\_match:\{cluster,label\}}; the cluster must exist and the label must be in $0..M{-}1$. Refer to \texttt{target\_metric.scope} \\
 \texttt{custom} & \texttt{assignment\_matrix} with $\geq1$ row; each row's \texttt{label}$\in 0..M{-}1$ and \texttt{clusters} exist; each row needs \texttt{recall\_target} \emph{unless} \texttt{target\_metric} is set. \\
 \texttt{target\_metric} & \texttt{matching\_mode} $\in$ \{\texttt{single}, \texttt{custom}\}; \texttt{type}$\in$\{\texttt{mcc},\texttt{ari}\}; \texttt{value}$\in[-1,1]$. \\
 \texttt{target\_metric.scope} & \texttt{"global"} (default) or \texttt{"pair"}. \texttt{pair} additionally requires \texttt{type: mcc} and \texttt{matching\_mode: single}, and is met in closed form (\texttt{tolerance}/\texttt{max\_iter} are not read). \\
 spatial placement & Per-point feature vectors (an $(N,d)$ \texttt{coords} array) whenever \texttt{centroid\_dependence} is enabled or a \texttt{competing\_noise} entry favors \texttt{core}/\texttt{boundary}; labels-only configs must omit them. \\
 \texttt{competing\_noise} & \texttt{matching\_mode} $\in$ \{\texttt{single}, \texttt{custom}\}; each entry: \texttt{cluster} exists, \texttt{label}$\in 0..M{-}1$, \texttt{share}$\in[0,1]$, \texttt{favors}$\in$\{\texttt{core},\texttt{boundary},\texttt{random}\}. Needs \emph{unclaimed} (leftover) points to have any effect. \\
-\texttt{centroid\_dependence} & \texttt{profile}$\in$\{\texttt{linear},\texttt{exponential},\texttt{step}\}; \texttt{favors}$\in$\{\texttt{core},\texttt{boundary}\}; \texttt{steepness} only for \texttt{exponential}. \\
+\texttt{centroid\_dependence} & \texttt{profile}$\in$\{\texttt{linear},\texttt{exponential},\texttt{step}\}; \texttt{favors}$\in$\{\texttt{core},\texttt{boundary}\}, matched exactly and case-sensitively (\vcode{129}); \texttt{steepness} only for \texttt{exponential}. \\
+\texttt{concentrated\_labels} & Under \texttt{spillover\_rule: concentrated} only: a \emph{list} of integer label ids, each $\in 0..M{-}1$ (\vcode{128}). A bare number is not a shorthand for a one-element list. Omit the key to take the default, the single largest label. \\
 \bottomrule
-\caption{Table 2}
+\caption{List of configuration a user is required to plan and provide to the software}
 \end{longtable}
 \newpage
 
 \subsection{Incompatibilities}
-
+Incompatibilities are configurations in which every individual setting is valid, but the combination is not: the requested features are mutually exclusive so that no assignment can satisfy both at once.
 \begin{longtable}{@{}L{3.4cm} L{4.6cm} L{1.2cm} L{6.4cm}@{}}
 \toprule
 \headrow \hc{Feature} & \hc{Not allowed when} & \hc{Code} & \hc{Reason \& fix} \\
@@ -150,9 +139,11 @@ spatial placement & Per-point feature vectors (an $(N,d)$ \texttt{coords} array)
 \texttt{competing\_noise} & \texttt{matching\_mode = random} & \vcode{115} & There is no aligned label for a competing label to compete with. Use \texttt{single}/\texttt{custom}. \\
 \texttt{target\_metric.}\newline \texttt{scope: pair} & \texttt{type = ari} & \vcode{123} & The single-pair MCC inverts in closed form; ARI has no such inverse. Use \texttt{type: mcc}, or \texttt{scope: global}. \\
 \texttt{target\_metric.}\newline \texttt{scope: pair} & \texttt{matching\_mode} $\neq$ \texttt{single} & \vcode{124} & The target pair is the \texttt{single\_match} (cluster, label). Use \texttt{scope: global} for \texttt{custom}. \\
-spatial placement & \texttt{features} missing or empty & \vcode{125} & Centroid distances need complete feature values. Pass an $(N,d)$ feature array, or disable \texttt{centroid\_dependence}. \\
+\texttt{spatial placement} & \texttt{features} missing or empty & \vcode{125} & Centroid distances need complete feature values. Pass an $(N,d)$ feature array, or disable \texttt{centroid\_dependence}. \\
+\texttt{centroid\_\newline dependence.\newline favors} & not \texttt{core}/\texttt{boundary} & \vcode{129} &  Matching is case-sensitive and exact. Any other value, including a capitalization slip (\texttt{Core}) or a typo (\texttt{boundary}), is only read when \texttt{enabled: true}. \\
+\texttt{target\_metric.}\newline \texttt{scope: pair} & \texttt{spillover\_rule} is \texttt{uniform}; or \texttt{concentrated} targeting the pair's own label (or left to its default); or a \texttt{competing\_noise} entry emitting that label & \vcode{130} & The closed form sizes $\ell^*$ so that \emph{all} of it sits inside $k^*$, and there is no search to correct a miss. Anything that can emit $\ell^*$ elsewhere silently delivers a different coefficient. Use \texttt{proportional\_to\_marginal}, whose leftover pool for $\ell^*$ is empty by construction, or \texttt{scope: global}. \\
 \bottomrule
-\caption{Table 3}
+\caption{Incompatibilities between several configurations, which are reported as 1xx value errors as invalid configuration, but cannot be diagnosed by inspecting any single field.}
 \end{longtable}
 
 \newpage
@@ -181,10 +172,10 @@ per-row \texttt{recall\_target} & \texttt{target\_metric} is set & Overridden by
 \texttt{single\_match} & \texttt{matching\_mode} $\neq$ \texttt{single} & Not read. \\
 \texttt{assignment\_matrix} & \texttt{matching\_mode} $\neq$ \texttt{custom} & Not read. \\
 \texttt{steepness} & \texttt{profile} $\neq$ \texttt{exponential} & Unused (only the exponential weight uses it). \\
-\texttt{concentrated\_labels} & \texttt{spillover\_rule} $\neq$ \texttt{concentrated} & Unused; default target is the single largest label. \\
+\texttt{concentrated\_labels} & \texttt{spillover\_rule} $\neq$ \texttt{concentrated} & Unused, and not validated in this case; default target is the single largest label. Under \texttt{concentrated} it \emph{is} validated (\vcode{128}). \\
 \texttt{tolerance}, \texttt{max\_iter} & \texttt{target\_metric.scope: pair} & Not read; the pair target is met in closed form, not by search. \\
 \bottomrule
-\caption{Table 4}
+\caption{Ignored configurations and their effect.}
 \end{longtable}
 \newpage
 % ===========================================================================
@@ -193,7 +184,7 @@ per-row \texttt{recall\_target} & \texttt{target\_metric} is set & Overridden by
 \footnotesize
 \setlength{\tabcolsep}{4pt}
 
-\subsection{Value Error (invalid configuration) \texorpdfstring{\wcode{1xx}}{1xx}}
+\subsection{Value Error (invalid configuration) \texorpdfstring{\vcode{1xx}}{1xx}}
 \begin{longtable}{@{}L{1.0cm} L{3.5cm} L{4.6cm} L{5.4cm}@{}}
 \toprule
 \headrow \hc{Code} & \hc{Trigger} & \hc{Reason} & \hc{Mitigation} \\
@@ -211,6 +202,7 @@ per-row \texttt{recall\_target} & \texttt{target\_metric} is set & Overridden by
 \vcode{108} & \texttt{split\_rule} not in \{\texttt{proportional\_to\_size},\texttt{equal}\} & Unrecognised split rule & Use one of the two. \\
 \vcode{109} & \texttt{spillover\_rule} not in \{\texttt{proportional\_to\_marginal},\texttt{uniform},\texttt{concentrated}\} & Unrecognised spillover rule & Use one of the three. \\
 \vcode{110} & \texttt{profile} not in \{\texttt{linear},\texttt{exponential},\texttt{step}\} & Unrecognised placement profile & Use one of the three. \\
+\hline
 \vcode{111} & \texttt{target\_metric} under \texttt{perfect} & No free \texttt{recall\_target} to solve for & Use \texttt{single}/\texttt{custom}, or drop \texttt{target\_metric}. \\
 \vcode{112} & \texttt{target\_metric.type} not \texttt{mcc}/\texttt{ari} & Only these two metrics are solvable & Set \texttt{type: mcc} or \texttt{ari}. \\
 \vcode{113} & \texttt{target\_metric.value} outside $[-1,1]$ & MCC/ARI live in $[-1,1]$ & Choose a value in range. \\
@@ -220,19 +212,25 @@ per-row \texttt{recall\_target} & \texttt{target\_metric} is set & Overridden by
 \vcode{117} & \texttt{competing\_noise.share} outside $[0,1]$ & Share is a fraction of leftover points & Choose \texttt{share} in $[0,1]$. \\
 \vcode{118} & \texttt{competing\_noise.label} outside $0..M{-}1$ & The competing label id does not exist & Use a valid label id. \\
 \vcode{119} & \texttt{competing\_noise.cluster} not among the data's ids &    \phantom{ } Typo or wrong id type & Use an existing cluster id. \\
-\vcode{120} & \texttt{target\_metric}: every probed $\alpha\in[0,1]$ is infeasible & The rule clusters cannot hold any recall level's budget & Enlarge the target clusters, lower \texttt{num\_classes}, or adjust \texttt{proportions}. \\
-\vcode{121} & \texttt{proportions} length $\neq$ \texttt{num\_classes} \emph{(not explicitly guarded)} & Surfaces as a NumPy broadcasting error & Provide exactly \texttt{num\_classes} proportions. \\
+\vcode{120} & \texttt{target\_metric}: every probed $\alpha\in[0,1]$ is infeasible & The rule clusters cannot hold any recall level (Table~\ref{IAE}) & Enlarge the target clusters, lower \texttt{num\_classes}, or adjust \texttt{proportions}. \\
+\vcode{121} & \texttt{proportions} length $\neq$ \texttt{num\_classes} & A longer list silently enlarged the label space: the surplus entries became label ids that \texttt{num\_classes} never declared, written into the dataset through \texttt{uniform}/\texttt{concentrated} spillover. A shorter list left labels unallocated & provided exactly \texttt{num\_classes} proportions. Not raised under \texttt{balance: balanced}, where \texttt{proportions} are ignored outright (\wcode{301}). \\
 \vcode{122} & \texttt{target\_metric.scope} not \texttt{pair}/\texttt{global} & Unrecognised scope string & Use \texttt{pair} or \texttt{global}. \\
 \vcode{123} & \texttt{scope: pair} with \texttt{type: ari} & Only the single-pair MCC has a closed-form inverse & Use \texttt{type: mcc}, or \texttt{scope: global}. \\
 \vcode{124} & \texttt{scope: pair} outside \texttt{single} mode & The pair is defined by \texttt{single\_match} & Use \texttt{matching\_mode: single}, or \texttt{scope: global}. \\
 \vcode{125} & placement requested without feature vectors & Centroid distances need $(N,d)$ coordinates & Pass \texttt{coords}, or disable \texttt{centroid\_dependence} and spatial \texttt{competing\_noise}. \\
-% UPDATED: 126/127 added, the num_classes/K cardinality backstop.
 \vcode{126} & \texttt{num\_classes} outside $[1,64]$ & Coarse safety backstop against runaway/typo configs, not a validated reliability limit (see Table 2) & Use a value in $[1,64]$; results are already unreliable well before this ceiling. \\
 \vcode{127} & the dataset's cluster count $K > 64$ & Same backstop, applied to the data rather than the config & Regroup or subsample clusters to $K\leq64$. \\
+\vcode{128} & \texttt{concentrated\_labels} is not a list of integers in $0..M{-}1$ & The list is drawn from directly and written into the label column, so an unchecked value puts a label in the dataset that \texttt{num\_classes} never declared. A bare number is read as a \emph{range} (scattering the remainder over that many labels, the opposite of \texttt{concentrated}); a non-integer is truncated on write & Give a list of existing label ids, e.g. \texttt{[0]}. Checked before the \texttt{target\_metric} solver, so a solved score can never be computed over a label that does not exist. \\
+\vcode{130} & \texttt{scope: pair} combined with a spillover or noise setting that can place the target label outside its cluster & The closed-form inversion assumes every point of $\ell^*$ lies in $k^*$; \texttt{uniform} spillover, \texttt{concentrated} onto $\ell^*$, and \texttt{competing\_noise} emitting $\ell^*$ all break that assumption. & Use \texttt{spillover\_rule: proportional\_to\_marginal}, keep \texttt{competing\_noise} off $\ell^*$, or use \texttt{scope: global}. \\
 \bottomrule
+\caption{Complete list of invalid configurations.}
+\label{LIC}
 \end{longtable}
 
-\subsection{ \texorpdfstring{\vcode{15x}}{15x} Infeasible Allocation Error}
+\noindent Invalid configurations in Table~\ref{LIC} are covered by the \texttt{config\_wizard} CLI utility; thus, to generate valid configurations, the wizard is the recommended tool.
+\newpage
+
+\subsection{Infeasible Allocation Error \texorpdfstring{\vcode{15x}}{15x} }
 \begin{longtable}{@{}L{1.0cm} L{4.3cm} L{4.2cm} L{5.0cm}@{}}
 \toprule
 \headrow \hc{Code} & \hc{Trigger} & \hc{Reason} & \hc{Mitigation} \\
@@ -243,12 +241,15 @@ per-row \texttt{recall\_target} & \texttt{target\_metric} is set & Overridden by
 \vcode{150} & A single rule: $\lceil r\cdot m_{\ell}\rceil >$ capacity of its clusters & The label's requested budget exceeds the target clusters' size & Lower \texttt{recall\_target}, add clusters to the rule, or shrink the label via \texttt{proportions}. (Message states the max feasible recall.) \\
 \vcode{151} & Rules jointly claim more than a cluster's size & Overlapping rules oversubscribe one cluster & Lower the competing \texttt{recall\_target}s or spread them across more clusters. \\
 \vcode{152} & \texttt{competing\_noise} entries for one cluster claim more than its unclaimed points & Too much structured noise demanded on one cluster & Lower the \texttt{share} value(s). \\
+\vcode{153} & Several \texttt{assignment\_matrix} rules name the same label and jointly claim more than its budget & A rule's \texttt{recall\_target} is a fraction of the label's \emph{whole} budget, so repeating a label across rules adds those fractions. The overshoot silently broke the requested proportions: \texttt{proportional\_to\_marginal} spillover clips its pool at zero and cannot pull the count back, & Lower the recalls so they sum to $\leq 1.0$, or write one rule listing all the clusters and let \texttt{split\_rule} divide the budget. \\
 \bottomrule
+\caption{Infeasible Allocation Error, \noindent\emph{Under \texttt{target\_metric}}, codes \vcode{150}/\vcode{151}/\vcode{152}/\vcode{153} are caught internally and treated as ``this $\alpha$ is infeasible'' during the search; only \vcode{120} (no $\alpha$ works at all) surfaces to the user.}
+\label{IAE}
 \end{longtable}
 
-\noindent\emph{Under \texttt{target\_metric}}, codes \vcode{150}/\vcode{151}/\vcode{152} are caught internally and treated as ``this $\alpha$ is infeasible'' during the search; only \vcode{120} (no $\alpha$ works at all) surfaces to the user.
+\noindent All errors in range \texorpdfstring{\wcode{1xx}}{1xx} have example configurations documented in the project repository; issues must be addressed after checking these invalid configurations and reported only if previously not covered.
 
-\subsection{Key Error (a required key is missing) \texorpdfstring{\wcode{2xx}}{2xx}}
+\subsection{Key Error (a required key is missing) \texorpdfstring{\kcode{2xx}}{2xx}}
 \begin{longtable}{@{}L{1.0cm} L{4.6cm} L{9.4cm}@{}}
 \toprule
 \headrow \hc{Code} & \hc{Missing key} & \hc{Required when \& fix} \\
@@ -266,9 +267,8 @@ per-row \texttt{recall\_target} & \texttt{target\_metric} is set & Overridden by
 \kcode{208} & \texttt{recall\_target} inside a rule & In \texttt{custom} \emph{without} \texttt{target\_metric}. Add \texttt{recall\_target}, or add \texttt{target\_metric} to solve it globally. \\
 \kcode{209} & \texttt{value} inside \texttt{target\_metric} & When \texttt{target\_metric} is present. Add \texttt{value: <target>}. \\
 \bottomrule
+\caption{Supplementary information for the context of KeyErrors (e.g.\ \texttt{KeyError: 'single\_match'}).}
 \end{longtable}
-
-\noindent\emph{Note.} KeyErrors are raw Python errors the message is only the key name (e.g.\ \texttt{KeyError: 'single\_match'}), with no guidance. This table supplies the missing context.
 \newpage
 \subsection{Warnings (non-fatal) \texorpdfstring{\wcode{3xx}}{3xx} }
 \begin{longtable}{@{}L{1.0cm} L{5.2cm} L{8.8cm}@{}}
@@ -284,12 +284,12 @@ per-row \texttt{recall\_target} & \texttt{target\_metric} is set & Overridden by
 \wcode{304} & \texttt{competing\_noise} active & Expected: achieved counts deviate from \texttt{proportions}. If you need exact proportions, do not use \texttt{competing\_noise}. \\
 \wcode{305} & A \texttt{competing\_noise} entry hits a cluster with no unclaimed points & The cluster is fully claimed (or \texttt{share} rounds to $0$): Lower a rule's \texttt{recall\_target}, or target a different cluster. \\
 \wcode{306} & \texttt{target\_metric} did not converge within tolerance & The target likely exceeds the structural ceiling (e.g.\ $M\ll K$). The closest feasible value is returned; lower the target, raise \texttt{max\_iter}/\texttt{tolerance}, or change \texttt{proportions}/clusters. \\
-% UPDATED: warnings 307-308 added with the pair-MCC feature.
 \wcode{307} & \texttt{scope: pair} target outside the pair's reachable range & The request is clamped to the nearest reachable value; the message reports the range. Choose a target within it, or change the pair. \\
 \wcode{308} & \texttt{scope: pair} resizes the target label & Expected: the label is sized as a subset of its cluster so the pair MCC meets the target exactly; an explicit proportion for that label is overridden. \\
-% UPDATED: 309 added -- verification of the DELIVERED labeling against the request.
-\wcode{309} & the written labeling's achieved \texttt{target\_metric} is outside tolerance & The search scores candidates on a fixed probe stream while the output is generated on the run's own stream, so a solve that converged internally can still land outside tolerance (most often at small $N$, where spillover placement dominates the outcome). \textbf{The achieved value in the message is authoritative, not the requested one.} To close the gap: raise \texttt{tolerance}, use a larger dataset, or use \texttt{scope: pair} (closed form, no search). \\
+\wcode{309} & the CLM achieved \texttt{target\_metric} is outside tolerance & The search scores candidates on a fixed probe stream. At the same time, the output is generated on the run's own stream, so a solve that converged internally can still land outside tolerance (most often at small $N$, where spillover placement dominates the outcome). \textbf{The achieved value in the message is authoritative, not the requested one.} To close the gap: raise \texttt{tolerance}, use a larger dataset, or use \texttt{scope: pair} (closed form, no search). \\
+\wcode{310} & \texttt{scope: pair}: the delivered pair MCC is outside the request & Backstop for the closed form, the counterpart of \wcode{309} for the global solver. The combinations known to break the construction are rejected up front (\vcode{130}), so this firing means something else moved $\ell^*$ out of $k^*$; the message reports how many of its points did. \textbf{The achieved value is authoritative, not the requested one.} \\
 \bottomrule
+\caption{Warning codes, which indicate scenarios of successfully executed configuration, but with a different outcome than the user would expect.}
 \end{longtable}
 
 \end{document}

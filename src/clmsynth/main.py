@@ -36,8 +36,7 @@ FETCHERS = {
     "byoc": lambda group, name, seed, **kw: fetch_byoc_data(dataset_group=group, dataset_name=name, seed=seed, **kw),
 }
 
-# "clustbench"/"mdcgen" are fetcher keys, not the real dataset origin. These are
-# the human-facing generator names shown in plot titles.
+# "clustbench"/"mdcgen" are fetcher keys, not the real dataset origin.
 SOURCE_DISPLAY = {
     "clustbench": "Gagolewski",
     "mdcgen": "MDCGen",
@@ -116,7 +115,6 @@ def load_config(config_path: str) -> dict:
     with open(path, 'r', encoding="utf-8") as file:
         config = yaml.safe_load(file)
     # An empty file parses to None; anything non-mapping means main()'s config.get(...)
-    # would crash with a bare AttributeError. Fail with a clear message instead.
     if not isinstance(config, dict):
         log.critical(f"Configuration file '{config_path}' is empty or not a YAML mapping.")
         sys.exit(1)
@@ -164,11 +162,6 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
     n_ok = 0
 
     for battery, dataset in jobs:
-        # One dataset's UNEXPECTED failure must not sink the whole batch: a fetcher
-        # that raises instead of returning None (e.g. a degenerate pd.qcut, a bad
-        # forwarded suite kwarg -> TypeError), or an I/O/plotting error, is logged
-        # and skipped. The inner handler below still gives the precise coded message
-        # for the two *expected* per-dataset skips (KeyError / InfeasibleAllocationError).
         try:
             df = fetcher(battery, dataset, fetch_seed, **fetch_kwargs)
             if df is None:
@@ -184,12 +177,6 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
                         noise=label_cfg.get("noise", 0.1), seed=label_cfg.get("seed", 42),
                     )
                 except (KeyError, InfeasibleAllocationError) as e:
-                    # Both are per-DATASET problems, so the batch continues:
-                    #   KeyError: source_labeling missing for this dataset.
-                    #   InfeasibleAllocationError [CLM-15x]: this dataset's cluster
-                    #   sizes can't satisfy the rules, but another dataset's might.
-                    # Coded config errors [CLM-1xx] deliberately escape to the
-                    # handler below, which aborts the whole run.
                     log.error(f"Skipping label generation for {battery}/{dataset}: {e}")
 
             final_df = context.to_dataframe()
@@ -202,9 +189,6 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
             gt_col = (context.gt_column_name(source_labeling)
                       if source_labeling in context.ground_truths else None)
 
-            # Compute the exact numbers shown in each plot's subtitle, straight from
-            # the output columns, the plot and the summary txt both read from here,
-            # so there is a single source of truth (no hand-entered metrics anywhere).
             label_results = []
             for label_name in context.generated_labels:
                 mcc = ari = None
@@ -259,11 +243,7 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
             n_ok += 1
         except ValueError as e:
             # A coded [CLM-1xx] error means the *configuration* is wrong, which is
-            # equally wrong for every remaining dataset. Abort now rather than
-            # repeat the identical message once per dataset and exit having
-            # written nothing. InfeasibleAllocationError (15x) is per-dataset and
-            # is already handled inline above, so it never reaches here; the
-            # isinstance check keeps that true even if a future caller re-raises.
+            # equally wrong for every remaining dataset.
             if getattr(e, "code", None) is not None and not isinstance(e, InfeasibleAllocationError):
                 log.critical(f"Configuration error, aborting run: {e}")
                 raise
@@ -277,9 +257,7 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
 
 
 def build_run_dir(base_dir: Path, friendly_source: str) -> Path:
-    """One self-packaging folder per run: DDMMYY_Source_HHMMSS/, holding the
-    config YAML plus csv/ and png/ subfolders. A numeric suffix is appended if
-    two runs land in the same second, so nothing is ever silently overwritten."""
+    """One self-packaging folder per run: DDMMYY_Source_HHMMSS/"""
     now = datetime.now()
     run_dir = base_dir / f"{now:%d%m%y}_{friendly_source}_{now:%H%M%S}"
     unique, n = run_dir, 1
@@ -316,9 +294,7 @@ def main() -> None:
         n_ok = run_pipeline(data_source, config, csv_dir, png_dir, txt_dir)
     except ValueError:
         # Coded [CLM-1xx] configuration error re-raised by run_pipeline, which has
-        # already logged it at CRITICAL. Exit quietly with a code distinct from
-        # "ran, but produced nothing" (1), rather than repeating the message or
-        # dumping a traceback the coded message already explains.
+        # already logged it at CRITICAL.
         sys.exit(2)
 
     if n_ok == 0:

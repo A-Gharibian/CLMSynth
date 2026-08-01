@@ -4,8 +4,8 @@ Bring-Your-Own-Clusters (BYOC) data source.
 
 Lets a user feed their own CSV, feature columns plus exactly one cluster-id
 column, into the pipeline as a 4th source, on equal footing with clustbench /
-mdcgen / fabricated_data. The user brings *clusters* (a partition they already have), not
-raw data to be clustered; the CLM engine then synthesizes labels against that
+mdcgen / fabricated_data. The user brings *clusters* (a partition they already have),
+not raw data to be clustered; the CLM engine then synthesizes labels against that
 partition so they can study how their labels relate to their own clusters.
 
 Contract (mirrors the other fetchers, returns the standard frame or None):

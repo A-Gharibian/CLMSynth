@@ -1,7 +1,6 @@
 # dataset_sources.py
 """
-Consolidated cluster/dataset generation module. Four sources, one shared
-registry shape:
+Consolidated cluster/dataset generation module. Four sources:
     "clustbench"      -> fetch_clustbench_data  (real, fixed geometries, network)
     "mdcgen"          -> fetch_mdcgen_data      (synthetic, needs mdcgenpy)
     "fabricated_data" -> fetch_fabricated_data  (fabricated features with
@@ -12,7 +11,7 @@ registry shape:
 
 The registry shape (SOURCE_METADATA / SOURCE_DATASETS / HEAVY_BATTERIES, keyed by
 source name) is what makes a source pluggable; more are expected, so add entries to
-those dicts rather than special-casing a new fetcher downstream.
+those dicts.
 """
 
 import gzip
@@ -126,8 +125,6 @@ MDCGEN_CONFIGS: Dict[str, Dict[str, Dict[str, Any]]] = {
 }
 
 # --- "fabricated_data" source: wraps fabricated_generator.generate_synthetic_data.
-# Defined once, here, alongside its own fetcher. Only the label side varies
-# between presets, features are always the same 6 engineered columns.
 SOURCE_METADATA["fabricated_data"] = {
     "fabricated": {
         "description": "Offline fallback using engineered features + perfect-separation "
@@ -189,7 +186,7 @@ HEAVY_BATTERIES: Dict[str, Set[str]] = {
 
 
 # ===========================================================================
-# Shared selection helpers, source-qualified, so no name collides.
+# Shared selection helpers
 # ===========================================================================
 
 def get_available_batteries(source: str) -> List[str]:
@@ -230,16 +227,13 @@ def print_battery_info(source: str) -> None:
 
 
 # ===========================================================================
-# Source 1: clustbench (real, fixed geometries, network fetch)
+# Source 1: clustbench
 # ===========================================================================
 
 def _loadtxt_url(url: str, **loadtxt_kwargs) -> np.ndarray:
-    """Fetches a gzipped text array over HTTP(S) with a timeout, then parses it.
-
-    np.loadtxt can read a URL directly but offers no timeout hook, so a hung
-    server would block the pipeline forever. We fetch the bytes with an explicit
-    CLUSTBENCH_TIMEOUT and hand the decompressed stream to np.loadtxt, preserving
-    its parsing kwargs (dtype, ndmin, ...)."""
+    """
+    Fetches a gzipped text array over HTTP(S) with a timeout, then parses it.
+    """
     with urllib.request.urlopen(url, timeout=CLUSTBENCH_TIMEOUT) as resp:
         raw = resp.read()
     with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:
@@ -255,16 +249,16 @@ def fetch_clustbench_labelings(
     """Downloads every reference labeling (labels0, labels1, ...) of one
     clustbench dataset, stopping at the first missing index."""
     target_path = f"{base_url}/{dataset_group}/{dataset_name}"
-    labelings: Dict[str, np.ndarray] = {}
+    labeling: Dict[str, np.ndarray] = {}
     for i in range(max_labelings):
         label_name = f"labels{i}"
         try:
-            labelings[label_name] = _loadtxt_url(f"{target_path}.{label_name}.gz", dtype="int")
+            labeling[label_name] = _loadtxt_url(f"{target_path}.{label_name}.gz", dtype="int")
         except Exception:
             if i == 0:
                 log.error(f"No reference labels found for {dataset_group}/{dataset_name}.")
             break
-    return labelings
+    return labeling
 
 
 def fetch_clustbench_data(
@@ -273,7 +267,7 @@ def fetch_clustbench_data(
         base_url: str = "https://github.com/gagolews/clustering-data-v1/raw/v1.1.0"
 ) -> Optional[pd.DataFrame]:
     """Fetches one Gagolewski benchmark dataset (features + all usable
-    labelings) into the standard fetcher frame; None on failure."""
+    labeling) into the standard fetcher frame; None on failure."""
     if dataset_group not in SOURCE_METADATA["clustbench"]:
         log.warning(f"Battery '{dataset_group}' is not in the recommended list, but attempting to fetch anyway.")
 
@@ -286,20 +280,20 @@ def fetch_clustbench_data(
         log.error(f"Failed to fetch dataset features: {e}")
         return None
 
-    labelings = fetch_clustbench_labelings(dataset_group, dataset_name, base_url)
-    labelings = {n: l for n, l in labelings.items() if len(l) == len(data)}
-    if not labelings:
-        log.error(f"No usable labelings for {dataset_group}/{dataset_name}.")
+    labeling = fetch_clustbench_labelings(dataset_group, dataset_name, base_url)
+    labeling = {n: l for n, l in labeling.items() if len(l) == len(data)}
+    if not labeling:
+        log.error(f"No usable labeling for {dataset_group}/{dataset_name}.")
         return None
 
     feature_cols = [f"Feature_{i + 1}" for i in range(data.shape[1])]
     df = pd.DataFrame(data, columns=feature_cols)
-    for name, labels in labelings.items():
+    for name, labels in labeling.items():
         df[f"GroundTruth_{name}"] = labels
-    df["Cohort_Class"] = labelings["labels0"]
+    df["Cohort_Class"] = labeling["labels0"]
 
     log.info(f"Loaded '{dataset_group}/{dataset_name}': {df.shape[0]} rows, "
-             f"{len(feature_cols)} features, {len(labelings)} labeling(s).")
+             f"{len(feature_cols)} features, {len(labeling)} labeling(s).")
     return df
 
 
@@ -370,9 +364,9 @@ def fetch_fabricated_data(
         **kwargs
 ) -> Optional[pd.DataFrame]:
     """Generates one offline dataset via fabricated_generator; cluster ids are
-    integers 0..K-1, matching clustbench/mdcgen, so one clm_label config ports
+    integers 0...K-1, matching clustbench/mdcgen, so one clm_label config ports
     across sources without retyping cluster references."""
-    from . import fabricated_generator  # deferred, mirrors mdcgenpy's lazy import
+    from . import fabricated_generator
 
     preset = FABRICATED_CONFIGS.get(dataset_name)
     if preset is None:
@@ -394,7 +388,7 @@ def fetch_fabricated_data(
                   "must be True). Skipping, label_generation has nothing to key off.")
         return None
 
-    # Cluster ids are emitted as integers 0..K-1, like every other source, so a
+    # Cluster ids are emitted as integers 0...K-1, like every other source, so a
     # clm_label config's `clusters:`/`single_match.cluster` values port across
     # sources unchanged. The generator deliberately produces READABLE labels
     # ("Class_0", or Faker company names when use_faker is set), collapsing
