@@ -1,6 +1,6 @@
 # CLM Benchmark Data Synthesizer
 
-[![Version](https://img.shields.io/badge/version-0.6.0-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
+[![Version](https://img.shields.io/badge/version-0.6.1-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](LICENSE.txt)
 [![Cite](https://img.shields.io/badge/cite-CITATION.cff-blueviolet)](CITATION.cff)

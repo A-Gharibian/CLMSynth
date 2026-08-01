@@ -1,0 +1,16 @@
+$ python -m clmsynth.main CLM-209.yaml
+# exit code: 0
+
+2026-08-01 20:49:26,906 - INFO - Starting Test Data Orchestrator...
+2026-08-01 20:49:26,912 - INFO - Available 'fabricated_data' dataset batteries:
+2026-08-01 20:49:26,912 - INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
+2026-08-01 20:49:26,912 - INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
+2026-08-01 20:49:26,913 - INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed=42)...
+2026-08-01 20:49:26,913 - INFO - Generating synthetic data (Seed: 42)...
+2026-08-01 20:49:26,933 - INFO - Applying perfect separation ground truth to categorical labels...
+2026-08-01 20:49:26,935 - INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
+2026-08-01 20:49:26,936 - WARNING - [CLM-303] target_metric present: per-rule recall_target values in assignment_matrix are ignored; recall_target is solved for globally.
+2026-08-01 20:49:26,936 - ERROR - Skipping label generation for fabricated/baseline_4class: 'value'
+2026-08-01 20:49:26,944 - INFO - Saved: D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-209\010826_Fabricated_204926\csv\fabricated_data__fabricated__baseline_4class.csv
+2026-08-01 20:49:26,946 - INFO - Saved summary: D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-209\010826_Fabricated_204926\txt\fabricated_data__fabricated__baseline_4class.txt
+2026-08-01 20:49:26,946 - INFO - Pipeline ready. 1 dataset(s) processed. Output folder: 'D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-209\010826_Fabricated_204926'.

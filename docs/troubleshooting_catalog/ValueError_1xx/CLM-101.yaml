@@ -1,0 +1,49 @@
+# [CLM-101] matching_mode is not one of the four modes
+
+global_settings:
+  data_source: fabricated_data
+  output_dir: Z:\Output\CLM-101
+fabricated_data_suite:
+  batteries:
+  - fabricated
+  datasets:
+  - baseline_4class
+  seed: 42
+label_generation:
+  n_labels: 1
+  source_labeling: labels0
+  noise: 0.1
+  seed: 42
+  clm_label:
+    num_classes: 4
+    proportions:
+    - 0.25
+    - 0.25
+    - 0.25
+    - 0.25
+    balance: unbalanced
+    skew_rule: geometric
+    matching_mode: bogus_mode
+    assignment_matrix:
+    - clusters:
+      - 0
+      label: 0
+      recall_target: 0.8
+    - clusters:
+      - 1
+      label: 1
+      recall_target: 0.8
+    - clusters:
+      - 2
+      label: 2
+      recall_target: 0.8
+    - clusters:
+      - 3
+      label: 3
+      recall_target: 0.8
+    split_rule: proportional_to_size
+    spillover_rule: proportional_to_marginal
+    centroid_dependence:
+      enabled: true
+      profile: linear
+      favors: core

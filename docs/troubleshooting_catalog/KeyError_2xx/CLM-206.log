@@ -1,0 +1,15 @@
+$ python -m clmsynth.main CLM-206.yaml
+# exit code: 0
+
+2026-08-01 20:49:21,503 - INFO - Starting Test Data Orchestrator...
+2026-08-01 20:49:21,508 - INFO - Available 'fabricated_data' dataset batteries:
+2026-08-01 20:49:21,508 - INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
+2026-08-01 20:49:21,508 - INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
+2026-08-01 20:49:21,509 - INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed=42)...
+2026-08-01 20:49:21,509 - INFO - Generating synthetic data (Seed: 42)...
+2026-08-01 20:49:21,529 - INFO - Applying perfect separation ground truth to categorical labels...
+2026-08-01 20:49:21,532 - INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
+2026-08-01 20:49:21,533 - ERROR - Skipping label generation for fabricated/baseline_4class: 'assignment_matrix'
+2026-08-01 20:49:21,540 - INFO - Saved: D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-206\010826_Fabricated_204921\csv\fabricated_data__fabricated__baseline_4class.csv
+2026-08-01 20:49:21,541 - INFO - Saved summary: D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-206\010826_Fabricated_204921\txt\fabricated_data__fabricated__baseline_4class.txt
+2026-08-01 20:49:21,541 - INFO - Pipeline ready. 1 dataset(s) processed. Output folder: 'D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-206\010826_Fabricated_204921'.

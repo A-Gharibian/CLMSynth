@@ -1,0 +1,32 @@
+# [CLM-103] single with M < 2
+
+global_settings:
+  data_source: fabricated_data
+  output_dir: Z:\Output\CLM-103
+fabricated_data_suite:
+  batteries:
+  - fabricated
+  datasets:
+  - baseline_4class
+  seed: 42
+label_generation:
+  n_labels: 1
+  source_labeling: labels0
+  noise: 0.1
+  seed: 42
+  clm_label:
+    num_classes: 1
+    proportions:
+    - 1.0
+    balance: unbalanced
+    skew_rule: geometric
+    matching_mode: single
+    split_rule: proportional_to_size
+    spillover_rule: proportional_to_marginal
+    centroid_dependence:
+      enabled: true
+      profile: linear
+      favors: core
+    single_match:
+      cluster: 0
+      label: 0

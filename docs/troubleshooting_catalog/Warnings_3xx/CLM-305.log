@@ -1,0 +1,17 @@
+$ python -m clmsynth.main CLM-305.yaml
+# exit code: 0
+
+2026-08-01 20:49:35,660 - INFO - Starting Test Data Orchestrator...
+2026-08-01 20:49:35,665 - INFO - Available 'fabricated_data' dataset batteries:
+2026-08-01 20:49:35,665 - INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
+2026-08-01 20:49:35,665 - INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
+2026-08-01 20:49:35,666 - INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed=42)...
+2026-08-01 20:49:35,666 - INFO - Generating synthetic data (Seed: 42)...
+2026-08-01 20:49:35,686 - INFO - Applying perfect separation ground truth to categorical labels...
+2026-08-01 20:49:35,689 - INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
+2026-08-01 20:49:35,689 - WARNING - [CLM-305] competing_noise: cluster 0 has no unclaimed points (or share rounds to 0); entry {'cluster': 0, 'label': 1, 'share': 0.5, 'favors': 'random'} has no effect.
+2026-08-01 20:49:35,690 - INFO - CLM labels generated. Target counts: [200, 200, 200, 200], achieved: [200, 200, 200, 200].
+2026-08-01 20:49:35,690 - INFO - [fabricated_data/fabricated/baseline_4class] Attached generated label 'Label_0'.
+2026-08-01 20:49:35,698 - INFO - Saved: D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-305\010826_Fabricated_204935\csv\fabricated_data__fabricated__baseline_4class.csv
+2026-08-01 20:49:35,706 - INFO - Saved summary: D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-305\010826_Fabricated_204935\txt\fabricated_data__fabricated__baseline_4class.txt
+2026-08-01 20:49:35,707 - INFO - Pipeline ready. 1 dataset(s) processed. Output folder: 'D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-305\010826_Fabricated_204935'.

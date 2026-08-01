@@ -1,0 +1,17 @@
+$ python -m clmsynth.main CLM-302.yaml
+# exit code: 0
+
+2026-08-01 20:49:30,468 - INFO - Starting Test Data Orchestrator...
+2026-08-01 20:49:30,473 - INFO - Available 'fabricated_data' dataset batteries:
+2026-08-01 20:49:30,473 - INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
+2026-08-01 20:49:30,473 - INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
+2026-08-01 20:49:30,473 - INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed=42)...
+2026-08-01 20:49:30,474 - INFO - Generating synthetic data (Seed: 42)...
+2026-08-01 20:49:30,494 - INFO - Applying perfect separation ground truth to categorical labels...
+2026-08-01 20:49:30,497 - INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
+2026-08-01 20:49:30,497 - WARNING - [CLM-302] matching_mode='perfect': proportions/balance/skew_rule ignored, label counts are forced to match their paired cluster's size.
+2026-08-01 20:49:30,499 - INFO - CLM labels generated. Target counts: [200, 200, 200, 200], achieved: [200, 200, 200, 200].
+2026-08-01 20:49:30,499 - INFO - [fabricated_data/fabricated/baseline_4class] Attached generated label 'Label_0'.
+2026-08-01 20:49:30,507 - INFO - Saved: D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-302\010826_Fabricated_204930\csv\fabricated_data__fabricated__baseline_4class.csv
+2026-08-01 20:49:30,515 - INFO - Saved summary: D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-302\010826_Fabricated_204930\txt\fabricated_data__fabricated__baseline_4class.txt
+2026-08-01 20:49:30,515 - INFO - Pipeline ready. 1 dataset(s) processed. Output folder: 'D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-302\010826_Fabricated_204930'.

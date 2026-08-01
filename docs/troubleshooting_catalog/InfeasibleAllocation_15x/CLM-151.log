@@ -1,0 +1,15 @@
+$ python -m clmsynth.main CLM-151.yaml
+# exit code: 0
+
+2026-08-01 20:49:08,971 - INFO - Starting Test Data Orchestrator...
+2026-08-01 20:49:08,977 - INFO - Available 'fabricated_data' dataset batteries:
+2026-08-01 20:49:08,977 - INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
+2026-08-01 20:49:08,977 - INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
+2026-08-01 20:49:08,978 - INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed=42)...
+2026-08-01 20:49:08,978 - INFO - Generating synthetic data (Seed: 42)...
+2026-08-01 20:49:09,002 - INFO - Applying perfect separation ground truth to categorical labels...
+2026-08-01 20:49:09,004 - INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
+2026-08-01 20:49:09,005 - ERROR - Skipping label generation for fabricated/baseline_4class: [CLM-151] Infeasible configuration: cluster 0 has 200 points but rules jointly claim 320 (per label: {0: 160, 1: 160}). Lower the competing recall_targets or spread them across more clusters.
+2026-08-01 20:49:09,013 - INFO - Saved: D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-151\010826_Fabricated_204908\csv\fabricated_data__fabricated__baseline_4class.csv
+2026-08-01 20:49:09,015 - INFO - Saved summary: D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-151\010826_Fabricated_204908\txt\fabricated_data__fabricated__baseline_4class.txt
+2026-08-01 20:49:09,015 - INFO - Pipeline ready. 1 dataset(s) processed. Output folder: 'D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-151\010826_Fabricated_204908'.

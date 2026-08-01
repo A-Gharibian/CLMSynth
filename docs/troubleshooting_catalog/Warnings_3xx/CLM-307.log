@@ -1,0 +1,20 @@
+$ python -m clmsynth.main CLM-307.yaml
+# exit code: 0
+
+2026-08-01 20:49:39,253 - INFO - Starting Test Data Orchestrator...
+2026-08-01 20:49:39,259 - INFO - Available 'fabricated_data' dataset batteries:
+2026-08-01 20:49:39,259 - INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
+2026-08-01 20:49:39,259 - INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
+2026-08-01 20:49:39,260 - INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed=42)...
+2026-08-01 20:49:39,260 - INFO - Generating synthetic data (Seed: 42)...
+2026-08-01 20:49:39,283 - INFO - Applying perfect separation ground truth to categorical labels...
+2026-08-01 20:49:39,286 - INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
+2026-08-01 20:49:39,286 - WARNING - [CLM-307] target_metric scope 'pair': target 0.01 is outside the reachable range [0.061, 1.000] for this cluster/label pair; clamped to the nearest reachable value.
+2026-08-01 20:49:39,287 - WARNING - [CLM-308] target_metric scope 'pair': label 0 is sized to 1 points (a subset of its cluster) to meet the target MCC; any explicit proportion for it is overridden.
+2026-08-01 20:49:39,287 - INFO - CLM labels generated. Target counts: [1, 267, 266, 266], achieved: [1, 267, 266, 266].
+2026-08-01 20:49:39,291 - INFO - target_metric: final achieved pair mcc=0.0613 (target was 0.01, pair cluster=0/label=0).
+2026-08-01 20:49:39,291 - WARNING - [CLM-310] target_metric scope 'pair': the DELIVERED labeling achieves pair mcc=0.0613, outside the requested 0.01 +/- 0.01. The closed-form construction assumes every point of label 0 lies inside cluster 0, but 0 of its 1 points lie outside. Treat the achieved value above as authoritative, not the requested one.
+2026-08-01 20:49:39,291 - INFO - [fabricated_data/fabricated/baseline_4class] Attached generated label 'Label_0'.
+2026-08-01 20:49:39,301 - INFO - Saved: D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-307\010826_Fabricated_204939\csv\fabricated_data__fabricated__baseline_4class.csv
+2026-08-01 20:49:39,307 - INFO - Saved summary: D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-307\010826_Fabricated_204939\txt\fabricated_data__fabricated__baseline_4class.txt
+2026-08-01 20:49:39,307 - INFO - Pipeline ready. 1 dataset(s) processed. Output folder: 'D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-307\010826_Fabricated_204939'.
