@@ -22,7 +22,8 @@ cluster_sizes[k] = |{x : c(x)=k}|
 m_counts     = resolve_label_counts(cfg, N, rng)          # Stage 1
 if perfect:  m_counts = cluster sizes (requires M==K)     # Stage 2
 if random:   return draw-from-p, shuffled (early return)  # Stage 2
-validate target_metric (incl. single_match pair when scope==pair)
+validate spillover concentrated_labels [CLM-128], centroid favors [CLM-129],
+    and target_metric (incl. scope==pair guards [CLM-123/124/130])
 if target_metric:                                         # Stage 7
     if scope==pair: m_counts = _pair_label_counts(...); alpha = 1  # 7a exact, single mode
     else:           alpha    = solve_alpha_for_target_metric(...)  # 7b numerical, global
@@ -53,8 +54,9 @@ Produces the exact integer count `m_l` of each label over all `N` points,
 
 - `balance: balanced` -> uniform `1/M`; any explicit `proportions` are ignored
   (warns `[CLM-301]`).
-- `balance: unbalanced` -> explicit `proportions` take precedence (must sum to 1,
-  else `[CLM-106]`); otherwise `skew_rule` is the fallback:
+- `balance: unbalanced` -> explicit `proportions` take precedence (must have
+  exactly `M` entries, else `[CLM-121]`, and sum to 1, else `[CLM-106]`);
+  otherwise `skew_rule` is the fallback:
   `geometric` (`p_i ~ ratio^i`), `dominant_minority` (one dominant class, uniform
   rest), or `dirichlet` (one seeded `Dirichlet(alpha)` draw, reproducible).
   Unknown rule -> `[CLM-107]`.
@@ -90,10 +92,12 @@ IndexError/KeyError.
 
 Each rule claims `tp = round(recall_target * m_label)` points of its label,
 split across its clusters (`split_rule: proportional_to_size | equal`; a single
-cluster short-circuits). Two feasibility checks raise `InfeasibleAllocationError`:
-per-rule demand exceeds the rule's cluster capacity (`[CLM-150]`), or rules
-jointly oversubscribe a cluster (`[CLM-151]`). Output: `demand[k][label]` and the
-`remaining_capacity[k]` of every cluster.
+cluster short-circuits). Three feasibility checks raise `InfeasibleAllocationError`:
+per-rule demand exceeds the rule's cluster capacity (`[CLM-150]`), several rules on
+the same label jointly claim more than that label's budget (`[CLM-153]`, since each
+rule's `recall_target` is a fraction of the label's WHOLE budget, so repeats add
+up), or rules jointly oversubscribe a cluster (`[CLM-151]`). Output:
+`demand[k][label]` and the `remaining_capacity[k]` of every cluster.
 
 ## Stage 4: Optional structured competing noise (`_competing_demand`)
 
@@ -109,7 +113,11 @@ Fills the capacity left unclaimed by Stages 3-4:
 `proportional_to_marginal` restores each label to its Stage-1 target count
 exactly; `uniform` spreads leftovers evenly (breaks proportions);
 `concentrated` dumps them into `concentrated_labels` (default: the largest
-label). Unknown rule -> `[CLM-109]`.
+label). Unknown rule -> `[CLM-109]`. `_spillover_draws` reads `M` from the config,
+not from `len(m_counts)` (deriving it from the counts array is what let a too-long
+`proportions` widen the label space; see `[CLM-121]`), and `concentrated_labels` is
+validated up front by `_validate_spillover_cfg` (`[CLM-128]`: a list of integer ids
+in `0..M-1`; a bare number would otherwise be read by numpy as a *range*).
 
 ## Stage 6: Spatial placement (`assign_points_in_cluster`, `_weighted_pick`)
 
@@ -118,8 +126,10 @@ spillover pool fills the rest. With `centroid_dependence` enabled, *which* point
 receive each label is drawn by weighted sampling without replacement, weights
 from a profile of the distance to the cluster centroid (`linear`, `exponential`
 with `steepness`, or deterministic top-`tp` `step`), favouring `core` or
-`boundary`; unknown profile -> `[CLM-110]`. `competing_noise` labels are placed
-first, with their own per-label core/boundary sign (`favors_overrides`).
+`boundary` (validated exact and case-sensitive up front by `_validate_centroid_cfg`,
+`[CLM-129]`, so a `Core` typo cannot silently invert the placement); unknown
+profile -> `[CLM-110]`. `competing_noise` labels are placed first, with their own
+per-label core/boundary sign (`favors_overrides`).
 
 **Key invariant:** placement operates strictly after allocation. The
 cluster--label contingency table, and therefore MCC and ARI, is fixed by
@@ -133,7 +143,13 @@ Set only under `single`/`custom` (validated by `_validate_target_metric_cfg`:
 mode, `type in {mcc, ari}`, `value in [-1,1]`, `scope in {pair, global}`, and, for
 `scope: pair`, `type: mcc` + `single` mode + an up-front `_check_pair` of the
 `single_match` cluster/label so a bad id raises `[CLM-104]`/`[CLM-105]` rather
-than a raw KeyError/IndexError). Two paths:
+than a raw KeyError/IndexError, plus `[CLM-130]`, which rejects any
+`spillover_rule`/`competing_noise` that could place `l*` outside `k*`: `uniform`
+spillover, `concentrated` onto `l*` (or its unset default), or a `competing_noise`
+entry emitting `l*`). All three top-level validators (`_validate_spillover_cfg`,
+`_validate_centroid_cfg`, `_validate_target_metric_cfg`) run before any solve, so a
+bad config surfaces as itself rather than as a solved score over an invalid
+labeling. Two paths:
 
 ### Stage 7a: exact single-pair MCC (`_pair_label_counts`, `scope: pair`)
 
@@ -146,7 +162,11 @@ resizes `l*` to `m_c*` (warns `[CLM-308]`, overriding its proportion), rescales
 the other labels to keep `sum(m_counts) == N` (uniform fallback when they were all
 zero), and sets `alpha = 1`. The reachable range is `[phi_min, 1]` (`phi_min` at
 `m_c = 1`); a target outside it is clamped to the nearest reachable value with
-`[CLM-307]`.
+`[CLM-307]`. The closed form is exact only while every `l*` point stays inside
+`k*`; `[CLM-130]` (Stage 7 above) rejects the settings that could break that up
+front, and after generation `[CLM-310]` re-measures the delivered pair MCC and
+warns if it still landed outside tolerance (the counterpart of `[CLM-309]` for the
+global solver; the message reports how many `l*` points ended up outside `k*`).
 
 ### Stage 7b: global metric (`solve_alpha_for_target_metric`, `scope: global`, default)
 
@@ -161,7 +181,12 @@ closest feasible value with a `[CLM-306]` non-convergence warning rather than
 crashing or fabricating a hit (`[CLM-120]` if *no* `alpha` is feasible at all). For
 `K` equal clusters the ceiling of a balanced `M`-coarsening is
 `sqrt(M(M-1)/(K(K-1)))`; in general it is the MCC the rule set achieves at
-`alpha = 1`.
+`alpha = 1`. Because the probe stream (`default_rng(probe_seed)`) differs from the
+output stream (`default_rng(seed)`), a solve that converged internally can still
+deliver a labeling outside tolerance; the engine re-measures the labeling it
+actually writes and warns `[CLM-309]` when it does, the achieved value being
+authoritative rather than the request (most visible at small `N`, where spillover
+placement is a large share of the outcome).
 
 ## Diagnostics (`clm_errors.py`)
 

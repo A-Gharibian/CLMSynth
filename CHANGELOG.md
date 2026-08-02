@@ -5,6 +5,16 @@ All notable changes to CLMSynth are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] — 2026-08-02 — Public release
+
+The release accompanying the article submission. No change to the
+label-generation math; the engine behaves exactly as in 0.6.0.
+
+### Changed
+
+- Documentation revised throughout: the manual, the configuration troubleshooting
+  reference, and the README. The troubleshooting reference is now complete.
+
 ## [0.6.1] — 2026-08-02
 
 ### Changed
@@ -12,10 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Repository contents restored for ongoing development: this changelog, the
   engine-internals note, and `docs/troubleshooting_catalog/` are tracked again.
   They were deliberately withheld from 0.6.0, which remains the lean tree tagged
-  for the SoftwareX fork and archived on Zenodo. No change to the engine or to
-  any documented behaviour.
+  for the archive on Zenodo. No change to the engine or to any documented behavior.
 
-## [0.6.0] — 2026-08-02
+## [0.6.0] — 2026-08-02 - Pre-release
 
 Six diagnostics, each closing a path that previously produced wrong output
 silently. Archived on Zenodo: <https://doi.org/10.5281/zenodo.21751081>.
@@ -52,10 +61,6 @@ silently. Archived on Zenodo: <https://doi.org/10.5281/zenodo.21751081>.
   label claimed 240, and `proportional_to_marginal` spillover cannot compensate
   because its pool clips at zero. Now **`[CLM-153]`**.
 
-### Changed
-
-- Version 0.6.0 across `pyproject.toml`, `__init__.py`, `CITATION.cff`, the
-  manual and the README; Zenodo DOI recorded in `CITATION.cff`.
 
 ## [0.5.0] — 2026-07-31 — research release
 
@@ -188,7 +193,7 @@ text behave exactly as in 0.1.0.
 ### Removed
 
 - The erroneous-configuration catalog. Its logs had been captured from a
-  pre-package layout and no longer matched the current engine — stale module
+  pre-package layout and no longer matched the current engine, stale module
   paths, the old `dummy` source name, and in one case a raw `IndexError` where
   `[CLM-102]` now fires. The manual's reference to it is commented out, not
   deleted, pending a regenerated catalog.

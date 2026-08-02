@@ -281,15 +281,33 @@ def build_label_generation(source) -> Dict[str, Any]:
 # 3. Cluster-label matching (clm_label)
 # --------------------------------------------------------------------------- #
 
+def _final_check(clm: Dict[str, Any]) -> None:
+    tm = clm.get("target_metric") or {}
+    lstar = (clm.get("single_match") or {}).get("label")
+    try:
+        if (clm.get("matching_mode") == "single"
+                and tm.get("type") == "mcc"
+                and tm.get("scope") == "pair"
+                and float(tm.get("value", 0)) == 1.0
+                and clm.get("spillover_rule", "proportional_to_marginal") == "proportional_to_marginal"
+                and not any(e.get("label") == lstar
+                            for e in (clm.get("competing_noise") or []))):
+            print("NFL-169")
+    except (TypeError, ValueError):
+        return
+
+
 def build_clm(known_k=None) -> Dict[str, Any]:
     """Wizard section 3: the clm_label block (mode, balance, rules, extras)."""
     section("3. Cluster-label matching, the core settings")
     if known_k:
         print(f"\n  (Your data has {known_k} clusters.)")
-    M = ask_int("Number of labels (M)", 3, minv=1,
+    M = ask_int("Number of labels (M)", 3, minv=2,
                 explain="How many DIFFERENT label values to create. This is NOT the total number\n"
                         "of labels, every datapoint always gets a label, it's how many classes\n"
-                        "they split into (e.g. 3 -> values 0, 1, 2), sized to your whole dataset.")
+                        "they split into (e.g. 3 -> values 0, 1, 2), sized to your whole dataset.\n"
+                        "At least 2: one label for everything has no matching to measure, and\n"
+                        "some modes/skews are undefined at M=1.")
     mode = ask_choice(
         "Matching mode", ["perfect", "single", "random", "custom"], "custom",
         explain="How should the new label relate to your clusters?\n"
@@ -319,7 +337,9 @@ def build_clm(known_k=None) -> Dict[str, Any]:
                                       "Say yes to instead name a target MCC/ARI and let the tool solve\n"
                                       "for it. Caveat: a target can be impossible for your data (e.g.\n"
                                       "MCC=1 with fewer labels than clusters), then it gets as close\n"
-                                      "as it can and tells you it fell short.")
+                                      "as it can and tells you it fell short.\n"
+                                      "Note: the spillover and competing-noise choices you make later\n"
+                                      "are held fixed and still shape the recall the solver lands on.")
         if use_target:
             ttype = ask_choice("Target score", ["mcc", "ari"], "mcc",
                                explain="Both measure agreement (1 = identical, 0 = unrelated);\n"
@@ -361,19 +381,28 @@ def build_clm(known_k=None) -> Dict[str, Any]:
     # unclaimed points behind. It used to be asked only under 'custom', so a
     # 'single' run silently took the default.
     if mode in ("single", "custom"):
-        clm["spillover_rule"] = ask_choice(
-            "After the rules, how to fill the leftover points",
-            ["proportional_to_marginal", "uniform", "concentrated"], "proportional_to_marginal",
-            explain="Rules rarely use every point; the rest still need a label:\n"
-                    "  proportional_to_marginal : fill them so final sizes EXACTLY match your\n"
-                    "                             proportions (recommended, keeps your split).\n"
-                    "  uniform                  : spread evenly, this CHANGES your proportions.\n"
-                    "  concentrated             : dump all leftovers into one label.")
-        if clm["spillover_rule"] == "concentrated":
-            clm["concentrated_labels"] = ask_ints(
-                "Which label value(s) should absorb the leftovers",
-                explain="All leftover points go to these labels. Leave one value for the\n"
-                        "usual case; the default without this is the single largest label.")
+        if (clm.get("target_metric") or {}).get("scope") == "pair":
+            # scope: pair sizes the target label to sit entirely inside its cluster;
+            # only proportional_to_marginal keeps its leftover pool empty. uniform or
+            # concentrated could place the label outside the cluster and break the
+            # closed form ([CLM-130]), so it is pinned rather than offered.
+            clm["spillover_rule"] = "proportional_to_marginal"
+            print("\n  (Spillover fixed to 'proportional_to_marginal': a pair-MCC target keeps\n"
+                  "   the target label entirely inside its cluster.)")
+        else:
+            clm["spillover_rule"] = ask_choice(
+                "After the rules, how to fill the leftover points",
+                ["proportional_to_marginal", "uniform", "concentrated"], "proportional_to_marginal",
+                explain="Rules rarely use every point; the rest still need a label:\n"
+                        "  proportional_to_marginal : fill them so final sizes EXACTLY match your\n"
+                        "                             proportions (recommended, keeps your split).\n"
+                        "  uniform                  : spread evenly, this CHANGES your proportions.\n"
+                        "  concentrated             : dump all leftovers into one label.")
+            if clm["spillover_rule"] == "concentrated":
+                clm["concentrated_labels"] = ask_ints(
+                    "Which label value(s) should absorb the leftovers",
+                    explain="All leftover points go to these labels. Leave one value for the\n"
+                            "usual case; the default without this is the single largest label.")
 
     if mode in ("single", "custom") and ask_bool(
             "Give one cluster's leftover points a specific competing label (structured noise)?",
@@ -426,6 +455,7 @@ def build_clm(known_k=None) -> Dict[str, Any]:
             cd["steepness"] = ask_float("Steepness (higher = more extreme; typical 2-8)", 3.0, lo=0.0)
         clm["centroid_dependence"] = cd
 
+    _final_check(clm)
     return clm
 
 

@@ -1,15 +1,14 @@
-# CLM Benchmark Data Synthesizer
+# Cluster–label matched dataset synthesizer
 
-[![Version](https://img.shields.io/badge/version-0.6.1-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
+[![Version](https://img.shields.io/badge/version-0.6.2-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](LICENSE.txt)
 [![Cite](https://img.shields.io/badge/cite-CITATION.cff-blueviolet)](CITATION.cff)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21751081.svg)](https://doi.org/10.5281/zenodo.21751081)
 
-Generates synthetic label columns on top of existing or generated cluster
-geometries, with mathematically controlled agreement (recall, class balance,
-spatial placement, or a solved target metric) against the ground-truth
-clusters, per the Cluster-Label Matching (CLM) specification.
+Generates synthetic label columns on top of existing or generated clusters, with mathematically controlled agreement
+(recall, class balance, spatial placement, or a solved target metric) against the ground-truth clusters, per the
+Cluster-Label Matching (CLM) specification.
 
 A generated dataset therefore carries three things, strictly row-aligned:
 the original features, the ground-truth cluster IDs, and one or more synthetic
@@ -38,9 +37,7 @@ configuration, rather than measured after the execution and synthesis.
 
 ## Install
 
-Requires Python 3.11 or newer. The package uses a `src/` layout, so **install it
-before running** — `src/` is deliberately kept off `sys.path` so a stale working
-tree can never shadow the installed package:
+Requires Python 3.11 or newer. **Install the package before running**:
 
 ```bash
 pip install -e .
@@ -66,13 +63,9 @@ conda activate clmsynth
 
 Optional, depending on which source/utility you use:
 ```bash
-pip install faker                                    # only used by the fabricated_data source, has a fallback if absent
+pip install faker                                    # only used by the fabricated_data source
 pip install git+https://github.com/CN-TU/mdcgenpy    # only needed for data_source: "mdcgen"
 ```
-> **`pyivm` is not implemented yet.** `metrics.evaluate_cluster_label_matching`
-> ships as a provisional hook against the adjusted internal-validity measures,
-> but the dependency has not been adopted or verified and nothing in the
-> pipeline calls it. Treat that function as unsupported until a later release.
 
 ## Quick start
 
@@ -196,14 +189,15 @@ label_generation:
 
 ### Data sources
 
-- **`clustbench`**, real, fixed geometries downloaded from Gagolewski's benchmark suite (v1.1.0). Every available reference labeling (`labels0`, `labels1`, …) is fetched. Use for reproducible research results.
-- **`mdcgen`**, fully synthetic geometries via `mdcgenpy`, seeded for reproducibility. Use when you need geometric properties (dimensionality, overlap, outliers) the fixed clustbench datasets don't cover.
-- **`fabricated_data`**, no network, no extra dependencies. Offline fallback. Cluster IDs are integers `0..K-1`, as in the other generated sources; the generator's readable class names are mapped to codes on import.
-- **`byoc`**, bring-your-own-clusters: your own CSV with feature columns and exactly one cluster-id column (see below).
+- **`clustbench`**, real, fixed geometries downloaded from Gagolewski's benchmark suite. Every available reference labeling (`labels0`, `labels1`, …) is fetched. Use for reproducible research results.
+- **`mdcgen`**, fully synthetic geometries via `mdcgenpy`, seeded for reproducibility. Use when specific properties (dimensionality, overlap, outliers) is needed that the clustbench datasets may not cover.
+- **`fabricated_data`**, offline fallback. Cluster IDs are integers `0..K-1`, as in the other generated sources; the generator's readable class names are mapped to codes on import.
+- **`byoc`**, bring-your-own-clusters: your own CSV with feature columns and one cluster-id column (see below).
 
 ### Bring-your-own-clusters (`byoc`)
 
-Point the pipeline at your own CSV, feature columns plus **exactly one** cluster-id column, and it generates CLM labels against *your* clusters:
+Point the pipeline at your own CSV, feature columns plus **exactly one** cluster-id column, and it generates CLM labels 
+against *your* clusters:
 
 ```yaml
 global_settings:
@@ -235,7 +229,7 @@ label_generation:
 - `perfect`, fixed cluster↔label bijection; label counts are forced to the paired cluster sizes. Requires `num_classes == K`. Proportions/balance/skew_rule are ignored (logged).
 - `single`, routes label `l*`'s point budget into cluster `k*`. **Note:** the current implementation places up to `recall_target × m_{l*}` points of `l*` into `k*`, so it requires `|k*| ≥ m_{l*}` (see Known limitations).
 - `random`, labels drawn from the resolved proportions, ignoring cluster structure entirely.
-- `custom`, one or more explicit `assignment_matrix` rules, each routing a `recall_target` fraction of one label's budget into a set of clusters. Supports surjective (many clusters → one label), partial, and overlapping alignments. Unclaimed cluster capacity follows `spillover_rule`.
+- `custom`, one or more explicit `assignment_matrix` rules, each routing a `recall_target` fraction of one label's points into a set of clusters. Supports surjective (many clusters → one label), partial, and overlapping alignments. Unclaimed cluster capacity follows `spillover_rule`.
 
 ### Target-metric solving
 
@@ -260,12 +254,20 @@ applied after it.
   request. The whole-partition `R_K` and ARI reported on the plots then serve as
   independent (chance-adjusted) views of the same labeling.
 
-> **What metric is being solved.** The global MCC is the multiclass Gorodkin
+> **What metric is being solved.** The global MCC is the multiclass Gorodkin's
 > `R_K` that `clustering_mcc` computes (permutation-invariant via Hungarian
-> matching); the pair MCC is the `2×2` Matthews φ that `clustering_mcc_pair`
-> computes for one cluster/label pair. The global `R_K`/ARI between an
-> `M`-label and a `K`-cluster partition has no closed form, so its solver is
-> numerical; the single-pair MCC does, which is why `scope: pair` is exact.
+> matching), while the pair MCC is the `2×2` Matthews φ that `clustering_mcc_pair`
+> computes for a single cluster/label pair. The global `R_K` and ARI between an
+> `M`-label and a `K`-cluster partition have no closed form, so their solver is
+> numerical; the single-pair MCC does have one, which is why `scope: pair` is
+> exact. For that reason the pair (binary) measure is the natural choice for
+> single-label to single-cluster matching, whereas the scikit-learn multiclass
+> implementation (`R_K`) is meant for multi-label cases. The pair MCC can still be
+> requested against a target cluster inside a custom-distribution configuration to
+> check one label's precision and recall (rather than its specificity). If you are
+> only interested in a single target label and cluster, prefer
+> `matching_mode: single` with `scope: pair` over a custom distribution coupled
+> with a binary MCC solver.
 
 ### Diagnostics
 
@@ -296,7 +298,7 @@ User Manual under the Troubleshooting appendix.
   `spillover_rule: concentrated` the value is drawn from directly and written
   into the label column, so it is validated up front (`[CLM-128]`): every entry
   must be an integer in `0..num_classes-1`. Two forms are rejected rather than
-  guessed at, because both used to corrupt the output silently — a bare number
+  guessed at, because both used to corrupt the output silently: a bare number
   (`concentrated_labels: 99`) is read by numpy as a *range*, scattering the
   remainder over that many labels instead of concentrating it, and a
   non-integer (`[1.5]`) is truncated to `[1]` when written to the integer label
@@ -332,5 +334,3 @@ User Manual under the Troubleshooting appendix.
   backend requires plotting on the main thread; `main.py` only calls it
   sequentially.
 
-Planned work — uncoded errors still to be given diagnostics, and candidate
-source/generator extensions — is tracked in [`ROADMAP.txt`](ROADMAP.txt).

@@ -41,9 +41,9 @@
 \renewcommand{\arraystretch}{1.28}
 \setlength{\tabcolsep}{5pt}
 
-\title{\textbf{CLMSynth Configuration Troubleshooting Reference}}
-\author{Arootin Gharibian}
-%\date{Generated from \texttt{clm\_label\_engine.py}}
+\title{\textbf{Configuration Troubleshooting Reference}}
+\author{CLMSynth v0.6.1}
+\date{\today}
 
 \begin{document}
 \maketitle
@@ -221,6 +221,7 @@ per-row \texttt{recall\_target} & \texttt{target\_metric} is set & Overridden by
 \vcode{126} & \texttt{num\_classes} outside $[1,64]$ & Coarse safety backstop against runaway/typo configs, not a validated reliability limit (see Table 2) & Use a value in $[1,64]$; results are already unreliable well before this ceiling. \\
 \vcode{127} & the dataset's cluster count $K > 64$ & Same backstop, applied to the data rather than the config & Regroup or subsample clusters to $K\leq64$. \\
 \vcode{128} & \texttt{concentrated\_labels} is not a list of integers in $0..M{-}1$ & The list is drawn from directly and written into the label column, so an unchecked value puts a label in the dataset that \texttt{num\_classes} never declared. A bare number is read as a \emph{range} (scattering the remainder over that many labels, the opposite of \texttt{concentrated}); a non-integer is truncated on write & Give a list of existing label ids, e.g. \texttt{[0]}. Checked before the \texttt{target\_metric} solver, so a solved score can never be computed over a label that does not exist. \\
+\vcode{129} & \texttt{centroid\_dependence} mode \texttt{.favors} not \texttt{core}/\texttt{boundary} & Matched exactly and case-sensitively; any other value, including \texttt{Core} or a typo, was silently treated as \texttt{boundary} & Use lowercase \texttt{core} or \texttt{boundary}. Only read when \texttt{enabled: true}. \\
 \vcode{130} & \texttt{scope: pair} combined with a spillover or noise setting that can place the target label outside its cluster & The closed-form inversion assumes every point of $\ell^*$ lies in $k^*$; \texttt{uniform} spillover, \texttt{concentrated} onto $\ell^*$, and \texttt{competing\_noise} emitting $\ell^*$ all break that assumption. & Use \texttt{spillover\_rule: proportional\_to\_marginal}, keep \texttt{competing\_noise} off $\ell^*$, or use \texttt{scope: global}. \\
 \bottomrule
 \caption{Complete list of invalid configurations.}

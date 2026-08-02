@@ -8,9 +8,8 @@ Bands:
     2xx  raw Python KeyError, a required config key is missing (NOT represented here)
     3xx  Warning:                   non-fatal; logged, execution continues
 
- (documentation-only in troubleshooting.tex, by design):
-
-Codes are a public contract: new diagnostics get new numbers.
+Codes are a public contract: never renumber or reuse an assigned code; new
+diagnostics get new numbers.
 """
 
 
@@ -124,17 +123,17 @@ CODES = {
          "nearest reachable value.",
     308: "target_metric scope 'pair': label {label} is sized to {m} points (a subset of "
          "its cluster) to meet the target MCC; any explicit proportion for it is overridden.",
-    310: "target_metric scope 'pair': the DELIVERED labeling achieves pair mcc="
-         "{achieved:.4f}, outside the requested {target} +/- {tol}. The closed-form "
-         "construction assumes every point of label {label} lies inside cluster {cluster}, "
-         "but {outside} of its {total} points lie outside. Treat the achieved value above "
-         "as authoritative, not the requested one.",
     309: "target_metric: the DELIVERED labeling achieves {type}={achieved:.4f}, outside the "
          "requested {target} +/- {tol} (solved alpha={alpha:.4f}). The solver scores candidates "
          "on a fixed probe stream while this output is generated on the run's own stream, so a "
          "solve that converged internally can still land outside tolerance -- most often at "
          "small N, where spillover placement dominates. Treat the achieved value above as "
          "authoritative, not the requested one.",
+    310: "target_metric scope 'pair': the DELIVERED labeling achieves pair mcc="
+         "{achieved:.4f}, outside the requested {target} +/- {tol}. The closed-form "
+         "construction assumes every point of label {label} lies inside cluster {cluster}, "
+         "but {outside} of its {total} points lie outside. Treat the achieved value above "
+         "as authoritative, not the requested one.",
 }
 
 

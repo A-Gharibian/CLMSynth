@@ -1,63 +1,39 @@
 global_settings:
-  data_source: "clustbench"  # clustbench | mdcgen | fabricated_data | byoc
-  output_dir: "OUTPUT"    # base folder; created on the run, one timestamped subfolder per run
-
-# --- clustbench_suite CONFIGURATION ---
+  data_source: clustbench
+  output_dir: OUTPUT
 clustbench_suite:
-  batteries: ['g2mg']   # "all" or a list, e.g. ["wut"]
-  datasets: ['g2mg_4_20']     # "all" or a list, e.g. ["smile"]
+  batteries:
+  - g2mg
+  datasets:
+  - g2mg_4_60
   seed: 42
-
-# --- LABEL GENERATION ---
 label_generation:
-  n_labels: 1          # produces Label_0, Label_1, ...
-  source_labeling: "labels0"
-  noise: 0.1                # fallback only, used if clm_label is absent
+  n_labels: 1
+  source_labeling: labels0
+  noise: 0.1
   seed: 42
-
-  # --- CLUSTER-LABEL MATCHING (CLM) CONFIGURATION ---
   clm_label:
-    # 1. CARDINALITY & PROPORTIONS
-    num_classes: 2  # M: Number of labels to generate
-    proportions: [0.5, 0.5]  # Must sum to 1.0.
-
-    # 2. BALANCE
-    # 'balanced': uniform 1/M split, proportions ignored.
-    # 'unbalanced': 'proportions' above used directly if set;
-    #   otherwise falls through to skew_rule below.
-    balance: "unbalanced"
-    # Only consulted if balance != 'balanced' AND proportions is empty/unset.
-    # Options: 'geometric', 'dominant_minority', 'dirichlet'
-    skew_rule: "geometric"
-
-    # 3. MATCHING MODE
-    # Options: 'perfect', 'single', 'random', 'custom'
-    matching_mode: "custom"
-
-    # Used ONLY if matching_mode is 'single'
+    num_classes: 2
+    matching_mode: single
+    balance: unbalanced
+    skew_rule: dirichlet
+    skew_params:
+      alpha: 0.3
+    target_metric:
+      type: mcc
+      value: 0.5
+      scope: pair
     single_match:
-      cluster: null
-      label: null
-
-    # Used ONLY if matching_mode is 'custom'
-    assignment_matrix:
-      - clusters:
-        - 1
-        label: 0
-        recall_target: 0.9
-      - clusters:
-        - 2
-        label: 1
-        recall_target: 0.9
-
-    # 4. DISTRIBUTION OF NON-TARGET (NOISE) LABELS
-    # Options: 'proportional_to_size' or 'equal'
-    split_rule: "equal"
-    # Options: 'proportional_to_marginal', 'uniform', 'concentrated'
-    spillover_rule: "proportional_to_marginal"
-
-    # 5. SPATIAL ASSIGNMENT (CENTROID PROXIMITY)
+      cluster: 1
+      label: 1
+    spillover_rule: proportional_to_marginal
+    competing_noise:
+    - cluster: 2
+      label: 0
+      share: 0.3
+      favors: boundary
     centroid_dependence:
-      enabled: true  # If False, labels are randomly distributed
-      profile: "linear"  # Options: 'linear', 'exponential', 'step'
-      favors: "boundary"    # Options: 'core', 'boundary'
+      enabled: true
+      profile: exponential
+      favors: core
+      steepness: 3.0

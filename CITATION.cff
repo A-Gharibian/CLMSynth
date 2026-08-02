@@ -25,9 +25,9 @@ authors:
   - family-names: Kudelka
     given-names: Milos
     affiliation: "VSB - Technical University of Ostrava"
-    # orcid: "https://orcid.org/0000-0002-7219-1008"
+    orcid: "https://orcid.org/0000-0002-7219-1008"
 
-version: 0.6.1
+version: 0.6.2
 date-released: 2026-08-02
 license: MIT
 repository-code: "https://github.com/A-Gharibian/CLMSynth"

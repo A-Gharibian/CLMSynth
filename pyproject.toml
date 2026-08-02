@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clmsynth"
-version = "0.6.1"
+version = "0.6.2"
 description = "Synthetic label generator with configurable cluster-label matching (CLM) against ground-truth clusters"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -14,7 +14,7 @@ license-files = ["LICENSE.txt"]
 # itself is written, owned, and maintained by Arootin Gharibian.
 authors = [
     { name = "Arootin Gharibian", email = "arootin.gharibian@vsb.cz" },
-    { name = "Milos Kudelka" },
+    { name = "Milos Kudelka", email = "milos.kudelka@vsb.cz" },
 ]
 maintainers = [
     { name = "Arootin Gharibian", email = "arootin.gharibian@vsb.cz" },
