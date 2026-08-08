@@ -1,0 +1,23 @@
+$ python -m clmsynth.main Warnings_3xx/CLM-310.yaml
+# exit code: 0
+
+INFO - Starting Test Data Orchestrator...
+INFO - Available 'fabricated_data' dataset batteries:
+INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
+INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
+INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed=42)...
+INFO - Generating synthetic data (Seed: 42)...
+INFO - Applying perfect separation ground truth to categorical labels...
+INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
+WARNING - [CLM-308] target_metric scope 'pair': label 0 is sized to 86 points (a subset of its cluster) to meet the target MCC; any explicit proportion for it is overridden.
+INFO - CLM labels generated. Target counts: [86, 238, 238, 238], achieved: [86, 238, 238, 238].
+INFO - target_metric: final achieved pair mcc=0.6011 (target was 0.6, pair cluster=0/label=0).
+WARNING - [CLM-310] target_metric scope 'pair': the DELIVERED labeling achieves pair mcc=0.6011, outside the requested 0.6 +/- 0.0. The closed-form construction assumes every point of label 0 lies inside cluster 0, but 0 of its 86 points lie outside. Treat the achieved value above as authoritative, not the requested one.
+INFO - [fabricated_data/fabricated/baseline_4class] Attached generated label 'Label_0'.
+INFO - Saved: _scratch/CLM-310/{run}/csv/fabricated_data__fabricated__baseline_4class.csv
+INFO - Saved summary: _scratch/CLM-310/{run}/txt/fabricated_data__fabricated__baseline_4class.txt
+INFO - Generating scatter plot for Feature_1 vs Feature_2...
+INFO - Plot saved successfully to: '_scratch/CLM-310/{run}/png/fabricated_data__fabricated__baseline_4class__Cluster_0.png'
+INFO - Generating scatter plot for Feature_1 vs Feature_2...
+INFO - Plot saved successfully to: '_scratch/CLM-310/{run}/png/fabricated_data__fabricated__baseline_4class__Label_0.png'
+INFO - Pipeline ready. 1 dataset(s) processed. Output folder: '_scratch/CLM-310/{run}'.

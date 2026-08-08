@@ -1,6 +1,7 @@
 TESTING/
+testing
 OUTPUT/
-ROADMAP.txt
+ROADMAP.md
 .claude
 tests/
 Inspection/
@@ -15,3 +16,4 @@ dist/
 venv/
 .idea
 .idea/
+TODO.md

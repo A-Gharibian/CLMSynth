@@ -94,7 +94,10 @@ def resolve_label_counts(cfg: Dict, N: int,
         if abs(sum(proportions) - 1.0) > 1e-6:
             raise clm_error(106, total=sum(proportions))
     else:
-        proportions = _skewed_proportions(M, cfg["skew_rule"], cfg.get("skew_params", {}), rng)
+        # `or {}`, not a .get default: a bare `skew_params:` key in YAML parses to
+        # None, which .get would hand straight to _skewed_proportions as the params
+        # mapping and crash on .get() there.
+        proportions = _skewed_proportions(M, cfg["skew_rule"], cfg.get("skew_params") or {}, rng)
 
     return np.array(_largest_remainder_counts(proportions, N))
 
@@ -163,6 +166,37 @@ def build_rules(cfg: Dict, cluster_ids: List[int],
         return rules
 
     raise clm_error(101, mode=mode)
+
+
+def validate_matching_ids(cfg: Dict, cluster_ids: List) -> None:
+    """Run only the [CLM-104]/[CLM-105] id checks against ONE dataset's cluster ids.
+
+    Split out of build_rules so the pipeline can apply them ahead of time, per
+    dataset, without building rules or resolving recall targets. Unlike every
+    other [CLM-1xx] code, 104 and 105 are statements about a *dataset* rather
+    than about the configuration -- under `byoc` each CSV brings its own cluster
+    ids and nothing requires them to agree -- so the pipeline checks every
+    dataset up front and refuses the batch as a whole rather than discovering the
+    mismatch midway through.
+
+    Deliberately tolerant of a malformed config: anything other than an id
+    problem is left for the engine's own validation to report in its usual place,
+    with its usual message.
+    """
+    M = cfg.get("num_classes")
+    if not isinstance(M, int) or isinstance(M, bool):
+        return
+
+    mode = cfg.get("matching_mode")
+    if mode == "single":
+        sm = cfg.get("single_match") or {}
+        if "label" in sm and "cluster" in sm:
+            _check_pair(sm["label"], [sm["cluster"]], M, cluster_ids, "single_match")
+    elif mode == "custom":
+        for i, row in enumerate(cfg.get("assignment_matrix") or []):
+            if isinstance(row, dict) and "label" in row and "clusters" in row:
+                _check_pair(row["label"], row["clusters"], M, cluster_ids,
+                            f"assignment_matrix row {i}")
 
 
 def _ensure_coords(cfg: Dict, coords, N: int) -> np.ndarray:
@@ -271,6 +305,73 @@ def _validate_spillover_cfg(cfg: Dict) -> None:
                 break
     if not valid:
         raise clm_error(128, hi=M - 1, given=given)
+
+
+def _is_real(value) -> bool:
+    """True for a real number, excluding bool (which is an int subclass and would
+    otherwise sail through every range check as 0/1)."""
+    return isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool)
+
+
+def _validate_skew_cfg(cfg: Dict) -> None:
+    """[CLM-131] guard: skew parameters must be in range for the chosen skew_rule.
+
+    Called from generate_clm_labels *before* resolve_label_counts, because that
+    is where the parameters are consumed -- a guard placed alongside the other
+    validators would run after the counts it protects had already been computed.
+
+    Only the parameters that will actually be read are checked, using the same
+    predicate resolve_label_counts branches on, so a config that supplies explicit
+    proportions (or asks for a balanced split) is not failed for a stale
+    skew_params block it never consults.
+
+    Unknown skew_rule values stay [CLM-107], raised by _skewed_proportions itself.
+    """
+    if cfg.get("balance", "balanced") == "balanced" or cfg.get("proportions"):
+        return
+
+    M = cfg["num_classes"]
+    params = cfg.get("skew_params")
+    if params is None:
+        params = {}                      # bare `skew_params:` key: take the defaults
+    if not isinstance(params, dict):
+        raise clm_error(131, hi=M - 1,
+                        problem=f"expected a mapping of parameters, got {params!r}")
+
+    rule = cfg.get("skew_rule")
+    problem = None
+
+    if rule == "geometric":
+        ratio = params.get("ratio", 0.5)
+        if not _is_real(ratio) or ratio < 0:
+            problem = (f"geometric 'ratio' must be a number >= 0, got {ratio!r}; a "
+                       "negative ratio alternates sign across labels")
+
+    elif rule == "dominant_minority":
+        if M < 2:
+            problem = ("dominant_minority needs num_classes >= 2, got 1; the rule "
+                       "divides the remaining share by (num_classes - 1)")
+        else:
+            share = params.get("dominant_share", 0.5)
+            index = params.get("dominant_index", 0)
+            if not _is_real(share) or not (0.0 <= share <= 1.0):
+                problem = (f"dominant_minority 'dominant_share' must be a number in "
+                           f"[0, 1], got {share!r}")
+            elif isinstance(index, bool) or not isinstance(index, (int, np.integer)):
+                problem = (f"dominant_minority 'dominant_index' must be an integer, got "
+                           f"{index!r}; it indexes the proportions list directly")
+            elif not (0 <= index < M):
+                problem = (f"dominant_minority 'dominant_index' must be in 0..{M - 1}, "
+                           f"got {index!r}")
+
+    elif rule == "dirichlet":
+        alpha = params.get("alpha", 1.0)
+        if not _is_real(alpha) or alpha <= 0:
+            problem = (f"dirichlet 'alpha' must be a number > 0, got {alpha!r}; at "
+                       "exactly 0 every draw is 0 and normalising them divides by zero")
+
+    if problem is not None:
+        raise clm_error(131, problem=problem, hi=M - 1)
 
 
 def _validate_centroid_cfg(cfg: Dict) -> None:
@@ -607,7 +708,9 @@ def _run_allocation_pipeline(cluster_labels, coords, cfg, rules, cluster_ids,
         cursor += n_here
         out[idx] = assign_points_in_cluster(
             coords[idx], demand[k], this_spill,
-            cfg.get("centroid_dependence", {"enabled": False}), rng,
+            # `or`, not a .get default: a bare `centroid_dependence:` key parses to
+            # None, and assign_points_in_cluster calls .get() on whatever it is given.
+            cfg.get("centroid_dependence") or {"enabled": False}, rng,
             favors_overrides=favors_overrides.get(k),
         )
     return out
@@ -738,6 +841,11 @@ def generate_clm_labels(cluster_labels: np.ndarray, coords: np.ndarray, cfg: Dic
     if K > MAX_CARDINALITY:
         raise clm_error(127, K=K, max_val=MAX_CARDINALITY)
 
+    # Must precede resolve_label_counts, which is what consumes skew_params: an
+    # out-of-range value there does not raise, it returns negative label counts
+    # that still sum to N ([CLM-131]).
+    _validate_skew_cfg(cfg)
+
     m_counts = resolve_label_counts(cfg, N, rng)
 
     if cfg["matching_mode"] == "perfect":
@@ -794,7 +902,11 @@ def generate_clm_labels(cluster_labels: np.ndarray, coords: np.ndarray, cfg: Dic
             log.info(f"target_metric: final achieved pair mcc={achieved:.4f} "
                      f"(target was {tm['value']}, pair cluster={sm['cluster']}/label={sm['label']}).")
 
-            pair_tol = 0.01
+            # Honours the same 'tolerance' key the global solver reads. It was
+            # hardcoded to 0.01 here, so a requested 0.001 was silently widened and
+            # a requested 0.05 silently narrowed. Only 'max_iter' stays global-only:
+            # the pair scope inverts in closed form and never iterates.
+            pair_tol = tm.get("tolerance", 0.01)
             if abs(achieved - tm["value"]) > pair_tol:
                 lstar_mask = (out == sm["label"])
                 total = int(np.sum(lstar_mask))

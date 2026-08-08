@@ -1,15 +1,18 @@
-$ python -m clmsynth.main CLM-153.yaml
+$ python -m clmsynth.main InfeasibleAllocation_15x/CLM-153.yaml
 # exit code: 0
 
-2026-08-01 20:49:05,224 - INFO - Starting Test Data Orchestrator...
-2026-08-01 20:49:05,229 - INFO - Available 'fabricated_data' dataset batteries:
-2026-08-01 20:49:05,229 - INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
-2026-08-01 20:49:05,229 - INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
-2026-08-01 20:49:05,230 - INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed=42)...
-2026-08-01 20:49:05,230 - INFO - Generating synthetic data (Seed: 42)...
-2026-08-01 20:49:05,253 - INFO - Applying perfect separation ground truth to categorical labels...
-2026-08-01 20:49:05,255 - INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
-2026-08-01 20:49:05,256 - ERROR - Skipping label generation for fabricated/baseline_4class: [CLM-153] Infeasible configuration: 2 assignment_matrix rules name label 0 and jointly claim 240 points, but that label's budget is only 200. Each rule's recall_target is a fraction of the label's WHOLE budget, not a share of it, so recall targets on the same label add up: clusters [0] at recall 0.6 = 120; clusters [1] at recall 0.6 = 120. Either lower them so they sum to at most 1.0, or write one rule listing all the clusters and let split_rule divide the budget between them.
-2026-08-01 20:49:05,264 - INFO - Saved: D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-153\010826_Fabricated_204905\csv\fabricated_data__fabricated__baseline_4class.csv
-2026-08-01 20:49:05,266 - INFO - Saved summary: D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-153\010826_Fabricated_204905\txt\fabricated_data__fabricated__baseline_4class.txt
-2026-08-01 20:49:05,266 - INFO - Pipeline ready. 1 dataset(s) processed. Output folder: 'D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-153\010826_Fabricated_204905'.
+INFO - Starting Test Data Orchestrator...
+INFO - Available 'fabricated_data' dataset batteries:
+INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
+INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
+INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed=42)...
+INFO - Generating synthetic data (Seed: 42)...
+INFO - Applying perfect separation ground truth to categorical labels...
+INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
+ERROR - Skipping label generation for fabricated/baseline_4class: [CLM-153] Infeasible configuration: 2 assignment_matrix rules name label 0 and jointly claim 240 points, but that label's budget is only 200. Each rule's recall_target is a fraction of the label's WHOLE budget, not a share of it, so recall targets on the same label add up: clusters [0] at recall 0.6 = 120; clusters [1] at recall 0.6 = 120. Either lower them so they sum to at most 1.0, or write one rule listing all the clusters and let split_rule divide the budget between them.
+INFO - Saved: _scratch/CLM-153/{run}/csv/fabricated_data__fabricated__baseline_4class.csv
+INFO - Saved summary: _scratch/CLM-153/{run}/txt/fabricated_data__fabricated__baseline_4class.txt
+INFO - Generating scatter plot for Feature_1 vs Feature_2...
+INFO - Plot saved successfully to: '_scratch/CLM-153/{run}/png/fabricated_data__fabricated__baseline_4class__Cluster_0.png'
+WARNING - 1 of the 1 processed dataset(s) were written WITHOUT a generated label (see the errors above): those CSVs hold features and ground-truth clusters only.
+INFO - Pipeline ready. 1 dataset(s) processed. Output folder: '_scratch/CLM-153/{run}'.

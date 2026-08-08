@@ -59,5 +59,6 @@ centroid_favors: "boundary"
 # per-rule recall_target values above are ignored.
 #   scope "global" (default): whole-partition mcc/ari, found by search.
 #   scope "pair"            : exact closed form, but requires type "mcc" AND
-#                             matching_mode "single"; tolerance/max_iter unused.
+#                             matching_mode "single". tolerance applies to both
+#                             scopes; max_iter is global-only.
 # target_metric: {type: "mcc", value: 0.6, scope: "global", tolerance: 0.01, max_iter: 40}

@@ -87,14 +87,41 @@ def generate_synthetic_data(
     cat_config = config_dict.get("feature_generators", {}).get("categorical_features", {})
     ground_truths = config_dict.get("ground_truths", {})
 
-    final_dfs_to_concat: list = [scaled_df]
+    # labels_only: emit the reserved 'Cohort_Class' column and nothing else.
+    #
+    # The engine accepts a labels-only run -- cluster ids with no feature space at
+    # all -- because recall targets, proportions, allocation and spillover are
+    # pure counting. Until this existed no *config* could produce one, since every
+    # source emits at least one feature column, so that capability was reachable
+    # only from Python. Downstream, build_context maps 'Cohort_Class' to the
+    # ground truth and excludes it from the features, leaving the geometry
+    # genuinely empty.
+    labels_only = bool(cat_config.get("enable", False) and cat_config.get("labels_only", False))
+    if labels_only:
+        log.warning(
+            "fabricated_data 'labels_only': emitting ONLY the reserved 'Cohort_Class' "
+            "column, drawn uniformly, and none of the six engineered features. The "
+            "result carries cluster ids and no geometry, which is exactly what the "
+            "[CLM-125] guard refuses when spatial placement is also configured. Use "
+            "this to exercise the labels-only path; it is not a general-purpose "
+            "fabrication mode and any centroid_dependence will be rejected."
+        )
+
+    final_dfs_to_concat: list = [] if labels_only else [scaled_df]
 
     if cat_config.get("enable", False):
         labels = cat_config.get("labels", ["Class_0", "Class_1"])
 
         # Apply Perfect Separation Ground Truth if requested
         clustering_config = ground_truths.get("class_clustering", {})
-        if clustering_config.get("enforce_perfect_separation", False):
+        if labels_only:
+            # Drawn directly rather than through generate_faker_categories: this
+            # mode must be reproducible from the seed alone, and that helper
+            # substitutes Faker company names whenever Faker happens to be
+            # installed. Perfect separation is unavailable here by construction --
+            # it splits on Feature_1, and there is no Feature_1.
+            cat_series = pd.Series(rng.choice(labels, size=n_samples), name="Cohort_Class")
+        elif clustering_config.get("enforce_perfect_separation", False):
             log.info("Applying perfect separation ground truth to categorical labels...")
             # Example logic: Assign class purely based on the percentile of Feature_1
             # This guarantees your pipeline's clustering algorithms will find a 1:1 match

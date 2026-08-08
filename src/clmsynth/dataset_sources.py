@@ -158,6 +158,25 @@ FABRICATED_CONFIGS: Dict[str, Dict[str, Any]] = {
             },
         },
     },
+    # Cluster ids and no feature space at all. The CLM engine has always accepted
+    # this (recall targets, proportions, allocation and spillover are pure
+    # counting, and generate_clm_labels documents coords as optional), but no
+    # config could express it, because every other preset and source emits
+    # features. Spatial placement is the one thing that genuinely needs geometry,
+    # so combining this preset with centroid_dependence raises [CLM-125] -- which
+    # makes it the only configuration that reaches that guard. The generator logs
+    # a warning saying so; see fabricated_generator's labels_only branch.
+    "labels_only_4class": {
+        "n_samples": 800,
+        "config_dict": {
+            "feature_generators": {
+                "categorical_features": {"enable": True,
+                                          "labels": ["Class_0", "Class_1", "Class_2", "Class_3"],
+                                          "use_faker": False, "labels_only": True}
+            },
+            "ground_truths": {"class_clustering": {"target_label": "Cohort_Class"}},
+        },
+    },
 }
 
 SOURCE_DATASETS: Dict[str, Dict[str, List[str]]] = {

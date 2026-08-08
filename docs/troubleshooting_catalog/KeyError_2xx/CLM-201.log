@@ -1,15 +1,18 @@
-$ python -m clmsynth.main CLM-201.yaml
+$ python -m clmsynth.main KeyError_2xx/CLM-201.yaml
 # exit code: 0
 
-2026-08-01 20:49:12,791 - INFO - Starting Test Data Orchestrator...
-2026-08-01 20:49:12,797 - INFO - Available 'fabricated_data' dataset batteries:
-2026-08-01 20:49:12,797 - INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
-2026-08-01 20:49:12,797 - INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
-2026-08-01 20:49:12,798 - INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed=42)...
-2026-08-01 20:49:12,798 - INFO - Generating synthetic data (Seed: 42)...
-2026-08-01 20:49:12,819 - INFO - Applying perfect separation ground truth to categorical labels...
-2026-08-01 20:49:12,821 - INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
-2026-08-01 20:49:12,822 - ERROR - Skipping label generation for fabricated/baseline_4class: 'num_classes'
-2026-08-01 20:49:12,830 - INFO - Saved: D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-201\010826_Fabricated_204912\csv\fabricated_data__fabricated__baseline_4class.csv
-2026-08-01 20:49:12,832 - INFO - Saved summary: D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-201\010826_Fabricated_204912\txt\fabricated_data__fabricated__baseline_4class.txt
-2026-08-01 20:49:12,832 - INFO - Pipeline ready. 1 dataset(s) processed. Output folder: 'D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-201\010826_Fabricated_204912'.
+INFO - Starting Test Data Orchestrator...
+INFO - Available 'fabricated_data' dataset batteries:
+INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
+INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
+INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed=42)...
+INFO - Generating synthetic data (Seed: 42)...
+INFO - Applying perfect separation ground truth to categorical labels...
+INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
+ERROR - Skipping label generation for fabricated/baseline_4class: 'num_classes'
+INFO - Saved: _scratch/CLM-201/{run}/csv/fabricated_data__fabricated__baseline_4class.csv
+INFO - Saved summary: _scratch/CLM-201/{run}/txt/fabricated_data__fabricated__baseline_4class.txt
+INFO - Generating scatter plot for Feature_1 vs Feature_2...
+INFO - Plot saved successfully to: '_scratch/CLM-201/{run}/png/fabricated_data__fabricated__baseline_4class__Cluster_0.png'
+WARNING - 1 of the 1 processed dataset(s) were written WITHOUT a generated label (see the errors above): those CSVs hold features and ground-truth clusters only.
+INFO - Pipeline ready. 1 dataset(s) processed. Output folder: '_scratch/CLM-201/{run}'.

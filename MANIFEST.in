@@ -1,0 +1,50 @@
+# MANIFEST.in -- controls what ships in the sdist (the .tar.gz built by
+# `python -m build`), on top of whatever setuptools auto-includes for the
+# discovered `clmsynth` package. Wheel/package contents are governed
+# separately by [tool.setuptools.packages.find] in pyproject.toml; this file
+# only affects the source distribution.
+
+# Top-level project metadata and reference material
+include README.md
+include CHANGELOG.md
+include CITATION.cff
+include LICENSE.txt
+include requirements.txt
+include environment.yml
+
+# Example / starter configs referenced by the README quick-start
+include test_data_config.yaml
+include test_data_config_offline.yaml
+include upstream_payload.yaml
+
+# User manual and the coded-diagnostics reference catalogue
+recursive-include docs *.tex
+recursive-include docs *.yaml
+recursive-include docs *.log
+
+# Package source (normally auto-included via packages.find for a pure-Python
+# package; listed explicitly here for sdist robustness regardless of build
+# backend behavior).
+recursive-include src/clmsynth *.py
+
+# Never ship build/tooling byproducts, even if present in a dirty working
+# tree at build time. MANIFEST.in does not read .gitignore automatically, so
+# the equivalent exclusions are repeated here on purpose.
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude .DS_Store
+prune src/clmsynth.egg-info
+prune .venv
+prune .idea
+prune .claude
+prune Inspection
+prune testing
+prune tests
+prune build
+prune dist
+
+# ROADMAP.md and wizard_config.yaml are intentionally untracked (see
+# .gitignore) and are not included here for the same reason: a source
+# distribution built from a clean checkout would never have them either. If
+# either becomes tracked later, add an explicit exclusion here rather than
+# relying on it being absent.

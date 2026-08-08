@@ -2,6 +2,7 @@
 """Scatter-plot rendering for the pipeline outputs."""
 
 import logging
+import os
 from typing import Optional
 from pathlib import Path
 import pandas as pd
@@ -10,6 +11,32 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 log = logging.getLogger(__name__)
+
+# Windows refuses paths at or beyond 260 characters unless long-path support is
+# enabled. PNG names are the longest the pipeline writes, so with a deep
+# output_dir they are what crosses the limit first -- while the CSV and TXT of
+# the same dataset still write cleanly.
+_MAX_PATH = 260
+
+
+def _max_path_hint(output_path: Optional[str]) -> str:
+    """Name MAX_PATH when a plot failure is most likely really a path-length one.
+
+    Windows reports it as `[Errno 2] No such file or directory` naming a path
+    whose folder plainly exists, which points at entirely the wrong cause.
+    """
+    if not output_path or os.name != "nt":
+        return ""
+    try:
+        length = len(str(Path(output_path).resolve()))
+    except Exception:
+        return ""
+    if length < _MAX_PATH - 20:
+        return ""
+    return (f" -- NOTE: the output path is {length} characters. Windows rejects paths at "
+            f"or beyond {_MAX_PATH} (MAX_PATH) and reports it as a missing file even "
+            "though the folder exists. Use a shorter output_dir, or enable long-path "
+            "support.")
 
 
 def plot_feature_scatter(
@@ -118,7 +145,7 @@ def plot_feature_scatter(
     except Exception as e:
         # Plotting is best-effort, not the pipeline's deliverable (the CSV is);
         # tagged so it reads as a plot-only failure in logs, not a dataset failure.
-        log.error(f"[PLOT-FAIL] Failed to generate scatter plot: {e}")
+        log.error(f"[PLOT-FAIL] Failed to generate scatter plot: {e}{_max_path_hint(output_path)}")
         return False
     finally:
         plt.close(fig)

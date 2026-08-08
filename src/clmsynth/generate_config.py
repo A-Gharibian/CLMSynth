@@ -124,7 +124,8 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
             "",
             "    # TARGET METRIC (single/custom only): solves the recall level for you.",
             "    # scope 'global' (default) searches numerically; 'pair' is exact but needs",
-            "    # type 'mcc' AND matching_mode 'single'. tolerance/max_iter are global-only.",
+            "    # type 'mcc' AND matching_mode 'single'. tolerance applies to both scopes;",
+            "    # max_iter is global-only (the pair scope never iterates).",
             "    target_metric:",
         ]
         for key in ("type", "value", "scope", "tolerance", "max_iter"):

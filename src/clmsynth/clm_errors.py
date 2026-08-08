@@ -87,6 +87,15 @@ CODES = {
          "pool for the target label is empty by construction), keep competing_noise off "
          "label {label}, or switch to scope 'global'.",
 
+    131: "skew_params: {problem}. These are read only when 'balance' is not 'balanced' "
+         "and no explicit 'proportions' are given. Out-of-range values mostly do NOT "
+         "crash there: they produce NEGATIVE label counts that still sum to N, so "
+         "largest-remainder rounding is satisfied, nothing downstream objects, and the "
+         "run delivers a labeling nobody asked for. Valid ranges: geometric 'ratio' "
+         ">= 0; dominant_minority 'dominant_share' in [0, 1] and 'dominant_index' an "
+         "integer in 0..{hi}, with num_classes >= 2; dirichlet 'alpha' > 0. Omit "
+         "skew_params entirely to take the documented defaults.",
+
     # --- 15x : InfeasibleAllocationError (valid config, counts don't fit) ---
     150: "Infeasible rule: label {label} needs recall_target={rt} ({tp} of its {m} points) "
          "but clusters {clusters} hold only {capacity} points total. "

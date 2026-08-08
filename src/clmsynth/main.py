@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import pandas as pd
 import yaml
 
 from .dataset_sources import (
@@ -23,7 +24,7 @@ from .dataset_sources import (
 from .visualization import plot_feature_scatter
 from .label_context import build_context
 from .label_generator import generate_additional_labels
-from .clm_label_engine import InfeasibleAllocationError
+from .clm_label_engine import InfeasibleAllocationError, validate_matching_ids
 from .metrics import clustering_mcc, clustering_ari
 from .byoc_source import fetch_byoc_data
 
@@ -105,6 +106,61 @@ def _write_summary_txt(path: Path, friendly: str, source: str, battery: str, dat
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
     log.info(f"Saved summary: {path}")
 
+def _byoc_cluster_ids(input_dir, dataset: str, cluster_column: str):
+    """The cheapest possible peek at one BYOC dataset: a single column of one CSV.
+
+    Returns the distinct cluster ids, or None when the file cannot be read at
+    all -- a missing or malformed CSV is `byoc_source`'s to report, per dataset,
+    with a message that names the actual problem.
+    """
+    path = (Path(input_dir) / f"{dataset}.csv") if input_dir else Path(f"{dataset}.csv")
+    try:
+        column = pd.read_csv(path, usecols=[cluster_column])[cluster_column]
+    except Exception:
+        return None
+    return sorted(column.dropna().unique().tolist(), key=str)
+
+
+def precheck_byoc_matching_ids(jobs, fetch_kwargs: dict, clm_config: Optional[dict]) -> None:
+    """Resolve [CLM-104]/[CLM-105] for every BYOC dataset before any work begins.
+
+    Those two codes validate label and cluster ids against each dataset's *own*
+    ids, and under `byoc` every CSV brings its own. Discovering a mismatch
+    mid-loop used to abort the whole run, discarding both the datasets already
+    written and the ones that would have succeeded. Checking every CSV up front
+    -- one column each, no features parsed -- means the run either starts knowing
+    the ids line up or refuses before producing a single output file.
+
+    Raises the first offending dataset's coded error, after logging every one of
+    them, so a batch with several mismatches is fixed in one pass rather than
+    one run at a time.
+    """
+    cluster_column = fetch_kwargs.get("cluster_column")
+    if not clm_config or not isinstance(cluster_column, str):
+        return                       # byoc_source rejects a bad cluster_column itself
+
+    failures = []
+    for battery, dataset in jobs:
+        ids = _byoc_cluster_ids(fetch_kwargs.get("input_dir"), dataset, cluster_column)
+        if ids is None:
+            continue
+        try:
+            validate_matching_ids(clm_config, ids)
+        except ValueError as e:
+            failures.append((f"{battery}/{dataset}", e))
+
+    if not failures:
+        return
+    for tag, error in failures:
+        log.critical(f"{tag}: {error}")
+    log.critical(
+        f"{len(failures)} of {len(jobs)} BYOC dataset(s) do not contain the cluster/label "
+        "ids this configuration matches on. Aborting before any output is written; "
+        "every offending dataset is listed above."
+    )
+    raise failures[0][1]
+
+
 def load_config(config_path: str) -> dict:
     """Loads the pipeline config YAML; exits with a coded message if absent or empty."""
     path = Path(config_path)
@@ -158,8 +214,16 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
     if fetch_kwargs:
         log.info(f"Extra fetch kwargs forwarded to '{source}': {fetch_kwargs}")
 
+    # BYOC only: cluster ids differ per CSV and are cheap to read, so the whole
+    # batch is checked before anything is written. The other sources cannot be
+    # pre-checked without fetching or generating every dataset twice, so there a
+    # [CLM-104]/[CLM-105] surfaces per dataset in the loop below instead.
+    if source == "byoc":
+        precheck_byoc_matching_ids(jobs, fetch_kwargs, clm_config)
+
     fetcher = FETCHERS[source]
     n_ok = 0
+    n_unlabelled = 0
 
     for battery, dataset in jobs:
         try:
@@ -177,6 +241,11 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
                         noise=label_cfg.get("noise", 0.1), seed=label_cfg.get("seed", 42),
                     )
                 except (KeyError, InfeasibleAllocationError) as e:
+                    # The dataset is still written, so it still counts as processed;
+                    # it just has no Label_n column. Counted separately so the final
+                    # summary cannot claim ten successes over CSVs that are missing
+                    # the very thing the run was for.
+                    n_unlabelled += 1
                     log.error(f"Skipping label generation for {battery}/{dataset}: {e}")
 
             final_df = context.to_dataframe()
@@ -242,9 +311,18 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
             # make this dataset a failed run.
             n_ok += 1
         except ValueError as e:
-            # A coded [CLM-1xx] error means the *configuration* is wrong, which is
-            # equally wrong for every remaining dataset.
-            if getattr(e, "code", None) is not None and not isinstance(e, InfeasibleAllocationError):
+            code = getattr(e, "code", None)
+            # [CLM-104]/[CLM-105] are the exception to the rule below: they compare
+            # the config's ids against THIS dataset's cluster ids, so a failure says
+            # nothing about the next dataset, whose ids may differ. Aborting on them
+            # discarded datasets that would have succeeded. BYOC never reaches this
+            # branch -- its whole batch is checked before the loop starts.
+            if code in (104, 105):
+                log.error(f"Skipping {battery}/{dataset}: {e}")
+                continue
+            # Any other coded [CLM-1xx] error means the *configuration* is wrong,
+            # which is equally wrong for every remaining dataset.
+            if code is not None and not isinstance(e, InfeasibleAllocationError):
                 log.critical(f"Configuration error, aborting run: {e}")
                 raise
             log.error(f"Skipping {battery}/{dataset}: unexpected error: {e}")
@@ -253,18 +331,36 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
             log.error(f"Skipping {battery}/{dataset}: unexpected error: {e}")
             continue
 
+    if n_unlabelled:
+        log.warning(
+            f"{n_unlabelled} of the {n_ok} processed dataset(s) were written WITHOUT a "
+            "generated label (see the errors above): those CSVs hold features and "
+            "ground-truth clusters only."
+        )
     return n_ok
 
 
 def build_run_dir(base_dir: Path, friendly_source: str) -> Path:
-    """One self-packaging folder per run: DDMMYY_Source_HHMMSS/"""
+    """One self-packaging folder per run: DDMMYY_Source_HHMMSS/
+
+    Creates the folder it returns, and returns only a folder it created. The
+    name used to be chosen with `while unique.exists()` and created by the
+    caller one call later, leaving it unclaimed in between: two runs starting in
+    the same second against one `output_dir` were handed the same path and
+    interleaved their csv/png/txt and config copy. `exist_ok=False` plus a retry
+    makes check-and-create a single atomic step, so the loser of the race gets
+    the next suffix instead of a duplicate.
+    """
     now = datetime.now()
-    run_dir = base_dir / f"{now:%d%m%y}_{friendly_source}_{now:%H%M%S}"
-    unique, n = run_dir, 1
-    while unique.exists():
-        n += 1
-        unique = base_dir / f"{run_dir.name}_{n}"
-    return unique
+    stem = f"{now:%d%m%y}_{friendly_source}_{now:%H%M%S}"
+    candidate, n = base_dir / stem, 1
+    while True:
+        try:
+            candidate.mkdir(parents=True, exist_ok=False)
+            return candidate
+        except FileExistsError:
+            n += 1
+            candidate = base_dir / f"{stem}_{n}"
 
 
 def main() -> None:

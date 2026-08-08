@@ -1,6 +1,6 @@
 # Cluster–label matched dataset synthesizer
 
-[![Version](https://img.shields.io/badge/version-0.6.2-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
+[![Version](https://img.shields.io/badge/version-0.6.3-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](LICENSE.txt)
 [![Cite](https://img.shields.io/badge/cite-CITATION.cff-blueviolet)](CITATION.cff)
@@ -191,7 +191,7 @@ label_generation:
 
 - **`clustbench`**, real, fixed geometries downloaded from Gagolewski's benchmark suite. Every available reference labeling (`labels0`, `labels1`, …) is fetched. Use for reproducible research results.
 - **`mdcgen`**, fully synthetic geometries via `mdcgenpy`, seeded for reproducibility. Use when specific properties (dimensionality, overlap, outliers) is needed that the clustbench datasets may not cover.
-- **`fabricated_data`**, offline fallback. Cluster IDs are integers `0..K-1`, as in the other generated sources; the generator's readable class names are mapped to codes on import.
+- **`fabricated_data`**, offline fallback. Cluster IDs are integers `0..K-1`, as in the other generated sources; the generator's readable class names are mapped to codes on import. The `labels_only_4class` preset emits **cluster ids with no feature columns at all** — a valid CLM run, since recall, balance, allocation and spillover never read coordinates. Spatial placement does, so combining that preset with `centroid_dependence` is refused with `[CLM-125]`.
 - **`byoc`**, bring-your-own-clusters: your own CSV with feature columns and one cluster-id column (see below).
 
 ### Bring-your-own-clusters (`byoc`)
@@ -276,6 +276,13 @@ Every error and warning the engine raises carries a `[CLM-###]` code
 defined once in `clm_errors.py`. The full catalogue is available in the CLMSynth
 User Manual under the Troubleshooting appendix.
 
+A coded `1xx` error aborts the whole run: a malformed config is equally wrong for
+every dataset. The two exceptions are **`[CLM-104]`** and **`[CLM-105]`**, which
+check label and cluster ids against *each dataset's own* ids. For `byoc` the
+whole batch is checked before any work begins, so a mismatch refuses the run
+before a single file is written and names every offending dataset; for the other
+sources it is reported per dataset and the batch continues.
+
 ## Known limitations
 
 - **`single` mode is budget-into-`k*`, not drain-`k*`-into-`l*`.** It tries to
@@ -291,7 +298,7 @@ User Manual under the Troubleshooting appendix.
   the rules achieve at full recall (`alpha = 1`). A chosen skew (e.g.
   `dominant_minority`) constrains it further via fixed label sizes. When the
   target exceeds the ceiling, the solver reports best-effort + a `[CLM-306]`
-  non-convergence warning.
+  non-convergence warning. *(planned for 0.7.0)*
 - **Proportions are only honored with `spillover_rule: proportional_to_marginal`.**
   `uniform`/`concentrated` deliberately do not preserve the target label counts.
 - **`concentrated_labels` must be a *list* of existing label ids.** Under
@@ -314,7 +321,7 @@ User Manual under the Troubleshooting appendix.
 - **`balance: balanced` ignores `proportions`** (enforces uniform 1/M) and warns.
 - **`skew_rule: dirichlet`** is stochastic but reproducible: it draws once from
   the run seed, so a fixed seed yields fixed proportions.
-- **`pyivm` is not implemented yet.** `evaluate_cluster_label_matching` is unsupported until a later release (see Install).
+- **`pyivm` is not implemented yet.** `evaluate_cluster_label_matching` is unsupported (see Install). *(planned for 1.0.0)*
 - **A solved `target_metric` is verified against the delivered labeling, and can
   miss.** `solve_alpha_for_target_metric` scores candidate recalls on a fixed
   probe stream (`default_rng(probe_seed)`, `probe_seed` defaulting to 0) so that
@@ -325,12 +332,21 @@ User Manual under the Troubleshooting appendix.
   falls outside tolerance, *treat the achieved value as authoritative, not the
   requested one*. Magnitude is governed by `N`: ≤0.009 at `N=3000`, ≤0.007 at
   `N=8000`, but up to 0.07 at `N`≈120–280. Does not affect `scope: pair`
-  (closed-form, no search).
+  (closed-form, no search). *(planned for 0.6.4)*
+- **Reachable `scope: pair` values are a coarse ladder near the bottom of the
+  range.** The target label is sized to an integer number of points, so only a
+  discrete set of pair-MCC values is reachable, and the rungs widen sharply as the
+  target approaches `phi_min`. With `N = 800` and a 200-point cluster, one point
+  gives `0.0613` and two give `0.0867`, a gap of `0.025` — wider than the default
+  `tolerance`. A target between two rungs is unreachable, so the closest rung is
+  delivered and `[CLM-310]` reports the miss. `[CLM-307]` only clamps targets
+  *outside* `[phi_min, 1]`; it says nothing about one falling between rungs inside
+  that range. Inherent to the closed form, not a defect.
 - **The target-metric search grid cannot see inside a narrow feasible band.**
   Candidate recalls are bracketed on 11 grid points (step 0.1); only feasible
   ones are usable, so the interval between the last feasible grid point and the
-  true feasibility boundary is never explored.
+  true feasibility boundary is never explored. *(planned for 0.7.0)*
 - **`plot_feature_scatter` is not thread-safe.** matplotlib's default (TkAgg)
   backend requires plotting on the main thread; `main.py` only calls it
-  sequentially.
+  sequentially. *(planned for 0.8.0)*
 

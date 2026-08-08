@@ -5,6 +5,121 @@ All notable changes to CLMSynth are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] — 2026-08-08
+
+A correctness release. Every entry below closes a case where the program either
+gave an answer that was wrong without saying so, stopped with an error that did
+not explain itself, or reported a number it had not actually delivered.
+
+One new capability comes with it: a dataset can now consist of cluster ids with
+no features at all.
+
+### Added
+
+- **A labels-only data source.** The CLM engine has always accepted a dataset
+  with cluster ids and no feature space, because recall targets, class balance,
+  allocation and spillover are all counting problems that never look at
+  coordinates. Until now no configuration could produce such a dataset — every
+  source emitted at least one feature column — so the capability was reachable
+  only by calling the library from Python.
+
+  The `fabricated_data` source gains a `labels_only_4class` preset that emits
+  cluster ids and nothing else. Spatial placement is the one feature that does
+  need coordinates, so asking for `centroid_dependence` on top of this dataset is
+  refused with `[CLM-125]`; the generator logs a warning saying as much when the
+  preset is used.
+
+- **Full diagnostic coverage in the troubleshooting catalog.** Every one of the
+  45 `[CLM-###]` codes now has a runnable example config, up from 42. The three
+  that were missing — `[CLM-125]`, `[CLM-131]` and `[CLM-310]` — are now present,
+  and the test suite fails if a future code is added without one.
+
+  The catalog is also self-contained and portable. Configs and logs
+  Every path is now relative to the catalog folder, so any case can
+  be reproduced directly:
+
+      cd docs/troubleshooting_catalog
+      python -m clmsynth.main ValueError_1xx/CLM-150.yaml
+
+### Fixed
+
+- **Out-of-range skew settings silently produced negative class sizes.** When
+  class sizes come from a `skew_rule` rather than explicit `proportions`, the
+  parameters controlling that rule were never checked. Three settings did not
+  fail — they returned. A `geometric` rule with `ratio: -0.5` produced the class
+  sizes `[1600, -800, 400, -200]`, and `dominant_minority` with a
+  `dominant_share` above 1 or below 0 produced similar. Because those still added
+  up to the dataset size, nothing downstream objected and the run completed with
+  a labeling nobody had asked for.
+
+  Four more settings crashed with a raw Python error instead of an explanation:
+  a `dominant_index` past the last class, `dominant_minority` with only one
+  class, and `dirichlet` with an `alpha` of zero or less.
+
+  All of them are now **`[CLM-131]`**, checked before any class sizes are
+  computed. The check only applies when the skew rule is actually used, so a
+  configuration that supplies explicit `proportions` is never failed for a stale
+  skew block it does not read.
+
+- **An empty YAML key crashed instead of taking the default.** Writing
+  `skew_params:` or `centroid_dependence:` with nothing after it produces a null
+  value in YAML, not an empty block, and the engine passed that null on as if it
+  were a set of options. Both now fall back to their documented defaults, which
+  is how `target_metric` already treated the same shape.
+
+- **`target_metric` ignored your `tolerance` when using `scope: pair`.** The
+  check that compares the delivered result against the requested one was fixed at
+  0.01 on that path, so asking for 0.001 quietly got you 0.01, and asking for
+  0.05 quietly got you 0.01 as well. `tolerance` now applies to both scopes.
+  `max_iter` remains meaningful only for `scope: global`, which is the only one
+  that searches.
+
+- **Two runs starting in the same second could overwrite each other.** Run
+  folders are named from the clock down to the second, and the pipeline chose a
+  free name in one step and created it in another. Two runs sharing an
+  `output_dir` and starting within the same second were handed the same folder
+  and wrote their CSVs, plots and config copies into it, one silently replacing
+  the other. The folder is now claimed at the moment it is chosen. No parallel
+  execution was needed to hit this — two terminals were enough.
+
+- **The run summary could report success for datasets that got no labels.** When
+  label generation fails for one dataset, that dataset is still written out with
+  its features and clusters, and still counts as processed — which is correct,
+  but the summary said "10 dataset(s) processed" while some of those files were
+  missing the generated label that was the point of the run. The count now
+  reports the shortfall separately.
+
+- **Plot failures caused by long Windows paths named the wrong cause.** Windows
+  rejects file paths of 260 characters or more, and the plot filenames are the
+  longest the pipeline writes, so with a deeply nested `output_dir` the plots
+  fail while the CSV and summary succeed. Windows reports this as "No such file
+  or directory" for a folder that plainly exists. The message now says how long
+  the path is and what the limit is.
+
+### Changed
+
+- **A cluster id that is missing from one dataset no longer aborts a whole
+  batch.** `[CLM-104]` and `[CLM-105]` report that a label or cluster id named in
+  your configuration does not exist in the data. Unlike every other configuration
+  error, that is a statement about one dataset rather than about the
+  configuration — under `byoc` each CSV brings its own cluster ids, and nothing
+  requires them to match. Previously the first mismatch stopped the run, throwing
+  away both the datasets already written and the ones that would have succeeded.
+
+  Now, for `byoc`, every input file's cluster column is read before any work
+  begins: if ids are missing anywhere the run is refused immediately, with every
+  offending file named, and nothing is written. For the other sources, where ids
+  cannot be known without downloading or generating each dataset, the mismatch is
+  reported for that dataset and the batch continues. All other configuration
+  errors still stop the run.
+
+- **The configuration wizard now asks for `tolerance` under both target-metric
+  scopes**, since `scope: pair` reads it as of this release.
+
+- **`validate_matching_ids` is available from the engine** for callers who want
+  to check a configuration's cluster and label ids against a dataset before
+  running it. The pipeline uses it for the pre-flight check described above.
+
 ## [0.6.2] — 2026-08-02 — Public release
 
 The release accompanying the article submission. No change to the

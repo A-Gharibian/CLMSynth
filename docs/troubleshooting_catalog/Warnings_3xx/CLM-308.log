@@ -1,18 +1,22 @@
-$ python -m clmsynth.main CLM-308.yaml
+$ python -m clmsynth.main Warnings_3xx/CLM-308.yaml
 # exit code: 0
 
-2026-08-01 20:49:40,986 - INFO - Starting Test Data Orchestrator...
-2026-08-01 20:49:40,992 - INFO - Available 'fabricated_data' dataset batteries:
-2026-08-01 20:49:40,992 - INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
-2026-08-01 20:49:40,992 - INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
-2026-08-01 20:49:40,993 - INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed=42)...
-2026-08-01 20:49:40,993 - INFO - Generating synthetic data (Seed: 42)...
-2026-08-01 20:49:41,015 - INFO - Applying perfect separation ground truth to categorical labels...
-2026-08-01 20:49:41,017 - INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
-2026-08-01 20:49:41,018 - WARNING - [CLM-308] target_metric scope 'pair': label 0 is sized to 86 points (a subset of its cluster) to meet the target MCC; any explicit proportion for it is overridden.
-2026-08-01 20:49:41,019 - INFO - CLM labels generated. Target counts: [86, 238, 238, 238], achieved: [86, 238, 238, 238].
-2026-08-01 20:49:41,023 - INFO - target_metric: final achieved pair mcc=0.6011 (target was 0.6, pair cluster=0/label=0).
-2026-08-01 20:49:41,023 - INFO - [fabricated_data/fabricated/baseline_4class] Attached generated label 'Label_0'.
-2026-08-01 20:49:41,031 - INFO - Saved: D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-308\010826_Fabricated_204940\csv\fabricated_data__fabricated__baseline_4class.csv
-2026-08-01 20:49:41,037 - INFO - Saved summary: D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-308\010826_Fabricated_204940\txt\fabricated_data__fabricated__baseline_4class.txt
-2026-08-01 20:49:41,037 - INFO - Pipeline ready. 1 dataset(s) processed. Output folder: 'D:\Github\CLMSynthpyTest\troubleshooting_catalog\_scratch\CLM-308\010826_Fabricated_204940'.
+INFO - Starting Test Data Orchestrator...
+INFO - Available 'fabricated_data' dataset batteries:
+INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
+INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
+INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed=42)...
+INFO - Generating synthetic data (Seed: 42)...
+INFO - Applying perfect separation ground truth to categorical labels...
+INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
+WARNING - [CLM-308] target_metric scope 'pair': label 0 is sized to 86 points (a subset of its cluster) to meet the target MCC; any explicit proportion for it is overridden.
+INFO - CLM labels generated. Target counts: [86, 238, 238, 238], achieved: [86, 238, 238, 238].
+INFO - target_metric: final achieved pair mcc=0.6011 (target was 0.6, pair cluster=0/label=0).
+INFO - [fabricated_data/fabricated/baseline_4class] Attached generated label 'Label_0'.
+INFO - Saved: _scratch/CLM-308/{run}/csv/fabricated_data__fabricated__baseline_4class.csv
+INFO - Saved summary: _scratch/CLM-308/{run}/txt/fabricated_data__fabricated__baseline_4class.txt
+INFO - Generating scatter plot for Feature_1 vs Feature_2...
+INFO - Plot saved successfully to: '_scratch/CLM-308/{run}/png/fabricated_data__fabricated__baseline_4class__Cluster_0.png'
+INFO - Generating scatter plot for Feature_1 vs Feature_2...
+INFO - Plot saved successfully to: '_scratch/CLM-308/{run}/png/fabricated_data__fabricated__baseline_4class__Label_0.png'
+INFO - Pipeline ready. 1 dataset(s) processed. Output folder: '_scratch/CLM-308/{run}'.

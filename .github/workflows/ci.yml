@@ -1,0 +1,56 @@
+name: CI
+
+# Placeholder pipeline: proves the package installs and imports cleanly
+# across every Python version pyproject.toml declares support for
+# (requires-python = ">=3.11,<3.15"). There is no git-tracked, CI-safe test
+# suite yet -- the existing adversarial harness lives under testing/, which
+# is gitignored and therefore absent from a fresh checkout, and pyproject.toml
+# has no [tool.ruff]/[tool.mypy]/[tool.pytest] sections yet either. Extend the
+# steps below once those land.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  install-and-smoke-test:
+    name: Install & import (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install the package
+        run: pip install -e .
+
+      - name: Smoke test -- package imports and reports its version
+        run: python -c "import clmsynth; print('clmsynth', clmsynth.__version__)"
+
+      # TODO: once a git-tracked pytest suite exists,
+      # add a real test step, e.g.:
+      #   - name: Run tests
+      #     run: |
+      #       pip install pytest
+      #       pytest
+
+      # TODO: static analysis is currently run by hand against a local,
+      # gitignored checkout. Wire it here once ruff/mypy/bandit configs are
+      # added to pyproject.toml, e.g.:
+      #   - name: Lint
+      #     run: |
+      #       pip install ruff mypy bandit
+      #       ruff check src/
+      #       mypy src/clmsynth
+      #       bandit -r src/clmsynth
