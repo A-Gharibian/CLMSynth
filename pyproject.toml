@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clmsynth"
-version = "0.6.3"
+version = "0.6.4"
 description = "Synthetic label generator with configurable cluster-label matching (CLM) against ground-truth clusters"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -44,6 +44,7 @@ dependencies = [
 [project.optional-dependencies]
 faker = ["faker"]
 dev = ["pandas-stubs", "scipy-stubs"]
+test = ["pytest>=8"]
 # NOTE: two optional dependencies are deliberately NOT extras:
 #   * mdcgenpy is only available as a git repository, and PyPI rejects
 #     uploads whose metadata contains direct-URL dependencies. Install with:
@@ -68,3 +69,75 @@ clmsynth-wizard = "clmsynth.config_wizard:main"
 # is what stops a stale working tree from shadowing the installed package.
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+# The suite still lives in the local testing workspace. 0.6.5 moves it to
+# testing/ root and tracks it; update this path with that move.
+testpaths = ["testing/Testing shipped"]
+# Fail on an unregistered mark rather than silently treating it as a no-op.
+addopts = "--strict-markers --strict-config"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+# Selected explicitly rather than inherited. Ruff's defaults widen between
+# releases, so an unpinned rule set means the finding count changes when the
+# tool updates rather than when the code does -- which makes it useless as a
+# gate and misleading as a measurement.
+select = [
+    "E4", "E7", "E9",  # pycodestyle: the error subset, not style policing
+    "F",               # pyflakes
+    "I",               # import order
+    "UP",              # pyupgrade: this project supports 3.11+, so 3.8-era typing is dead weight
+    "B",               # bugbear: real bug patterns
+    "C4",              # comprehension clarity
+    "DTZ",             # naive datetime use
+    "ISC", "PIE", "RUF",
+    # Pylint's error and warning subsets only. PLR is complexity metrics
+    # (too-many-branches, too-many-statements) and the engine's allocation and
+    # validation functions are branchy because the problem is; a line count is
+    # not evidence of a defect. PLC0415 flags function-local imports, which are
+    # deliberate here: mdcgenpy and fabricated_generator are imported inside
+    # their fetchers so an optional or slow dependency is not paid for at
+    # package import.
+    "PLE", "PLW",
+    "BLE",             # blind except
+]
+ignore = [
+    # The four fetchers and the two config writers catch broadly on purpose: a
+    # dataset that cannot be fetched, generated or parsed is reported and skipped
+    # so the rest of the batch survives. Narrowing these would mean enumerating
+    # every failure mode of urllib, gzip, numpy, pandas, yaml and mdcgenpy, and
+    # turning any unlisted one into a crash mid-batch. See main.py's per-dataset
+    # error boundary for the design this serves.
+    "BLE001",
+    # build_run_dir names run folders from the LOCAL wall clock, deliberately:
+    # the folder name is for a human reading their own output directory, not a
+    # timestamp to be compared across machines.
+    "DTZ005",
+    # `int(round(x))` is flagged as redundant because np.float64.__round__
+    # returns a Python int on numpy 2.x. That is true, and version-dependent:
+    # numpy 1.x returned np.float64. These values become integer point counts
+    # feeding allocation, where a float arriving silently would be a real defect,
+    # so the cast is kept as a guard rather than removed as noise.
+    "RUF046",
+    # Rebinding a loop variable to its own normalised form (`tok = tok.strip()`,
+    # `count = min(count, len(idx_avail))`) is the intended reading here, not an
+    # accident. The alternative is a second name per loop that means the same
+    # thing.
+    "PLW2901",
+]
+
+[tool.mypy]
+# No `python_version = "3.11"` pin: numpy's own stubs use `type` statements
+# (3.12+ syntax), so pinning 3.11 makes mypy reject its dependency's stubs
+# before it reaches this package -- "Type statement is only supported in Python
+# 3.12 and greater", and checking stops there. Language-level 3.11 compatibility
+# is covered where it can actually be enforced: ruff's target-version, and CI
+# genuinely installing and importing on 3.11.
+ignore_missing_imports = true
+files = ["src/clmsynth"]

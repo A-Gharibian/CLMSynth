@@ -2,13 +2,12 @@
 """Evaluation metrics for cluster-label agreement.
 """
 import logging
-from typing import Dict
 
 import numpy as np
 import pandas as pd
 from scipy.optimize import linear_sum_assignment
+from sklearn.metrics import adjusted_rand_score, matthews_corrcoef
 from sklearn.metrics.cluster import contingency_matrix
-from sklearn.metrics import matthews_corrcoef, adjusted_rand_score
 
 try:
     import pyivm
@@ -97,7 +96,7 @@ def clustering_mcc(labels_true, labels_pred):
 def evaluate_cluster_label_matching(
         df: pd.DataFrame,
         label_col: str = "Cohort_Class"
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """
     Evaluates the Cluster-Label Matching (CLM) of a dataset.
     This measures how well the provided ground-truth labels align with the

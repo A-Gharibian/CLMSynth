@@ -18,7 +18,7 @@ import gzip
 import io
 import logging
 import urllib.request
-from typing import Optional, List, Dict, Any, Set
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -34,7 +34,7 @@ CLUSTBENCH_TIMEOUT = 30
 # Shared registry, one dict per concern, keyed by source name.
 # ===========================================================================
 
-SOURCE_METADATA: Dict[str, Dict[str, Dict[str, str]]] = {
+SOURCE_METADATA: dict[str, dict[str, dict[str, str]]] = {
     "clustbench": {
         "wut": {
             "description": "Warsaw University of Technology. Covers spatial, density-based, and overlapping clusters.",
@@ -74,7 +74,7 @@ SOURCE_METADATA: Dict[str, Dict[str, Dict[str, str]]] = {
     # "fabricated_data" is populated once, below, right next to its fetcher and configs.
 }
 
-CLUSTBENCH_DATASETS: Dict[str, List[str]] = {
+CLUSTBENCH_DATASETS: dict[str, list[str]] = {
     "wut": [
         "circles", "cross", "graph", "isolation", "labirynth", "mk1", "mk2",
         "mk3", "mk4", "olympic", "smile", "stripes", "trajectories",
@@ -109,7 +109,7 @@ CLUSTBENCH_DATASETS: Dict[str, List[str]] = {
              for s in range(10, 91, 10)],
 }
 
-MDCGEN_CONFIGS: Dict[str, Dict[str, Dict[str, Any]]] = {
+MDCGEN_CONFIGS: dict[str, dict[str, dict[str, Any]]] = {
     "basic": {
         "blobs_2d_5c": {"m": 1000, "n": 2, "k": 5},
         "blobs_3d_10c": {"m": 2000, "n": 3, "k": 10},
@@ -133,7 +133,7 @@ SOURCE_METADATA["fabricated_data"] = {
     },
 }
 
-FABRICATED_CONFIGS: Dict[str, Dict[str, Any]] = {
+FABRICATED_CONFIGS: dict[str, dict[str, Any]] = {
     "baseline_2class": {
         "n_samples": 500,
         "config_dict": {
@@ -179,7 +179,7 @@ FABRICATED_CONFIGS: Dict[str, Dict[str, Any]] = {
     },
 }
 
-SOURCE_DATASETS: Dict[str, Dict[str, List[str]]] = {
+SOURCE_DATASETS: dict[str, dict[str, list[str]]] = {
     "clustbench": CLUSTBENCH_DATASETS,
     "mdcgen": {group: list(cfgs.keys()) for group, cfgs in MDCGEN_CONFIGS.items()},
     "fabricated_data": {"fabricated": list(FABRICATED_CONFIGS.keys())},
@@ -196,7 +196,7 @@ SOURCE_METADATA["byoc"] = {
     },
 }
 
-HEAVY_BATTERIES: Dict[str, Set[str]] = {
+HEAVY_BATTERIES: dict[str, set[str]] = {
     "clustbench": {"mnist", "g2mg", "h2mg"},
     "mdcgen": {"high_dim"},
     "fabricated_data": set(),
@@ -208,12 +208,12 @@ HEAVY_BATTERIES: Dict[str, Set[str]] = {
 # Shared selection helpers
 # ===========================================================================
 
-def get_available_batteries(source: str) -> List[str]:
+def get_available_batteries(source: str) -> list[str]:
     """Battery (dataset group) names registered for a source."""
     return list(SOURCE_METADATA.get(source, {}).keys())
 
 
-def resolve_selection(source: str, batteries_cfg) -> List[str]:
+def resolve_selection(source: str, batteries_cfg) -> list[str]:
     """Resolves the config's batteries value ("all" or a list) to real names."""
     all_batteries = SOURCE_DATASETS.get(source, {})
     if batteries_cfg == "all":
@@ -221,7 +221,7 @@ def resolve_selection(source: str, batteries_cfg) -> List[str]:
     return [b for b in batteries_cfg if b in all_batteries]
 
 
-def get_datasets_for_battery(source: str, battery: str, datasets_cfg) -> List[str]:
+def get_datasets_for_battery(source: str, battery: str, datasets_cfg) -> list[str]:
     """Resolves the config's datasets value within one battery; byoc (dynamic,
     empty registry) trusts the config's explicit list."""
     all_names = SOURCE_DATASETS.get(source, {}).get(battery, [])
@@ -264,11 +264,11 @@ def fetch_clustbench_labelings(
         dataset_name: str,
         base_url: str = "https://github.com/gagolews/clustering-data-v1/raw/v1.1.0",
         max_labelings: int = 10,
-) -> Dict[str, np.ndarray]:
+) -> dict[str, np.ndarray]:
     """Downloads every reference labeling (labels0, labels1, ...) of one
     clustbench dataset, stopping at the first missing index."""
     target_path = f"{base_url}/{dataset_group}/{dataset_name}"
-    labeling: Dict[str, np.ndarray] = {}
+    labeling: dict[str, np.ndarray] = {}
     for i in range(max_labelings):
         label_name = f"labels{i}"
         try:
@@ -284,7 +284,7 @@ def fetch_clustbench_data(
         dataset_group: str = "wut",
         dataset_name: str = "smile",
         base_url: str = "https://github.com/gagolews/clustering-data-v1/raw/v1.1.0"
-) -> Optional[pd.DataFrame]:
+) -> pd.DataFrame | None:
     """Fetches one Gagolewski benchmark dataset (features + all usable
     labeling) into the standard fetcher frame; None on failure."""
     if dataset_group not in SOURCE_METADATA["clustbench"]:
@@ -300,7 +300,7 @@ def fetch_clustbench_data(
         return None
 
     labeling = fetch_clustbench_labelings(dataset_group, dataset_name, base_url)
-    labeling = {n: l for n, l in labeling.items() if len(l) == len(data)}
+    labeling = {n: labels for n, labels in labeling.items() if len(labels) == len(data)}
     if not labeling:
         log.error(f"No usable labeling for {dataset_group}/{dataset_name}.")
         return None
@@ -325,7 +325,7 @@ def fetch_mdcgen_data(
         dataset_name: str = "blobs_2d_5c",
         seed: int = 1,
         **kwargs
-) -> Optional[pd.DataFrame]:
+) -> pd.DataFrame | None:
     """Generates one synthetic dataset via mdcgenpy (optional dependency)
     from the registered preset, seeded; None if unavailable or failing."""
     # Import the SUBMODULE, not just the package: `import mdcgenpy` alone leaves
@@ -381,7 +381,7 @@ def fetch_fabricated_data(
         dataset_name: str = "baseline_2class",
         seed: int = 42,
         **kwargs
-) -> Optional[pd.DataFrame]:
+) -> pd.DataFrame | None:
     """Generates one offline dataset via fabricated_generator; cluster ids are
     integers 0...K-1, matching clustbench/mdcgen, so one clm_label config ports
     across sources without retyping cluster references."""

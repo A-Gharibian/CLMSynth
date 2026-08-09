@@ -6,7 +6,6 @@ The input is a flat "upstream payload" mapping (see upstream_payload.yaml).
 
 import logging
 import sys
-from typing import List
 
 import yaml
 
@@ -46,7 +45,7 @@ def _yaml_scalar(value) -> str:
     return str(value)
 
 
-def _optional_block(lines: List[str]) -> str:
+def _optional_block(lines: list[str]) -> str:
     """Joins one optional clm_label block, or returns '' when there is nothing
     to emit. Each block supplies its own leading newline so an omitted one
     leaves no blank line in the rendered YAML, the same trick `byoc_extra` uses
@@ -101,11 +100,11 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
 
     concentrated = upstream_data.get("concentrated_labels") or []
     concentrated_block = _optional_block(
-        [f"    concentrated_labels: [{', '.join(str(x) for x in concentrated)}]"
-         "  # spillover_rule 'concentrated' only"] if concentrated else []
+        [(f"    concentrated_labels: [{', '.join(str(x) for x in concentrated)}]"
+          "  # spillover_rule 'concentrated' only")] if concentrated else []
     )
 
-    competing_lines: List[str] = []
+    competing_lines: list[str] = []
     if competing_noise:
         competing_lines = [
             "",
@@ -118,7 +117,7 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
             competing_lines.append(f"      - {{{inner}}}")
     competing_block = _optional_block(competing_lines)
 
-    target_lines: List[str] = []
+    target_lines: list[str] = []
     if target_metric:
         target_lines = [
             "",

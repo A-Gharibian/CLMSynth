@@ -22,7 +22,6 @@ class InfeasibleAllocationError(ValueError):
     must remain a distinct type: a config typo (plain ValueError) has to
     stay uncaught by those handlers and fail.
     """
-    pass
 
 
 CODES = {
@@ -133,11 +132,14 @@ CODES = {
     308: "target_metric scope 'pair': label {label} is sized to {m} points (a subset of "
          "its cluster) to meet the target MCC; any explicit proportion for it is overridden.",
     309: "target_metric: the DELIVERED labeling achieves {type}={achieved:.4f}, outside the "
-         "requested {target} +/- {tol} (solved alpha={alpha:.4f}). The solver scores candidates "
-         "on a fixed probe stream while this output is generated on the run's own stream, so a "
-         "solve that converged internally can still land outside tolerance -- most often at "
-         "small N, where spillover placement dominates. Treat the achieved value above as "
-         "authoritative, not the requested one.",
+         "requested {target} +/- {tol} (solved alpha={alpha:.4f}). Two things can cause this. "
+         "Usually the search simply could not reach the target, in which case [CLM-306] above "
+         "reports it and is the real explanation; at small N the achievable values form a "
+         "coarse ladder and a tight tolerance can fall between rungs. Otherwise the labeling "
+         "that was scored is not the labeling that was written: as of 0.6.4 the search and the "
+         "final generation share one stream by default, so that second case means an explicit "
+         "target_metric.probe_seed differing from the run seed. Treat the achieved value above "
+         "as authoritative, not the requested one.",
     310: "target_metric scope 'pair': the DELIVERED labeling achieves pair mcc="
          "{achieved:.4f}, outside the requested {target} +/- {tol}. The closed-form "
          "construction assumes every point of label {label} lies inside cluster {cluster}, "
@@ -150,17 +152,26 @@ def _format(code: int, **kw) -> str:
     return f"[CLM-{code}] " + CODES[code].format(**kw)
 
 
+# `exc.code = code` attaches an attribute Python allows on any exception instance
+# but that no exception type declares, so a type checker objects. The alternative
+# is a CLMError base class carrying `code: int`, which would fix the typing and
+# change the runtime type of every coded 1xx error. This module's own contract
+# argues against that: InfeasibleAllocationError "must remain a distinct type: a
+# config typo (plain ValueError) has to stay uncaught by those handlers and fail",
+# and introducing a shared base redefines what a plain ValueError is here.
+# Ignored narrowly, at the two sites, rather than silenced module-wide.
+
 def clm_error(code: int, **kw) -> ValueError:
     """Build a coded ValueError (1xx). Use: ``raise clm_error(102, M=M, K=K)``."""
     exc = ValueError(_format(code, **kw))
-    exc.code = code
+    exc.code = code  # type: ignore[attr-defined]
     return exc
 
 
 def clm_infeasible(code: int, **kw) -> InfeasibleAllocationError:
     """Build a coded InfeasibleAllocationError (15x)."""
     exc = InfeasibleAllocationError(_format(code, **kw))
-    exc.code = code
+    exc.code = code  # type: ignore[attr-defined]
     return exc
 
 

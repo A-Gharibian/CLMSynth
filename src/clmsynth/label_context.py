@@ -2,7 +2,6 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict
 
 import pandas as pd
 
@@ -14,8 +13,8 @@ class DatasetContext:
     dataset: str
     features: pd.DataFrame
     source: str = "unknown"  # clustbench | mdcgen | fabricated_data, which fetcher produced this
-    ground_truths: Dict[str, pd.Series] = field(default_factory=dict)
-    generated_labels: Dict[str, pd.Series] = field(default_factory=dict)
+    ground_truths: dict[str, pd.Series] = field(default_factory=dict)
+    generated_labels: dict[str, pd.Series] = field(default_factory=dict)
 
     def __post_init__(self):
         self.features = self.features.reset_index(drop=True)
@@ -52,7 +51,9 @@ class DatasetContext:
 
     def to_dataframe(self) -> pd.DataFrame:
         """Assembles the output frame: features, Cluster_n columns, Label_n columns."""
-        parts = [self.features]
+        # Annotated because the first element is a DataFrame and the rest are
+        # Series; without it the list type is inferred from `features` alone.
+        parts: list[pd.DataFrame | pd.Series] = [self.features]
         parts += [s.rename(self.gt_column_name(n)) for n, s in self.ground_truths.items()]
         parts += [s.rename(n) for n, s in self.generated_labels.items()]
         return pd.concat(parts, axis=1)

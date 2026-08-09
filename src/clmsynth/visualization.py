@@ -3,11 +3,10 @@
 
 import logging
 import os
-from typing import Optional
 from pathlib import Path
-import pandas as pd
 
 import matplotlib.pyplot as plt
+import pandas as pd
 import seaborn as sns
 
 log = logging.getLogger(__name__)
@@ -19,7 +18,7 @@ log = logging.getLogger(__name__)
 _MAX_PATH = 260
 
 
-def _max_path_hint(output_path: Optional[str]) -> str:
+def _max_path_hint(output_path: str | None) -> str:
     """Name MAX_PATH when a plot failure is most likely really a path-length one.
 
     Windows reports it as `[Errno 2] No such file or directory` naming a path
@@ -43,11 +42,11 @@ def plot_feature_scatter(
         df: pd.DataFrame,
         x_col: str,
         y_col: str,
-        hue_col: Optional[str] = None,
-        output_path: Optional[str] = None,
-        title: Optional[str] = None,
-        subtitle: Optional[str] = None,
-        info_text: Optional[str] = None
+        hue_col: str | None = None,
+        output_path: str | None = None,
+        title: str | None = None,
+        subtitle: str | None = None,
+        info_text: str | None = None
 ) -> bool:
     """
     Creates a scatter plot to visualize feature relationships.
@@ -130,7 +129,8 @@ def plot_feature_scatter(
                 y_top = leg_box.y0 - 0.04
             ax.text(1.02, y_top, info_text, transform=ax.transAxes, fontsize=7.5,
                     va='top', ha='left', family='monospace',
-                    bbox=dict(boxstyle='round', facecolor='#f7f7f7', edgecolor='#cccccc'))
+                    bbox={'boxstyle': 'round', 'facecolor': '#f7f7f7',
+                          'edgecolor': '#cccccc'})
 
         # Save or Show
         if output_path:

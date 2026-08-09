@@ -2,9 +2,10 @@
 """Dispatch layer between the pipeline and the CLM engine: generates
 `n_labels` synthetic label columns for one DatasetContext."""
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
-from typing import Optional, Dict, Any
 
 from .clm_label_engine import generate_clm_labels
 from .label_context import DatasetContext
@@ -14,7 +15,7 @@ def generate_additional_labels(
         context: DatasetContext,
         n_labels: int = 1,
         source_labeling: str = "labels0",
-        clm_config: Optional[Dict[str, Any]] = None,
+        clm_config: dict[str, Any] | None = None,
         noise: float = 0.1,
         seed: int = 42,
 ) -> None:

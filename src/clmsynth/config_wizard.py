@@ -9,12 +9,11 @@ Run as a module, not as a file.
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import yaml
 
 from .dataset_sources import SOURCE_DATASETS, SOURCE_METADATA, is_heavy
-
 
 # --------------------------------------------------------------------------- #
 # Input helpers: each explains, shows a [default], and re-asks on bad input.
@@ -49,9 +48,11 @@ def ask_int(prompt, default=None, minv=None, explain=None) -> int:
         try:
             i = int(v)
         except ValueError:
-            print("    (enter a whole number)"); continue
+            print("    (enter a whole number)")
+            continue
         if minv is not None and i < minv:
-            print(f"    (must be at least {minv})"); continue
+            print(f"    (must be at least {minv})")
+            continue
         return i
 
 
@@ -63,9 +64,11 @@ def ask_float(prompt, default=None, lo=None, hi=None, explain=None) -> float:
         try:
             f = float(v)
         except ValueError:
-            print("    (enter a number)"); continue
+            print("    (enter a number)")
+            continue
         if (lo is not None and f < lo) or (hi is not None and f > hi):
-            print(f"    (must be between {lo} and {hi})"); continue
+            print(f"    (must be between {lo} and {hi})")
+            continue
         return f
 
 
@@ -109,7 +112,7 @@ def _parse_ids(raw):
     return out
 
 
-def ask_cluster_ids(prompt, explain=None) -> List:
+def ask_cluster_ids(prompt, explain=None) -> list:
     """Asks for one or more cluster ids, re-asking on empty input.
     """
     _explain(explain)
@@ -125,7 +128,7 @@ def ask_cluster_id(prompt, explain=None):
     return ask_cluster_ids(prompt, explain)[0]
 
 
-def ask_ints(prompt, explain=None) -> List[int]:
+def ask_ints(prompt, explain=None) -> list[int]:
     """Asks for a comma-separated list of whole numbers (e.g. label ids)."""
     _explain(explain)
     while True:
@@ -133,13 +136,14 @@ def ask_ints(prompt, explain=None) -> List[int]:
         try:
             vals = [int(x) for x in raw.split(",") if x.strip()]
         except ValueError:
-            print("    (enter whole numbers separated by commas)"); continue
+            print("    (enter whole numbers separated by commas)")
+            continue
         if vals:
             return vals
         print("    (at least one value is required)")
 
 
-def ask_floats(prompt, explain=None) -> List[float]:
+def ask_floats(prompt, explain=None) -> list[float]:
     """Asks for a comma-separated list of numbers."""
     _explain(explain)
     while True:
@@ -226,9 +230,11 @@ def _registry_suite(source):
         if raw == "all":
             return {"batteries": "all", "datasets": "all", "seed": ask_int("Random seed", 42)}
         if raw in batteries:
-            battery = raw; break
+            battery = raw
+            break
         if raw.isdigit() and 1 <= int(raw) <= len(batteries):
-            battery = batteries[int(raw) - 1]; break
+            battery = batteries[int(raw) - 1]
+            break
         print(f"    (choose 1-{len(batteries)}, a name, or 'all')")
 
     ds = SOURCE_DATASETS[source][battery]
@@ -257,7 +263,7 @@ def _registry_suite(source):
 # 2. Label generation
 # --------------------------------------------------------------------------- #
 
-def build_label_generation(source) -> Dict[str, Any]:
+def build_label_generation(source) -> dict[str, Any]:
     """Wizard section 2: label count, source labeling, and seed."""
     section("2. Labels, how many and against which clusters")
     n_labels = ask_int("How many synthetic labels to generate", 1, minv=1,
@@ -281,7 +287,7 @@ def build_label_generation(source) -> Dict[str, Any]:
 # 3. Cluster-label matching (clm_label)
 # --------------------------------------------------------------------------- #
 
-def _final_check(clm: Dict[str, Any]) -> None:
+def _final_check(clm: dict[str, Any]) -> None:
     tm = clm.get("target_metric") or {}
     lstar = (clm.get("single_match") or {}).get("label")
     try:
@@ -297,7 +303,7 @@ def _final_check(clm: Dict[str, Any]) -> None:
         return
 
 
-def build_clm(known_k=None) -> Dict[str, Any]:
+def build_clm(known_k=None) -> dict[str, Any]:
     """Wizard section 3: the clm_label block (mode, balance, rules, extras)."""
     section("3. Cluster-label matching, the core settings")
     if known_k:
@@ -317,7 +323,7 @@ def build_clm(known_k=None) -> Dict[str, Any]:
                 "  random  : the label ignores the clusters completely (MCC ~ 0), a baseline.\n"
                 "  custom  : you write rules (send a share of a label into chosen clusters).\n"
                 "            Use for partial/realistic agreement, or to aim at a target score.")
-    clm: Dict[str, Any] = {"num_classes": M, "matching_mode": mode}
+    clm: dict[str, Any] = {"num_classes": M, "matching_mode": mode}
 
     if mode == "perfect":
         if known_k and M != known_k:
@@ -421,7 +427,7 @@ def build_clm(known_k=None) -> Dict[str, Any]:
                     "  - it CHANGES the agreement score: structured noise scores differently\n"
                     "    from random noise, comparing the two is exactly what it is for;\n"
                     "  - it only shapes points not already claimed by the rules above."):
-        entries = []
+        entries: list[dict[str, Any]] = []
         while True:
             print(f"\n  Competing-noise entry {len(entries) + 1}:")
             entries.append({
@@ -509,7 +515,7 @@ def _build_rules(omit_recall):
     rules = []
     for i in range(n):
         print(f"\n  Rule {i + 1}:")
-        rule: Dict[str, Any] = {
+        rule: dict[str, Any] = {
             "label": ask_int("    which label value (0..M-1)", 0, minv=0),
             "clusters": ask_cluster_ids("  into which cluster id(s), comma-separated")}
         if not omit_recall:
@@ -550,7 +556,15 @@ def main() -> None:
     print(f"\n  Wrote '{out}'.")
     print(f"  Run it any time with:  python -m clmsynth.main {out}")
     if ask_bool("Run the pipeline now?", default=True):
-        subprocess.run([sys.executable, "-m", "clmsynth.main", out])
+        # check=False, deliberately: the pipeline reports its own failures with a
+        # coded message, and a CalledProcessError traceback on top of that would
+        # bury it. But the exit code was previously discarded entirely, so a run
+        # that failed looked exactly like one that succeeded.
+        result = subprocess.run([sys.executable, "-m", "clmsynth.main", out], check=False)
+        if result.returncode != 0:
+            print(f"\n  The run exited with code {result.returncode}; see the messages above. "
+                  f"Your configuration is saved, so you can edit '{out}' and retry with:"
+                  f"\n      python -m clmsynth.main {out}")
 
 
 if __name__ == "__main__":

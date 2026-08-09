@@ -6,7 +6,8 @@ column.
 """
 
 import logging
-from typing import Optional, Dict, Any
+from typing import Any
+
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
@@ -47,9 +48,9 @@ def generate_faker_categories(n_samples: int, labels: list, seed: int) -> pd.Ser
 
 def generate_synthetic_data(
         n_samples: int = 2048,
-        output_file: Optional[str] = "synthetic_features_scaled.csv",
+        output_file: str | None = "synthetic_features_scaled.csv",
         seed: int = 42,
-        config_dict: Optional[Dict[str, Any]] = None
+        config_dict: dict[str, Any] | None = None
 ) -> pd.DataFrame:
     """
     Generates a synthetic dataset driven by a configuration dictionary.

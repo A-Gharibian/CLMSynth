@@ -15,17 +15,17 @@ from .metrics import (
     evaluate_cluster_label_matching,
 )
 
-__version__ = "0.6.3"
+__version__ = "0.6.4"
 
 __all__ = [
-    "InfeasibleAllocationError",
-    "generate_clm_labels",
     "DatasetContext",
+    "InfeasibleAllocationError",
+    "__version__",
     "build_context",
-    "generate_additional_labels",
     "clustering_ari",
     "clustering_mcc",
     "clustering_mcc_pair",
     "evaluate_cluster_label_matching",
-    "__version__",
+    "generate_additional_labels",
+    "generate_clm_labels",
 ]

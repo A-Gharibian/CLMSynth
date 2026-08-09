@@ -11,22 +11,26 @@ import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 import pandas as pd
 import yaml
 
+from .byoc_source import fetch_byoc_data
+from .clm_label_engine import InfeasibleAllocationError, validate_matching_ids
 from .dataset_sources import (
-    fetch_clustbench_data, fetch_mdcgen_data, fetch_fabricated_data,
-    print_battery_info, resolve_selection, get_datasets_for_battery, is_heavy,
+    fetch_clustbench_data,
+    fetch_fabricated_data,
+    fetch_mdcgen_data,
+    get_datasets_for_battery,
+    is_heavy,
+    print_battery_info,
+    resolve_selection,
 )
-
-from .visualization import plot_feature_scatter
 from .label_context import build_context
 from .label_generator import generate_additional_labels
-from .clm_label_engine import InfeasibleAllocationError, validate_matching_ids
-from .metrics import clustering_mcc, clustering_ari
-from .byoc_source import fetch_byoc_data
+from .metrics import clustering_ari, clustering_mcc
+from .visualization import plot_feature_scatter
 
 log = logging.getLogger(__name__)
 
@@ -106,6 +110,51 @@ def _write_summary_txt(path: Path, friendly: str, source: str, battery: str, dat
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
     log.info(f"Saved summary: {path}")
 
+def _is_plain_name(name) -> bool:
+    """True when `name` is a bare name rather than anything path-shaped.
+
+    Battery and dataset names are used to READ (byoc resolves
+    `input_dir/<dataset>.csv`) and to WRITE (`csv/<source>__<battery>__<dataset>.csv`),
+    so a separator or a `..` in one reaches outside the folders the configuration
+    declared. The registry sources filter their names against a known list and are
+    safe by construction; byoc trusts the config's list verbatim, which is the
+    only place this can bite.
+
+    This enforces a contract the README already states -- byoc datasets are file
+    *stems*, not paths -- rather than adding a new restriction. It matters because
+    a config is a shareable artifact here: reproducing someone's results means
+    running a YAML you did not write.
+
+    No `[CLM-###]` code: those describe the cluster-label matching model, and a
+    dataset name being path-shaped is a property of the file layout, not of the
+    labeling.
+    """
+    text = str(name)
+    if not text or text in (".", ".."):
+        return False
+    # A separator or a drive letter is what every absolute or traversing form has
+    # in common, on both POSIX and Windows.
+    return not ("/" in text or "\\" in text or ":" in text)
+
+
+def _drop_path_shaped_names(jobs):
+    """Filter out jobs whose battery or dataset name is not a plain name."""
+    kept = []
+    for battery, dataset in jobs:
+        offenders = [repr(n) for n in (battery, dataset) if not _is_plain_name(n)]
+        if offenders:
+            log.error(
+                f"Skipping {battery}/{dataset}: {', '.join(offenders)} is not a plain "
+                "name. Battery and dataset names are used to build file paths, so a "
+                "name containing '/', '\\', ':' or '..' would read or write outside "
+                "the configured input and output folders. Give the file stem only, "
+                "without any directory part."
+            )
+            continue
+        kept.append((battery, dataset))
+    return kept
+
+
 def _byoc_cluster_ids(input_dir, dataset: str, cluster_column: str):
     """The cheapest possible peek at one BYOC dataset: a single column of one CSV.
 
@@ -121,7 +170,7 @@ def _byoc_cluster_ids(input_dir, dataset: str, cluster_column: str):
     return sorted(column.dropna().unique().tolist(), key=str)
 
 
-def precheck_byoc_matching_ids(jobs, fetch_kwargs: dict, clm_config: Optional[dict]) -> None:
+def precheck_byoc_matching_ids(jobs, fetch_kwargs: dict, clm_config: dict | None) -> None:
     """Resolve [CLM-104]/[CLM-105] for every BYOC dataset before any work begins.
 
     Those two codes validate label and cluster ids against each dataset's *own*
@@ -168,7 +217,7 @@ def load_config(config_path: str) -> dict:
         log.critical(f"Configuration file not found at '{config_path}'. "
                      f"Run generate_config.py or config_wizard.py first.")
         sys.exit(1)
-    with open(path, 'r', encoding="utf-8") as file:
+    with open(path, encoding="utf-8") as file:
         config = yaml.safe_load(file)
     # An empty file parses to None; anything non-mapping means main()'s config.get(...)
     if not isinstance(config, dict):
@@ -204,12 +253,13 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
     label_cfg = config.get("label_generation", {})
     n_add_labels = label_cfg.get("n_labels", 0)
     source_labeling = label_cfg.get("source_labeling", "labels0")
-    clm_config: Optional[dict] = label_cfg.get("clm_label")
+    clm_config: dict | None = label_cfg.get("clm_label")
 
     if any(is_heavy(source, b) for b in batteries):
         log.warning(f"Selection includes a heavy '{source}' battery: expect long fetch/generation times.")
 
-    jobs = [(b, d) for b in batteries for d in get_datasets_for_battery(source, b, datasets_cfg)]
+    jobs = _drop_path_shaped_names(
+        [(b, d) for b in batteries for d in get_datasets_for_battery(source, b, datasets_cfg)])
     log.info(f"Resolved {len(jobs)} dataset(s) across {len(batteries)} batter(y/ies) from source '{source}'.")
     if fetch_kwargs:
         log.info(f"Extra fetch kwargs forwarded to '{source}': {fetch_kwargs}")
@@ -258,7 +308,10 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
             gt_col = (context.gt_column_name(source_labeling)
                       if source_labeling in context.ground_truths else None)
 
-            label_results = []
+            # Heterogeneous by design: a name, two optional floats and a counts
+            # mapping. Annotated so the values do not collapse to a union that
+            # then fails at the plot call below.
+            label_results: list[dict[str, Any]] = []
             for label_name in context.generated_labels:
                 mcc = ari = None
                 if gt_col is not None:
