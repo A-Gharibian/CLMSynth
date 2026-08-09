@@ -9,9 +9,9 @@ matplotlib==3.11.0
 seaborn==0.13.2
 
 # --- Optional ---
-# pyivm                                    # metrics.evaluate_cluster_label_matching (adjusted
-# internal-validity measures). NOT IMPLEMENTED YET: provisional hook, nothing in the
-# pipeline calls it. The code works without it.
+# pyivm          # metrics.evaluate_cluster_label_matching (adjusted
+# internal-validity measures). NOT IMPLEMENTED YET: provisional hook,
+# nothing in the pipeline calls it. The code works without it.
 # git+https://github.com/CN-TU/mdcgenpy    # data_source: "mdcgen";
 # the code will work without it if configuration files point to other sources.
-# faker                                    # fabricated_data source only; has a numpy fallback if absent
+# faker  # fabricated_data source only; has a numpy fallback if absent

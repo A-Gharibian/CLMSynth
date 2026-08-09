@@ -1,5 +1,15 @@
 name: CI
 
+# Least privilege, declared explicitly. Without this block the workflow inherits
+# the repository's default token scope, which can include write access it never
+# uses. These jobs check out the repository and install Python: `contents: read`
+# is the whole requirement. Deliberately NOT the `pull-requests: write` from the
+# generic example -- nothing here comments on a PR, cuts a release or pushes.
+# Declared at the top level so it is the default for every job, and any future
+# job needing more has to say so where it can be seen.
+permissions:
+  contents: read
+
 # Placeholder pipeline: proves the package installs and imports cleanly
 # across every Python version pyproject.toml declares support for
 # (requires-python = ">=3.11,<3.15"). There is no git-tracked, CI-safe test
@@ -45,9 +55,11 @@ jobs:
       #       pip install pytest
       #       pytest
 
-      # TODO: static analysis is currently run by hand against a local,
-      # gitignored checkout. Wire it here once ruff/mypy/bandit configs are
-      # added to pyproject.toml, e.g.:
+      # Security static analysis is already automated: CodeQL runs on every push
+      # via GitHub's default code-scanning setup, which needs no workflow file
+      # here. What is still manual is lint and typing (ruff, mypy) against a
+      # local, gitignored checkout. Wire those here once their configs are added
+      # to pyproject.toml, e.g.:
       #   - name: Lint
       #     run: |
       #       pip install ruff mypy bandit

@@ -27,9 +27,7 @@ recursive-include docs *.log
 # backend behavior).
 recursive-include src/clmsynth *.py
 
-# Never ship build/tooling byproducts, even if present in a dirty working
-# tree at build time. MANIFEST.in does not read .gitignore automatically, so
-# the equivalent exclusions are repeated here on purpose.
+# Never ship build/tooling byproducts
 global-exclude __pycache__
 global-exclude *.py[cod]
 global-exclude .DS_Store
@@ -42,9 +40,3 @@ prune testing
 prune tests
 prune build
 prune dist
-
-# ROADMAP.md and wizard_config.yaml are intentionally untracked (see
-# .gitignore) and are not included here for the same reason: a source
-# distribution built from a clean checkout would never have them either. If
-# either becomes tracked later, add an explicit exclusion here rather than
-# relying on it being absent.

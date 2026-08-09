@@ -5,6 +5,80 @@ All notable changes to CLMSynth are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] — 2026-08-09
+
+A solved target metric is now the value actually delivered,
+rather than a value the search reached on a stream the output
+did not use.
+
+### Added
+
+- **Lint, typing and test configuration now live in `pyproject.toml`.** The
+  project previously had no `[tool.ruff]`, `[tool.mypy]` or
+  `[tool.pytest.ini_options]` section.
+
+- **BYOC imports are checked against stated requirements.** BYOC is an import
+  path, not a generator: the premise is that you clustered a subset of your own
+  features and are bringing the result. A file is now rejected, with every
+  problem reported in one pass rather than one per attempt, when it is empty, has
+  duplicate column names, uses a name the pipeline reserves (`Cohort_Class`,
+  `GroundTruth_*`, `Cluster_n`, `Label_n`), has missing values in the cluster
+  column or in a feature, holds fewer than two clusters, contains a cluster of
+  fewer than three points, or has a non-numeric feature column. The rule regarding
+  number of points in a cluster will probably change or deleted in next release.
+
+  The full list, with the reason for each, is in the troubleshooting reference
+  under *Uncoded Rejections (data import)*. These deliberately carry no
+  `[CLM-###]` code: the coded diagnostics describe the cluster-label matching
+  model, while these describe whether the data is a usable clustering at all.
+
+- **A `labels_only_4class` preset for the `fabricated_data` source**, cluster
+  ids with no feature columns. The engine has always accepted such a dataset,
+  because recall targets, class balance, allocation and spillover never look at
+  coordinates, but until now no configuration could produce one, so the
+  capability was reachable only from Python.
+
+### Fixed
+
+- **A solved `target_metric` is now the value actually delivered.** Under
+  `scope: global` the solver scores candidate recall levels on one fixed random
+  stream so that candidates compare fairly. The labeling that was written out,
+  however, was generated on the run's own stream, and the two had drifted apart:
+  allocation continued a stream that a dirichlet skew may already have consumed
+  draws from, which no probe could reproduce. A search could therefore report
+  success and deliver something outside tolerance by up to 0.07 on small
+  datasets.
+
+  Allocation now draws from its own stream, started from the run seed, and the
+  search uses that same stream. The labeling the solver scored is byte-identical
+  to the one written. What remains, and is reported by `[CLM-306]` as it always
+  was, is the ordinary case of a target the data cannot reach; at small dataset
+  sizes the achievable values form a coarse ladder and a tight tolerance can fall
+  between two rungs.
+
+  `[CLM-309]`'s message has been rewritten accordingly, it previously explained
+  a cause that no longer exists.
+
+- **Battery and dataset names that look like paths are refused.** These names are
+  used to build file paths in both directions: `byoc` resolves
+  `input_dir/<dataset>.csv` to read, and every source writes
+  `csv/<source>__<battery>__<dataset>.csv`. A name containing a separator or
+  `..` therefore reached outside both configured folders. The registry sources
+  filter their names against a known list and were never exposed; `byoc` trusts
+  the configuration's list verbatim, which is the route this closes.
+
+### Changed
+
+- `config_wizard` reports a non-zero exit code from the pipeline run it launches
+  instead of discarding it, so a failed run no longer looks like a successful
+  one.
+- The troubleshooting reference gains a section for rejections that are not
+  `[CLM-###]` diagnostics, and both shipped documents now carry a
+  machine-readable banner so tooling locates them by marker rather than by
+  filename, and can check that the documentation was updated for the release.
+- Every `[CLM-###]` code now has a runnable catalog fixture, and the generator
+  refuses to run if a registry code has no builder.
+
 ## [0.6.3] — 2026-08-08
 
 A correctness release. Every entry below closes a case where the program either
@@ -19,8 +93,8 @@ no features at all.
 - **A labels-only data source.** The CLM engine has always accepted a dataset
   with cluster ids and no feature space, because recall targets, class balance,
   allocation and spillover are all counting problems that never look at
-  coordinates. Until now no configuration could produce such a dataset — every
-  source emitted at least one feature column — so the capability was reachable
+  coordinates. Until now no configuration could produce such a dataset, every
+  source emitted at least one feature column, so the capability was reachable
   only by calling the library from Python.
 
   The `fabricated_data` source gains a `labels_only_4class` preset that emits
@@ -31,7 +105,7 @@ no features at all.
 
 - **Full diagnostic coverage in the troubleshooting catalog.** Every one of the
   45 `[CLM-###]` codes now has a runnable example config, up from 42. The three
-  that were missing — `[CLM-125]`, `[CLM-131]` and `[CLM-310]` — are now present,
+  that were missing, `[CLM-125]`, `[CLM-131]` and `[CLM-310]`, are now present,
   and the test suite fails if a future code is added without one.
 
   The catalog is also self-contained and portable. Configs and logs
@@ -46,7 +120,7 @@ no features at all.
 - **Out-of-range skew settings silently produced negative class sizes.** When
   class sizes come from a `skew_rule` rather than explicit `proportions`, the
   parameters controlling that rule were never checked. Three settings did not
-  fail — they returned. A `geometric` rule with `ratio: -0.5` produced the class
+  fail, they returned. A `geometric` rule with `ratio: -0.5` produced the class
   sizes `[1600, -800, 400, -200]`, and `dominant_minority` with a
   `dominant_share` above 1 or below 0 produced similar. Because those still added
   up to the dataset size, nothing downstream objected and the run completed with
@@ -80,11 +154,11 @@ no features at all.
   `output_dir` and starting within the same second were handed the same folder
   and wrote their CSVs, plots and config copies into it, one silently replacing
   the other. The folder is now claimed at the moment it is chosen. No parallel
-  execution was needed to hit this — two terminals were enough.
+  execution was needed to hit this, two terminals were enough.
 
 - **The run summary could report success for datasets that got no labels.** When
   label generation fails for one dataset, that dataset is still written out with
-  its features and clusters, and still counts as processed — which is correct,
+  its features and clusters, and still counts as processed, which is correct,
   but the summary said "10 dataset(s) processed" while some of those files were
   missing the generated label that was the point of the run. The count now
   reports the shortfall separately.
@@ -102,7 +176,7 @@ no features at all.
   batch.** `[CLM-104]` and `[CLM-105]` report that a label or cluster id named in
   your configuration does not exist in the data. Unlike every other configuration
   error, that is a statement about one dataset rather than about the
-  configuration — under `byoc` each CSV brings its own cluster ids, and nothing
+  configuration, under `byoc` each CSV brings its own cluster ids, and nothing
   requires them to match. Previously the first mismatch stopped the run, throwing
   away both the datasets already written and the ones that would have succeeded.
 
@@ -154,12 +228,12 @@ silently. Archived on Zenodo: <https://doi.org/10.5281/zenodo.21751081>.
   error, which is why `uniform` and `concentrated` went unnoticed. Now
   **`[CLM-121]`**, previously reserved as documentation-only.
 - **`concentrated_labels` was never validated.** An id outside `0..M-1` reached
-  the written dataset; a non-integer was truncated on write; a bare number was
+  the written dataset; a noninteger was truncated on write; a bare number was
   read by numpy as a *range*, scattering the remainder over that many labels.
   With a `target_metric` set, the solver reported a score "within tolerance"
   computed over a label that did not exist. Now **`[CLM-128]`**, checked before
   the solver runs.
-- **A capitalisation slip in `centroid_dependence.favors` inverted the spatial
+- **A capitalization slip in `centroid_dependence.favors` inverted the spatial
   placement.** `favors == "core"` was tested directly and everything else
   treated as boundary, so `Core`, `CORE` or a typo placed labels on the cluster
   rim with no error. Now **`[CLM-129]`**.
@@ -168,7 +242,7 @@ silently. Archived on Zenodo: <https://doi.org/10.5281/zenodo.21751081>.
   the target cluster; `uniform` spillover delivered `0.347` and `concentrated`
   onto that label delivered `0.000` against a request of `0.765`. Now
   **`[CLM-130]`** rejects the combinations that can move the label out of its
-  cluster, and **`[CLM-310]`** verifies the delivered coefficient afterwards,
+  cluster, and **`[CLM-310]`** verifies the delivered coefficient afterward,
   the counterpart of `[CLM-309]` for the global solver.
 - **Several `assignment_matrix` rules naming the same label could overshoot that
   label's budget.** A rule's `recall_target` is a fraction of the label's whole
@@ -193,7 +267,7 @@ Ocean capsule. No change to the label-generation math.
   so the pipeline previously logged the identical message once per dataset and
   exited having written nothing, reported as an "unexpected error" rather than a
   configuration one. It now fails immediately with the coded message at CRITICAL
-  and exit code 2 — distinct from exit 1, "ran but produced nothing".
+  and exit code 2, distinct from exit 1, "ran but produced nothing".
   `InfeasibleAllocationError` (`15x`) is unchanged: it remains a per-dataset
   skip, because another dataset's cluster sizes may well satisfy the same rules.
 
@@ -207,7 +281,7 @@ Wizard and config-renderer polish. No change to the label-generation math.
   `skew_params`, `concentrated_labels`, `competing_noise`, `target_metric`
   (including `scope`, `tolerance`, `max_iter`) and `centroid_dependence.steepness`
   previously had no template slot, so the payload path could not express features
-  the manual documents in full — they could only be added by hand-editing the
+  the manual documents in full, they could only be added by hand-editing the
   rendered YAML. Each block renders only when the payload carries it, so an
   existing payload produces the same config as before.
 - **Render-time warnings for configs the engine will reject**, matching the
@@ -294,7 +368,7 @@ text behave exactly as in 0.1.0.
 - `[CLM-309]`'s explanation corrected in the README and the engine comment. The
   probe and output streams differ because they are seeded differently
   (`default_rng(probe_seed)` vs `default_rng(seed)`), not because the label-count
-  draw had advanced the run stream — that only happens under
+  draw had advanced the run stream, that only happens under
   `skew_rule: dirichlet`, and is now described as the secondary effect it is.
 - Stale `dummy` naming replaced with `fabricated_data` (the offline source's
   current name) in the troubleshooting reference and `requirements.txt`.

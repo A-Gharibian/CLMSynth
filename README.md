@@ -1,6 +1,6 @@
 # Cluster–label matched dataset synthesizer
 
-[![Version](https://img.shields.io/badge/version-0.6.3-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
+[![Version](https://img.shields.io/badge/version-0.6.4-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](LICENSE.txt)
 [![Cite](https://img.shields.io/badge/cite-CITATION.cff-blueviolet)](CITATION.cff)
@@ -332,7 +332,13 @@ sources it is reported per dataset and the batch continues.
   falls outside tolerance, *treat the achieved value as authoritative, not the
   requested one*. Magnitude is governed by `N`: ≤0.009 at `N=3000`, ≤0.007 at
   `N=8000`, but up to 0.07 at `N`≈120–280. Does not affect `scope: pair`
-  (closed-form, no search). *(planned for 0.6.4)*
+  (closed-form, no search).
+  **Fixed in 0.6.4:** allocation now draws from its own stream, started from the
+  run seed, and `probe_seed` defaults to that same seed — so the labeling the
+  solver scored is byte-identical to the one written. What remains is the
+  ordinary case of a target the geometry cannot reach, which `[CLM-306]` reports;
+  at small `N` the achievable values form a coarse ladder and a tight tolerance
+  can fall between rungs.
 - **Reachable `scope: pair` values are a coarse ladder near the bottom of the
   range.** The target label is sized to an integer number of points, so only a
   discrete set of pair-MCC values is reachable, and the rungs widen sharply as the
