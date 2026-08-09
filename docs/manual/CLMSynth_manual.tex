@@ -1,5 +1,5 @@
 % !CLMSynth-doc = manual
-% !CLMSynth-version = 0.6.3
+% !CLMSynth-version = 0.6.4
 % These two lines are a machine-readable marker, in the style of the
 % `% !TeX program = ...` magic comments editors already understand. The test
 % suite locates this document by the marker rather than by filename, so the
@@ -51,7 +51,7 @@
 }
 \lstset{style=mystyle}
 
-\title{CLMSynth v0.6.3}
+\title{CLMSynth v0.6.4}
 \author{Arootin Gharibian}
 \date{\today}
 
@@ -196,13 +196,14 @@ L = generate_clm_labels(
 \newpage
 
 \begin{versionhistory}
-  \vhEntry{0.1}{2026-07-07}{AG}{Initial release: CLM label engine, coded \texttt{[CLM-\#\#\#]} diagnostics, configuration wizard, MCC/ARI evaluation}
-  \vhEntry{0.2}{2026-07-15}{AG}{Internal}
-  \vhEntry{0.3}{2026-07-31}{AG}{\texttt{clustering\_mcc\_pair} added to the API; \texttt{fabricated\_data} cluster ids changed from strings to integers \texttt{0..K-1}}
-  \vhEntry{0.4}{2026-07-31}{AG}{Wizard and configuration-renderer: the renderer can now emit \texttt{target\_metric}, \texttt{competing\_noise}, \texttt{concentrated\_labels}, \texttt{skew\_params} and \texttt{steepness}; \texttt{mdcgen} source repaired}
-  \vhEntry{0.5}{2026-07-31}{AG}{Research release: \texttt{CITATION.cff}, coded \texttt{[CLM-1xx]} configuration errors now abort the run instead of being skipped per dataset}
+  \vhEntry{0.1}{2026-07-07}{AG}{Initial release: CLM label engine, \texttt{[CLM-\#\#\#]} diagnostics, configuration wizard, MCC/ARI evaluation.}
+  \vhEntry{0.2}{2026-07-15}{AG}{Internal, unpublished.}
+  \vhEntry{0.3}{2026-07-31}{AG}{\texttt{clustering\_mcc\_pair} added to the API; \texttt{fabricated\_data} cluster ids changed from strings to integers.}
+  \vhEntry{0.4}{2026-07-31}{AG}{The renderer can now emit \texttt{target\_metric}, \texttt{competing\_noise}, \texttt{concentrated\_labels}, \texttt{skew\_params} and \texttt{steepness}; \texttt{mdcgen} source repaired.}
+  \vhEntry{0.5}{2026-07-31}{AG}{Research release: \texttt{CITATION.cff}, \texttt{[CLM-1xx]} configuration errors abort the run.}
   \vhEntry{0.6.2}{2026-08-02}{AG}{First public release. Label-space and pair-scope guards: \texttt{[CLM-121]}, \texttt{[CLM-128]}, \texttt{[CLM-129]}, \texttt{[CLM-130]}, \texttt{[CLM-153]} and \texttt{[CLM-310]} reject configurations that previously produced silently incorrect labels; documentation revised throughout}
-  \vhEntry{0.6.3}{2026-08-08}{AG}{Correctness release: \texttt{[CLM-131]} validates \texttt{skew\_params}, which previously produced negative class sizes without complaint; \texttt{scope: pair} now honours \texttt{tolerance}; run folders are created atomically; \texttt{[CLM-104]}/\texttt{[CLM-105]} report per dataset instead of aborting a whole batch; a labels-only data source makes the engine's featureless mode reachable from a configuration}
+  \vhEntry{0.6.3}{2026-08-08}{AG}{Correctness release: \texttt{[CLM-131]} validates \texttt{skew\_params}; \texttt{scope: pair} now honors \texttt{tolerance}; run folders are created atomically; \texttt{[CLM-104]}/\texttt{[CLM-105]} report per dataset instead of aborting a batch.}
+  \vhEntry{0.6.4}{2026-08-09}{AG}{Tooling and import hygiene: the target-metric search and the final generation now share one random stream, so a solved value is the value delivered; \texttt{byoc} imports are validated against stated requirements (see the uncoded-rejections section of the troubleshooting reference.}
 \end{versionhistory}
 \newpage
 % \section*{License}

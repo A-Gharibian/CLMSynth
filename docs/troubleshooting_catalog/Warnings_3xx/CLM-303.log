@@ -10,7 +10,7 @@ INFO - Generating synthetic data (Seed: 42)...
 INFO - Applying perfect separation ground truth to categorical labels...
 INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
 WARNING - [CLM-303] target_metric present: per-rule recall_target values in assignment_matrix are ignored; recall_target is solved for globally.
-INFO - target_metric: grid search hit tolerance directly (alpha=0.500, achieved=0.512, target=0.500).
+INFO - target_metric: grid search hit tolerance directly (alpha=0.500, achieved=0.510, target=0.500).
 INFO - CLM labels generated. Target counts: [200, 200, 200, 200], achieved: [200, 200, 200, 200].
 INFO - target_metric: final achieved mcc=0.5100 (target was 0.5, alpha=0.5000).
 INFO - [fabricated_data/fabricated/baseline_4class] Attached generated label 'Label_0'.

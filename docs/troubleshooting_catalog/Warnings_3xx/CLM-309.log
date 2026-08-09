@@ -10,10 +10,10 @@ INFO - Generating synthetic data (Seed: 42)...
 INFO - Applying perfect separation ground truth to categorical labels...
 INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
 WARNING - [CLM-303] target_metric present: per-rule recall_target values in assignment_matrix are ignored; recall_target is solved for globally.
-WARNING - [CLM-306] target_metric: did not converge within tolerance after 40 iterations. Best found: alpha=0.4875, achieved=0.4950 (target=0.500, tol=0.0001).
+WARNING - [CLM-306] target_metric: did not converge within tolerance after 40 iterations. Best found: alpha=0.4938, achieved=0.4983 (target=0.500, tol=0.0001).
 INFO - CLM labels generated. Target counts: [200, 200, 200, 200], achieved: [200, 200, 200, 200].
-INFO - target_metric: final achieved mcc=0.4950 (target was 0.5, alpha=0.4875).
-WARNING - [CLM-309] target_metric: the DELIVERED labeling achieves mcc=0.4950, outside the requested 0.5 +/- 0.0001 (solved alpha=0.4875). The solver scores candidates on a fixed probe stream while this output is generated on the run's own stream, so a solve that converged internally can still land outside tolerance -- most often at small N, where spillover placement dominates. Treat the achieved value above as authoritative, not the requested one.
+INFO - target_metric: final achieved mcc=0.4983 (target was 0.5, alpha=0.4938).
+WARNING - [CLM-309] target_metric: the DELIVERED labeling achieves mcc=0.4983, outside the requested 0.5 +/- 0.0001 (solved alpha=0.4938). Two things can cause this. Usually the search simply could not reach the target, in which case [CLM-306] above reports it and is the real explanation; at small N the achievable values form a coarse ladder and a tight tolerance can fall between rungs. Otherwise the labeling that was scored is not the labeling that was written: as of 0.6.4 the search and the final generation share one stream by default, so that second case means an explicit target_metric.probe_seed differing from the run seed. Treat the achieved value above as authoritative, not the requested one.
 INFO - [fabricated_data/fabricated/baseline_4class] Attached generated label 'Label_0'.
 INFO - Saved: _scratch/CLM-309/{run}/csv/fabricated_data__fabricated__baseline_4class.csv
 INFO - Saved summary: _scratch/CLM-309/{run}/txt/fabricated_data__fabricated__baseline_4class.txt
