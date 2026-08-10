@@ -15,7 +15,7 @@ from .metrics import (
     evaluate_cluster_label_matching,
 )
 
-__version__ = "0.6.5"
+__version__ = "0.6.6"
 
 __all__ = [
     "DatasetContext",

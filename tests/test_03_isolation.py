@@ -21,18 +21,49 @@ What is checked, in order:
                        rather than one guarantee and one characterization.
   module-level state   Every registry (`CODES`, `FETCHERS`, `SOURCE_METADATA`,
                        `_METRIC_FUNCS`, ...) is byte-identical after a real run.
+  logging ownership    Importing the package configures nothing. The console
+                       scripts configure logging because they own the process;
+                       a library caller keeps their own handlers and format.
+                       What the filter they install *does* is not this module's
+                       subject -- that is `05_config_safety`.
   no async             The package contains no `async def`, `await` or
                        `asyncio`, which every claim above assumes.
 
 """
 
+import logging
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from clmsynth import fabricated_generator
+from clmsynth.cli_logging import SingleLineFilter, configure_cli_logging
 from clmsynth.main import build_run_dir, run_pipeline
+
+
+def pipeline_config(output_dir):
+    """The plainest run that processes exactly one dataset.
+
+    A factory rather than a constant because `output_dir` differs per test, and
+    because a shared mutable dict is precisely what the two tests below exist to
+    catch `run_pipeline` doing.
+
+    Local to this module on purpose. A fixture shared across modules couples
+    their assertions: `run_pipeline(...) == 1` is only meaningful while this
+    config names exactly one dataset, and a change made for another module's
+    needs would silently redefine what these tests check.
+    """
+    return {
+        "global_settings": {"data_source": "fabricated_data", "output_dir": str(output_dir)},
+        "fabricated_data_suite": {
+            "batteries": ["fabricated"], "datasets": ["baseline_4class"], "seed": 42,
+        },
+        "label_generation": {
+            "n_labels": 1, "source_labeling": "labels0", "noise": 0.1, "seed": 42,
+            "clm_label": {"num_classes": 4, "matching_mode": "perfect"},
+        },
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -108,16 +139,7 @@ def test_run_pipeline_does_not_mutate_the_callers_config(tmp_path):
     # `_suite", {}).copy()`, which would survive the defense being removed and
     # reimplemented differently, and would break on a reformatting that changed
     # the quote style.
-    config = {
-        "global_settings": {"data_source": "fabricated_data", "output_dir": str(tmp_path)},
-        "fabricated_data_suite": {
-            "batteries": ["fabricated"], "datasets": ["baseline_4class"], "seed": 42,
-        },
-        "label_generation": {
-            "n_labels": 1, "source_labeling": "labels0", "noise": 0.1, "seed": 42,
-            "clm_label": {"num_classes": 4, "matching_mode": "perfect"},
-        },
-    }
+    config = pipeline_config(tmp_path)
     before = {k: list(v) if isinstance(v, list) else v
               for k, v in config["fabricated_data_suite"].items()}
 
@@ -134,16 +156,7 @@ def test_run_pipeline_is_repeatable_with_the_same_config_object(tmp_path):
     This is the failure a caller would actually see, the second run quietly
     processing nothing.
     """
-    config = {
-        "global_settings": {"data_source": "fabricated_data", "output_dir": str(tmp_path)},
-        "fabricated_data_suite": {
-            "batteries": ["fabricated"], "datasets": ["baseline_4class"], "seed": 42,
-        },
-        "label_generation": {
-            "n_labels": 1, "source_labeling": "labels0", "noise": 0.1, "seed": 42,
-            "clm_label": {"num_classes": 4, "matching_mode": "perfect"},
-        },
-    }
+    config = pipeline_config(tmp_path)
     counts = []
     for run in ("first", "second"):
         out = tmp_path / run
@@ -230,6 +243,55 @@ def test_module_level_registries_survive_a_run_unchanged():
 
     changed = [name for name, obj in watched.items() if obj != before[name]]
     assert not changed, f"module-level state mutated during a run: {changed}"
+
+
+# ---------------------------------------------------------------------------
+# Logging configuration belongs to the process owner, not to the package
+# ---------------------------------------------------------------------------
+
+def test_importing_the_package_configures_no_logging():
+    """A library must not reconfigure the logging of the process it is imported into.
+
+    Every module logs to `clmsynth.<module>`, so `clmsynth` is the logger a
+    package-level handler or filter would be attached to. It must stay bare:
+    a caller embedding this in their own program keeps their handlers, their
+    format and their levels, and gets our records through ordinary propagation.
+
+    Robust to test ordering on purpose. `configure_cli_logging` attaches to the
+    ROOT handlers, so another test calling it cannot make this one pass or fail
+    by accident.
+    """
+    import clmsynth  # noqa: F401  (the import is the thing under test)
+
+    package_logger = logging.getLogger("clmsynth")
+    assert package_logger.handlers == [], \
+        f"importing clmsynth installed handlers: {package_logger.handlers}"
+    assert package_logger.filters == [], \
+        f"importing clmsynth installed filters: {package_logger.filters}"
+
+
+def test_configure_cli_logging_is_idempotent(monkeypatch):
+    """Two calls must not stack two filters.
+
+    A second SingleLineFilter would escape the backslash the first one wrote,
+    turning a neutralised newline into a doubled escape, and growing on every
+    further call. The console scripts each call this once today, but nothing
+    stops a caller driving two of them in one process.
+
+    The root logger's handler list is swapped for a private one first. Calling
+    the real thing against the session's own handlers would attach the filter to
+    pytest's capture handler and leave it there for every test that ran
+    afterwards -- a gate that quietly rewrites other tests' captured output is
+    worse than no gate.
+    """
+    probe = logging.NullHandler()
+    monkeypatch.setattr(logging.getLogger(), "handlers", [probe])
+
+    configure_cli_logging()
+    configure_cli_logging()
+
+    scrubbers = [f for f in probe.filters if isinstance(f, SingleLineFilter)]
+    assert len(scrubbers) == 1, f"expected exactly one filter, got {len(scrubbers)}"
 
 
 def test_package_contains_no_async_constructs():

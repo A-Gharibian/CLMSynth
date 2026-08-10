@@ -1,14 +1,16 @@
 # Security Policy
 
+[![Security: bandit](https://img.shields.io/badge/security-bandit-yellow.svg)](https://github.com/PyCQA/bandit)
+
 ## Supported Versions
 
 Security fixes land on the latest release of the current series. There is no
 long-term-support branch.
 
-| Version  | Supported          |
-| -------  | ------------------ |
-| `0.6.5`  | :white_check_mark: |
-| < `0.6.5`| :x:                |
+| Version   | Supported          |
+|-----------|--------------------|
+| `0.6.6`   | :white_check_mark: |
+| < `0.6.6` | :x:                |
 
 
 ## Reporting a vulnerability
@@ -61,8 +63,7 @@ user, at the same privilege level, can reach that path with `cat` or any editor.
 **Accepted, with severity judged not applicable.** The finding's "High" rating
 reflects the query's usual context, a server acting on remote input, and does
 not transfer to a local CLI. These are dismissed in code scanning as *Won't fix*
-rather than *False positive*, because the data flow genuinely exists — it is the
-severity that is wrong, not the detection.
+rather than *False positive*, because the data flow genuinely exists.
 
 ### `py/path-injection` — paths from the configuration file
 
@@ -81,13 +82,27 @@ Impact is nonetheless limited, and limited by construction rather than by luck:
   numeric feature columns, no reserved column names. Anything it does read is
   written to the user's own output folder and sent nowhere.
 
-**Partially guarded today, and being closed.** Battery and dataset names from the
-configuration are already refused when path-shaped — `_is_plain_name` and
+**Names are guarded; directories are deliberately not.** Battery and dataset
+names from the configuration are refused when path-shaped — `_is_plain_name` and
 `_drop_path_shaped_names` in `main.py` reject any name containing `/`, `\`, `:`,
 or equal to `.` or `..`, tested against traversal, separator and drive-relative
-forms. What is not yet guarded is the *directory* those names are joined to
-(`output_dir`, `byoc_suite.input_dir`). Closing that asymmetry is scheduled; see
-`src/ROADMAP.md` under 0.6.6.
+forms. A name is not supposed to be a path, so a separator in one is a category
+error and can be refused without ambiguity.
+
+`output_dir` and `byoc_suite.input_dir` **are** paths, so there is no category
+error to detect, and every candidate restriction refuses something legitimate:
+rejecting absolute paths breaks scratch space on a cluster and output on another
+volume; requiring containment under the working directory breaks the same cases;
+rejecting `..` breaks `../results`. The asymmetry is the correct outcome, not a
+gap.
+
+Since 0.6.6 both directories are instead **resolved and logged before any work
+begins**, so a configuration cannot quietly direct a run somewhere unexpected,
+the absolute destination is the first thing the run states. That addresses the
+residual risk, which is surprise rather than damage: the run folder is created
+fresh with `mkdir(exist_ok=False)`, so no existing file can be overwritten.
+
+This alert therefore stays **dismissed** rather than becoming closeable.
 
 ### `B310` — `urlopen` with a configurable base URL
 
@@ -95,8 +110,7 @@ bandit flags `dataset_sources.py`'s `urlopen`, because `base_url` comes from the
 configuration and a `file://` scheme would read a local file rather than fetch
 over HTTP.
 
-**Accepted under the model above**, on the same reasoning: the file it could read
-is one the invoking user can already read, and the result is written to their own
+**Accepted under the model above**, on the same reasoning: the result is written to their own
 output folder. Restricting the accepted URL schemes is noted as optional
 hardening. If it is ever implemented, the exemption in `[tool.bandit]` comes out
 and a test replaces it.

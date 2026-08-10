@@ -5,10 +5,83 @@ All notable changes to CLMSynth are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.6] — 2026-08-11
+
+A patch release.
+
+### Added
+
+- **A run states where it writes, before it writes.** `global_settings.output_dir`
+  and `byoc_suite.input_dir` are now resolved to absolute paths and logged once
+  per run, before the run folder is created or a single CSV is read.
+
+  A report and **not** a restriction, and the reasoning is recorded
+  in `SECURITY.md` so it is not relitigated. 0.6.4 refuses path-shaped battery
+  and dataset names because a *name* is not supposed to be a path, so a
+  separator in one is a category error. A directory setting **is** a path, so
+  there is no category error to detect and every candidate restriction refuses
+  something legitimate: scratch space on a cluster, an output volume,
+  `../results`. The asymmetry is the correct outcome rather than a gap.
+
+ `build_run_dir` creates a fresh
+  timestamped folder with `mkdir(exist_ok=False)`, so no existing file can be
+  overwritten. It also stays correct under
+  parallel, cluster and pipeline execution, because it reports rather than
+  prompts, never raises, once per run rather than once per dataset.
+
+- **A configuration-safety test category**, `tests/test_05_config_safety.py`.
+  The stated condition for its return was that the program itself implement a
+  measure protecting the machine that runs a configuration. Two now exist, so
+  the category does. Authorization, ReDoS, uncontrolled recursion, wall-clock timing.
+
+### Fixed
+
+- **A configuration value containing a newline could forge a log line.**
+  Reported by CodeQL as `py/log-injection`. Configuration values reach log
+  messages by design: a warning naming an unrecognised `skew_rule` has to quote
+  it. A value carrying a newline split one record into what read as two, and the
+  second could be shaped to look like a line the program never emitted,
+  a fabricated `Pipeline ready. 99 dataset(s) processed.`, for instance. A
+  configuration is a shareable artifact here, so the value need not have been
+  written by whoever reads the output.
+
+  The new `cli_logging.py` gives the package a single point where a record is
+  finished, and `SingleLineFilter` escapes `\r` and `\n` there. Escaped rather
+  than stripped: a visible `\n` says a newline was present and was neutralized,
+  where deleting it would leave a plausible single line and hide the attempt.
+
+  The filter attaches to the **handlers**, not to the `clmsynth` logger. A
+  logger-level filter only sees records logged directly to it, records from
+  child loggers reach ancestors through `callHandlers`, which consults ancestor
+  handlers and never re-applies ancestor filters.
+
+### Changed
+
+- **Logging configuration belongs to the console scripts, not to the package.**
+  `configure_cli_logging()` is called by `clmsynth` and `clmsynth-config`, and by
+  nothing on import. A library running inside another process keeps its own
+  handlers, format and levels; importing `clmsynth` configures nothing. This also
+  settles a divergence: `main` set its own format while `generate_config` took
+  `basicConfig`'s default, so the same workflow produced two line shapes.
+
+- **CI actions moved to their Node 24 builds**, `actions/checkout` v4 → v7 and
+  `actions/setup-python` v5 → v7.
+
+- **Test taxonomy corrected.** The new measures were first filed under
+  `03_isolation` on the strength of a convenient heading. Only the two genuinely
+  about ownership of state stayed; the defenses moved to `05`, and
+  "a report must not be why a run fails" moved to `04_failure_modes`, whose
+  subject it is. Suite is 266 tests across eight modules.
+
+- **`03_isolation`'s two identical pipeline configs are one factory.** Flagged as
+  duplicate code by static analysis. Kept local to the module rather than hoisted
+  into `conftest.py`: `run_pipeline(...) == 1` is only meaningful while that
+  config names exactly one dataset, so a fixture shared across modules would let
+  a change made elsewhere silently redefine what these tests check.
+
 ## [0.6.5] — 2026-08-10
 
-The test suite becomes part of the repository, and every check that was a
-release-time activity becomes a per-commit one.
+The test suite becomes part of the repository.
 
 ### Added
 
@@ -60,7 +133,7 @@ release-time activity becomes a per-commit one.
   stops, a configuration file is a shareable artifact, so configuration values
   are the one input that can come from someone else, and records the standing
   verdict on each accepted scanner finding, including bandit's `B310`, so the
-  judgements are not re-derived on every scan.
+  judgments are not re-derived on every scan.
 
 ### Changed
 
@@ -87,9 +160,9 @@ release-time activity becomes a per-commit one.
   at a glance from successful runs, and anything globbing
   `OUTPUT/*/csv/*.csv` walked over runs that had produced no data.
 
-  Reported against the wizard's `byoc` path, where it is easiest to reach — a
+  Reported against the wizard's `byoc` path, where it is easiest to reach, a
   config naming an input folder with no CSV in it is a reasonable thing to write,
-  since the wizard configures a run rather than performing one — but it was never
+  since the wizard configures a run rather than performing one, but it was never
   specific to `byoc`. Any run processing zero datasets did it: an unknown
   `data_source`, a missing `batteries` key, a source unreachable offline.
 

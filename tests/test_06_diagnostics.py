@@ -346,8 +346,13 @@ def test_competing_noise_float_cluster_is_rejected():
 def test_cardinality_guard():
     """[CLM-126]/[CLM-127]: the 64 cap on num_classes and on the dataset's own K.
     A coarse backstop against runaway configs, not a statistical-significance
-    boundary. Also covers the catalog's byoc CLM-127 fixture, which cannot run
-    from the shipped catalog (see the skip in test_catalog_diagnostic_fires).
+    boundary.
+
+    Overlaps the catalog's byoc CLM-127 fixture, deliberately. That fixture was
+    unrunnable from a source distribution until 0.6.5 shipped the `_data/` folder
+    it reads, so this asserted the code directly instead. The catalog is
+    self-contained now and `test_catalog_diagnostic_fires` covers it too; keeping
+    both means the guard stays asserted without a byoc input file.
     """
     for m in (0, 65, 20_000):
         with pytest.raises(ValueError) as excinfo:

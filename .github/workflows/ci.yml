@@ -17,9 +17,15 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# A second push to the same branch cancels the first. Every job here is a pure
-# check with no external effect, so a superseded run has nothing worth
-# finishing.
+# A second push to the same ref cancels the run still in flight. Every job here is
+# a pure check with no external effect, so a superseded run has nothing worth
+# finishing -- the state being judged has already been replaced.
+#
+# Reading the result: a cancelled run reports as *cancelled*, not as failed, and
+# renders grey. Jobs that finished before the cancellation keep their own green
+# tick, so a grey run whose jobs are green means "superseded", not "broken". Open
+# the run and read the job list rather than the run icon when two pushes land
+# close together.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -41,10 +47,10 @@ jobs:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -77,10 +83,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           # The version the tools' own findings were traced against. Pinned
           # rather than floating so a new interpreter release cannot change the
@@ -119,10 +125,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.13"
           cache: pip
@@ -157,10 +163,12 @@ jobs:
               "CHANGELOG.md",
               "LICENSE.txt",
               "CITATION.cff",
+              "SECURITY.md",
               "requirements.txt",
               "pyproject.toml",
               "src/clmsynth/__init__.py",
               "src/ROADMAP.md",
+              "src/engine_internals.md",
               "docs/manual/CLMSynth_manual.tex",
               "docs/troubleshooting_catalog/_data/k65_clusters.csv",
           ]

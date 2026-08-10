@@ -27,8 +27,8 @@ authors:
     affiliation: "VSB - Technical University of Ostrava"
     orcid: "https://orcid.org/0000-0002-7219-1008"
 
-version: 0.6.5
-date-released: 2026-08-10
+version: 0.6.6
+date-released: 2026-08-11
 license: MIT
 repository-code: "https://github.com/A-Gharibian/CLMSynth"
 doi: 10.5281/zenodo.21751081
@@ -42,6 +42,63 @@ keywords:
   - synthetic-data
   - cluster-label matching
   - class imbalance
+
+# Works CLMSynth relies on.
+references:
+  - type: article
+    title: "Comparing two K-category assignments by a K-category correlation coefficient"
+    authors:
+      - family-names: Gorodkin
+        given-names: Jan
+    journal: "Computational Biology and Chemistry"
+    volume: 28
+    issue: "5-6"
+    start: 367
+    end: 374
+    year: 2004
+
+  - type: article
+    title: "A framework for benchmarking clustering algorithms"
+    authors:
+      - family-names: Gagolewski
+        given-names: Marek
+    journal: "SoftwareX"
+    volume: 20
+    start: 101270
+    year: 2022
+    issn: "2352-7110"
+    doi: 10.1016/j.softx.2022.101270
+    url: "https://clustering-benchmarks.gagolewski.com"
+
+  - type: article
+    title: "MDCGen: Multidimensional Dataset Generator for Clustering"
+    authors:
+      - family-names: Iglesias
+        given-names: Felix
+      - family-names: Zseby
+        given-names: Tanja
+      - family-names: Ferreira
+        given-names: Daniel
+    journal: "Journal of Classification"
+    volume: 36
+    start: 599
+    end: 618
+    year: 2019
+    doi: 10.1007/s00357-019-9312-3
+
+  - type: article
+    title: "Generating the ground truth: Synthetic data for soft label and label noise research"
+    authors:
+      - family-names: de Vries
+        given-names: Sjoerd
+      - family-names: Thierens
+        given-names: Dirk
+    journal: "International Journal of Data Science and Analytics"
+    volume: 20
+    start: 5603
+    end: 5615
+    year: 2025
+    doi: 10.1007/s41060-025-00786-z
 
 # ----------------------------------------------------
 # preferred-citation:

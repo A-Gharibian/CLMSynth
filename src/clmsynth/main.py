@@ -17,6 +17,7 @@ import pandas as pd
 import yaml
 
 from .byoc_source import fetch_byoc_data
+from .cli_logging import configure_cli_logging
 from .clm_label_engine import InfeasibleAllocationError, validate_matching_ids
 from .dataset_sources import (
     fetch_clustbench_data,
@@ -109,6 +110,25 @@ def _write_summary_txt(path: Path, friendly: str, source: str, battery: str, dat
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
     log.info(f"Saved summary: {path}")
+
+def resolved_for_report(path_value) -> str:
+    """The absolute form of a configured path, for logging. Never raises.
+
+    Relative paths are the interesting case: `output_dir: OUTPUT` means
+    something different depending on the working directory a job started in,
+    which is exactly the thing that is hard to reconstruct afterwards from a
+    cluster's captured stdout.
+
+    `resolve()` does not require the path to exist, but it can still fail on a
+    malformed one -- embedded nulls, an over-long Windows path, a dead network
+    mount. Falling back to the raw value keeps this a report: a line that
+    describes where a run will write must never be the reason it does not.
+    """
+    try:
+        return str(Path(path_value).resolve())
+    except (OSError, ValueError):
+        return str(path_value)
+
 
 def _is_plain_name(name) -> bool:
     """True when `name` is a bare name rather than anything path-shaped.
@@ -269,6 +289,11 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
     # pre-checked without fetching or generating every dataset twice, so there a
     # [CLM-104]/[CLM-105] surfaces per dataset in the loop below instead.
     if source == "byoc":
+        # The read-side counterpart of main()'s output-directory line, and once
+        # per run rather than once per dataset: a batch of forty CSVs wants one
+        # statement of where they are being read from, not forty.
+        log.info(f"BYOC input directory: "
+                 f"'{resolved_for_report(fetch_kwargs.get('input_dir', '.'))}'.")
         precheck_byoc_matching_ids(jobs, fetch_kwargs, clm_config)
 
     fetcher = FETCHERS[source]
@@ -458,7 +483,7 @@ def discard_run_dir_if_barren(run_dir: Path, config_copy: Path) -> bool:
 def main() -> None:
     """CLI entry point: ``python -m clmsynth.main [config.yaml]`` (or the
     ``clmsynth`` console script)."""
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    configure_cli_logging()
     log.info("Starting Test Data Orchestrator...")
 
     config_path = sys.argv[1] if len(sys.argv) > 1 else "test_data_config.yaml"
@@ -467,6 +492,14 @@ def main() -> None:
     data_source = str(global_settings.get("data_source", "clustbench")).lower()
 
     base_dir = Path(global_settings.get("output_dir", "OUTPUT"))
+    # Say where output is going BEFORE anything is created. `output_dir` is a
+    # configuration value, and a configuration is a shareable artifact (see
+    # SECURITY.md), so the folder a run writes into is not necessarily one the
+    # person running it chose. Reporting rather than restricting: a destination
+    # outside the working directory is legitimate -- scratch space on a cluster,
+    # another volume, a path a pipeline assembled -- so the answer to "somewhere
+    # unexpected" is to make it impossible to miss, not to refuse it.
+    log.info(f"Output directory: '{resolved_for_report(base_dir)}'.")
     run_dir = build_run_dir(base_dir, SOURCE_DISPLAY.get(data_source, data_source))
     csv_dir = run_dir / "csv"
     png_dir = run_dir / "png"

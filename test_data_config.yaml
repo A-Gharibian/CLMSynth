@@ -1,11 +1,11 @@
 global_settings:
-  data_source: fabricated_data
+  data_source: mdcgen
   output_dir: OUTPUT
-fabricated_data_suite:
+mdcgen_suite:
   batteries:
-  - fabricated
+  - challenging
   datasets:
-  - baseline_4class
+  - overlapping_2d
   seed: 42
 label_generation:
   n_labels: 1
@@ -15,12 +15,16 @@ label_generation:
   clm_label:
     num_classes: 3
     matching_mode: single
-    balance: balanced
+    balance: unbalanced
+    skew_rule: dirichlet
+    skew_params:
+      alpha: 1.0
+    target_metric:
+      type: mcc
+      value: 0.6
+      scope: pair
+      tolerance: 0.01
     single_match:
       cluster: 1
       label: 1
     spillover_rule: proportional_to_marginal
-    centroid_dependence:
-      enabled: true
-      profile: linear
-      favors: core

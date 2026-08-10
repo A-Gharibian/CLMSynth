@@ -37,7 +37,7 @@ import yaml
 import clmsynth.main
 from clmsynth import dataset_sources
 from clmsynth.label_context import DatasetContext
-from clmsynth.main import load_config, run_pipeline
+from clmsynth.main import load_config, resolved_for_report, run_pipeline
 from clmsynth.visualization import plot_feature_scatter
 
 # The Agg backend is selected in conftest, before this module is imported, so a
@@ -601,6 +601,23 @@ def test_the_barren_predicate_accepts_exactly_the_scaffolding(tmp_path):
 
     assert clmsynth.main.discard_run_dir_if_barren(run_dir, config_copy) is True
     assert not run_dir.exists()
+
+
+def test_reporting_a_path_never_raises():
+    """A line describing where a run will write must not be why it fails.
+
+    `main` and `run_pipeline` state their resolved output and input directories
+    before doing any work. `resolve()` can fail on a malformed path -- an
+    embedded null, an over-long Windows path, a dead network mount -- and the
+    fallback is the raw value.
+
+    Here rather than in `05_config_safety`, which owns *what* the report is for:
+    this asserts the pipeline degrades rather than aborts, which is this
+    module's subject. A diagnostic that can kill the run it describes is the
+    failure mode, not the feature.
+    """
+    for malformed in ("\0embedded-null", "x" * 5000, ""):
+        assert isinstance(resolved_for_report(malformed), str)
 
 
 def test_generate_config_exits_one_on_a_missing_payload(tmp_path, monkeypatch):

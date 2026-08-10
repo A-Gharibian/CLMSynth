@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clmsynth"
-version = "0.6.5"
+version = "0.6.6"
 description = "Synthetic label generator with configurable cluster-label matching (CLM) against ground-truth clusters"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"

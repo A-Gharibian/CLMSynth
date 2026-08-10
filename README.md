@@ -1,8 +1,11 @@
 # Cluster–label matched dataset synthesizer
 
-[![Version](https://img.shields.io/badge/version-0.6.5-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
+
+[![Release](https://img.shields.io/github/v/release/A-Gharibian/CLMSynth?include_prereleases&sort=semver)](https://github.com/A-Gharibian/CLMSynth/releases)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](LICENSE.txt)
+[![CI](https://img.shields.io/github/actions/workflow/status/A-Gharibian/CLMSynth/ci.yml?branch=main&label=CI)](https://github.com/A-Gharibian/CLMSynth/actions/workflows/ci.yml)
+
 [![Cite](https://img.shields.io/badge/cite-CITATION.cff-blueviolet)](CITATION.cff)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21751081.svg)](https://doi.org/10.5281/zenodo.21751081)
 
@@ -110,7 +113,7 @@ OUTPUT/{DDMMYY}_{Source}_{HHMMSS}/
   before the pipeline starts, so it exists the moment the first dataset
   succeeds; if none does, it is removed on the way out rather than left looking
   like a completed run. Only a folder holding nothing but the config copy and
-  three empty subfolders is removed — anything written keeps its folder.
+  three empty subfolders is removed, anything written keeps its folder.
 - **Column naming:** ground-truth class labeling such as `Cluster_0`, `Cluster_1`, …
   (by position, `source_labeling: labels0` surfaces as `Cluster_0`); generated
   labels become `Label_0`, `Label_1`, … (0-indexed, one per `n_labels`).
@@ -199,9 +202,9 @@ label_generation:
 
 ### Data sources
 
-- **`clustbench`**, real, fixed geometries downloaded from Gagolewski's benchmark suite. Every available reference labeling (`labels0`, `labels1`, …) is fetched. Use for reproducible research results.
-- **`mdcgen`**, fully synthetic geometries via `mdcgenpy`, seeded for reproducibility. Use when specific properties (dimensionality, overlap, outliers) is needed that the clustbench datasets may not cover.
-- **`fabricated_data`**, offline fallback. Cluster IDs are integers `0..K-1`, as in the other generated sources; the generator's readable class names are mapped to codes on import. The `labels_only_4class` preset emits **cluster ids with no feature columns at all** — a valid CLM run, since recall, balance, allocation and spillover never read coordinates. Spatial placement does, so combining that preset with `centroid_dependence` is refused with `[CLM-125]`.
+- **`clustbench`**, real, fixed geometries downloaded from Gagolewski's **clustering-benchmarks** framework[^gagolewski], whose Python API is imported as `clustbench` and which supplies this source's config key. Every available reference labeling (`labels0`, `labels1`, …) is fetched. Use for reproducible research results.
+- **`mdcgen`**, fully synthetic geometries via `mdcgenpy`[^mdcgen], seeded for reproducibility. Use when specific properties (dimensionality, overlap, outliers) is needed that the clustering-benchmarks datasets may not cover.
+- **`fabricated_data`**, offline fallback. Cluster IDs are integers `0..K-1`, as in the other generated sources; the generator's readable class names are mapped to codes on import. The `labels_only_4class` preset emits **cluster ids with no feature columns at all**, a valid CLM run, since recall, balance, allocation and spillover never read coordinates. Spatial placement does, so combining that preset with `centroid_dependence` is refused with `[CLM-125]`.
 - **`byoc`**, bring-your-own-clusters: your own CSV with feature columns and one cluster-id column (see below).
 
 ### Bring-your-own-clusters (`byoc`)
@@ -265,7 +268,7 @@ applied after it.
   independent (chance-adjusted) views of the same labeling.
 
 > **What metric is being solved.** The global MCC is the multiclass Gorodkin's
-> `R_K` that `clustering_mcc` computes (permutation-invariant via Hungarian
+> `R_K`[^gorodkin] that `clustering_mcc` computes (permutation-invariant via Hungarian
 > matching), while the pair MCC is the `2×2` Matthews φ that `clustering_mcc_pair`
 > computes for a single cluster/label pair. The global `R_K` and ARI between an
 > `M`-label and a `K`-cluster partition have no closed form, so their solver is
@@ -306,8 +309,8 @@ pytest
 ```
 
 No arguments: `[tool.pytest.ini_options]` in `pyproject.toml` points at `tests/`.
-257 tests run in well under a minute, and need **no network and no optional
-dependency** — `clustbench` fetches are patched, and every case runs against the
+266 tests run in well under a minute, and need **no network and no optional
+dependency**, `clustbench` fetches are patched, and every case runs against the
 offline `fabricated_data` source or against the engine directly.
 
 | module                  | defends                                                                     |
@@ -318,6 +321,7 @@ offline `fabricated_data` source or against the engine directly.
 | `test_02_edge_cases`    | the ends of the input range: nothing, one, very many, degenerate, non-ASCII |
 | `test_03_isolation`     | ownership of state: RNG, config, run folder, module registries              |
 | `test_04_failure_modes` | the pipeline degrades rather than aborts, and reports it                    |
+| `test_05_config_safety` | the program's own defenses against a configuration it did not author       |
 | `test_06_diagnostics`   | the `[CLM-###]` registry safety net, driven entirely by the catalog         |
 
 For the static analysis CI gates on, install the dev extra instead:
@@ -347,8 +351,7 @@ across `pyproject.toml`, `__init__.py`, `CITATION.cff` and the shipped manuals.
 - **Target metric can be unreachable (structural ceiling).** MCC/ARI between an
   `M`-label partition and a `K`-cluster partition is structurally bounded when
   `M < K`. For `K` equally sized clusters, the ceiling of a balanced `M`-coarsening
-  has the closed form **`MCC = sqrt(M(M-1) / (K(K-1)))`** (verified exact, e.g.
-  4 labels over 20 clusters cap MCC at `0.178`).
+  has the closed form **`MCC = sqrt(M(M-1) / (K(K-1)))`**.
   For unequal clusters, or a specific rule set, the reachable ceiling is the MCC
   the rules achieve at full recall (`alpha = 1`). A chosen skew (e.g.
   `dominant_minority`) constrains it further via fixed label sizes. When the
@@ -374,31 +377,20 @@ across `pyproject.toml`, `__init__.py`, `CITATION.cff` and the shipped manuals.
   is the feature's purpose. Only valid under `single`/`custom`; a warned no-op
   under `perfect` (no leftover capacity); rejected under `random`.
 - **`balance: balanced` ignores `proportions`** (enforces uniform 1/M) and warns.
-- **`skew_rule: dirichlet`** is stochastic but reproducible: it draws once from
-  the run seed, so a fixed seed yields fixed proportions.
 - **`pyivm` is not implemented yet.** `evaluate_cluster_label_matching` is unsupported (see Install). *(planned for 1.0.0)*
-- **A solved `target_metric` is verified against the delivered labeling, and can
-  miss.** `solve_alpha_for_target_metric` scores candidate recalls on a fixed
-  probe stream (`default_rng(probe_seed)`, `probe_seed` defaulting to 0) so that
-  candidates compare fairly, but the labeling that is written out is generated on
-  the run's own stream (`default_rng(seed)`), so a search that converged
-  internally can still deliver a labeling outside tolerance. The generator now
-  measures what it actually writes and raises **`[CLM-309]`** when that value
-  falls outside tolerance, *treat the achieved value as authoritative, not the
-  requested one*. Magnitude is governed by `N`: ≤0.009 at `N=3000`, ≤0.007 at
-  `N=8000`, but up to 0.07 at `N`≈120–280. Does not affect `scope: pair`
-  (closed-form, no search).
-  **Fixed in 0.6.4:** allocation now draws from its own stream, started from the
-  run seed, and `probe_seed` defaults to that same seed — so the labeling the
-  solver scored is byte-identical to the one written. What remains is the
-  ordinary case of a target the geometry cannot reach, which `[CLM-306]` reports;
-  at small `N` the achievable values form a coarse ladder and a tight tolerance
-  can fall between rungs.
+- **A solved `target_metric` can still miss, and the achieved value is the
+  authoritative one.** The generator measures what it actually writes rather than
+  what the search believed, and raises **`[CLM-309]`** when that value falls
+  outside `tolerance`. Two causes remain: the target is beyond what the geometry
+  and proportions can reach, in which case `[CLM-306]` reports it and is the real
+  explanation; or at small `N` the achievable values form a coarse ladder and a
+  tight tolerance falls between two rungs. `scope: pair` has its own, sharper
+  version of that ladder, below.
 - **Reachable `scope: pair` values are a coarse ladder near the bottom of the
   range.** The target label is sized to an integer number of points, so only a
   discrete set of pair-MCC values is reachable, and the rungs widen sharply as the
   target approaches `phi_min`. With `N = 800` and a 200-point cluster, one point
-  gives `0.0613` and two give `0.0867`, a gap of `0.025` — wider than the default
+  gives `0.0613` and two give `0.0867`, a gap of `0.025`, wider than the default
   `tolerance`. A target between two rungs is unreachable, so the closest rung is
   delivered and `[CLM-310]` reports the miss. `[CLM-307]` only clamps targets
   *outside* `[phi_min, 1]`; it says nothing about one falling between rungs inside
@@ -410,4 +402,16 @@ across `pyproject.toml`, `__init__.py`, `CITATION.cff` and the shipped manuals.
 - **`plot_feature_scatter` is not thread-safe.** matplotlib's default (TkAgg)
   backend requires plotting on the main thread; `main.py` only calls it
   sequentially. *(planned for 0.8.0)*
+
+[^gorodkin]: Gorodkin, J. (2004). Comparing two K-category assignments by a
+    K-category correlation coefficient. *Computational Biology and Chemistry*,
+    28(5–6), 367–374.
+
+[^gagolewski]: Gagolewski, M. (2022). A framework for benchmarking clustering
+    algorithms. *SoftwareX*, 20, 101270.
+    <https://doi.org/10.1016/j.softx.2022.101270>
+
+[^mdcgen]: Iglesias, F., Zseby, T., Ferreira, D., et al. (2019). MDCGen:
+    Multidimensional Dataset Generator for Clustering. *Journal of
+    Classification*, 36, 599–618. <https://doi.org/10.1007/s00357-019-9312-3>
 

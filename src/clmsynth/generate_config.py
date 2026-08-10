@@ -9,6 +9,7 @@ import sys
 
 import yaml
 
+from .cli_logging import configure_cli_logging
 from .config_template import YAML_TEMPLATE
 
 log = logging.getLogger(__name__)
@@ -203,7 +204,7 @@ def main() -> None:
     ``upstream_payload.yaml``) and renders the pipeline config (default
     ``test_data_config.yaml``).
     """
-    logging.basicConfig(level=logging.INFO)
+    configure_cli_logging()
     payload_path = sys.argv[1] if len(sys.argv) > 1 else "upstream_payload.yaml"
     output_path = sys.argv[2] if len(sys.argv) > 2 else "test_data_config.yaml"
 

@@ -37,7 +37,7 @@ out = run_allocation_pipeline(...)                        # Stages 3-6
 Before any other work, `num_classes` (M) and the dataset's own cluster count (K,
 derived from `c(x)`, not configured) are each checked against a fixed cap of 64.
 This is a coarse safety backstop against runaway/typo configs, not a validated
-statistical-significance boundary — internal testing already finds CLM results
+statistical-significance boundary, internal testing already finds CLM results
 unreliable well below this ceiling (K above ~15, M above ~20); computing a real
 per-dataset significance limit is future work (a dedicated module, or manual
 guidance), not something this guard attempts. The check lives once, at this
@@ -154,7 +154,7 @@ labeling. Two paths:
 ### Stage 7a: exact single-pair MCC (`_pair_label_counts`, `scope: pair`)
 
 For `scope: pair` (`single` mode, `type: mcc`) the target is the 2x2 MCC of the
-`single_match` `(k*, l*)` pair, which inverts in **closed form** — no search.
+`single_match` `(k*, l*)` pair, which inverts in **closed form**, no search.
 Placing *all* of label `l*` inside cluster `k*` (recall 1, so no leftover spills
 back in) makes the pair phi `= sqrt(m_c (N - n_k) / (n_k (N - m_c)))`; inverting
 for the label size gives `m_c* = phi^2 n_k N / (N - n_k(1 - phi^2))`. The engine
@@ -171,7 +171,7 @@ global solver; the message reports how many `l*` points ended up outside `k*`).
 ### Stage 7b: global metric (`solve_alpha_for_target_metric`, `scope: global`, default)
 
 For `scope: global` (default; `mcc` or `ari`, `single`/`custom`), one global
-recall level `alpha` is substituted into every rule and solved numerically — there
+recall level `alpha` is substituted into every rule and solved numerically, there
 is no closed form for the global multiclass metric. A coarse grid scan brackets
 the target (guarding against non-monotonicity of the achieved metric) and bisection
 refines it; all probes share a fixed seed (common random numbers), so differences
