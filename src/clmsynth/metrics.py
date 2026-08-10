@@ -28,7 +28,7 @@ def clustering_mcc_pair(labels_true, labels_pred, cluster, label) -> float:
     one label vs the rest.
 
     This is the binary building block of the multiclass `clustering_mcc`
-    (Gorodkin R_K): it scores only the agreement of the designated
+    (Gorodkin's R_K): it scores only the agreement of the designated
     (`cluster`, `label`) pair, not the whole partition, so it needs no
     Hungarian matching. Used by the engine's target_metric scope='pair'.
     """

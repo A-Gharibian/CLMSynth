@@ -9,6 +9,7 @@ include README.md
 include CHANGELOG.md
 include CITATION.cff
 include LICENSE.txt
+include SECURITY.md
 include requirements.txt
 include environment.yml
 
@@ -17,10 +18,18 @@ include test_data_config.yaml
 include test_data_config_offline.yaml
 include upstream_payload.yaml
 
-# User manual and the coded-diagnostics reference catalogue
+# User manual and the coded-diagnostics reference catalogue.
+# The .csv is not incidental: docs/troubleshooting_catalog/_data/ holds the
+# input file the byoc fixtures point at, so without it those catalog entries
+# cannot be reproduced from an sdist at all.
 recursive-include docs *.tex
 recursive-include docs *.yaml
 recursive-include docs *.log
+recursive-include docs *.csv
+
+# Planning and design notes that sit beside the source they describe.
+include src/ROADMAP.md
+include src/engine_internals.md
 
 # Package source (normally auto-included via packages.find for a pure-Python
 # package; listed explicitly here for sdist robustness regardless of build
@@ -36,7 +45,9 @@ prune .venv
 prune .idea
 prune .claude
 prune Inspection
-prune testing
+# The suite is tracked in git as of 0.6.5 but stays out of the sdist: it is a
+# development gate, not something an installing user runs. Revisit at 1.0, when
+# the conda-forge recipe may want to run it against the built artifact.
 prune tests
 prune build
 prune dist

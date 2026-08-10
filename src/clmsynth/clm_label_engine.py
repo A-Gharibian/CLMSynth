@@ -174,8 +174,8 @@ def validate_matching_ids(cfg: dict, cluster_ids: list) -> None:
     Split out of build_rules so the pipeline can apply them ahead of time, per
     dataset, without building rules or resolving recall targets. Unlike every
     other [CLM-1xx] code, 104 and 105 are statements about a *dataset* rather
-    than about the configuration -- under `byoc` each CSV brings its own cluster
-    ids and nothing requires them to agree -- so the pipeline checks every
+    than about the configuration, under `byoc` each CSV brings its own cluster
+    ids and nothing requires them to agree, so the pipeline checks every
     dataset up front and refuses the batch as a whole rather than discovering the
     mismatch midway through.
 
@@ -317,7 +317,7 @@ def _validate_skew_cfg(cfg: dict) -> None:
     """[CLM-131] guard: skew parameters must be in range for the chosen skew_rule.
 
     Called from generate_clm_labels *before* resolve_label_counts, because that
-    is where the parameters are consumed -- a guard placed alongside the other
+    is where the parameters are consumed, a guard placed alongside the other
     validators would run after the counts it protects had already been computed.
 
     Only the parameters that will actually be read are checked, using the same
@@ -923,7 +923,7 @@ def generate_clm_labels(cluster_labels: np.ndarray, coords: np.ndarray, cfg: dic
     # for any other rule, so a shared stream reaches allocation in a state that
     # depends on which skew rule was chosen. More importantly, the target-metric
     # probes cannot reproduce that state, so the labeling that was scored and the
-    # labeling that was written came out different -- [CLM-309]. With both
+    # labeling that was written came out different, [CLM-309]. With both
     # starting from default_rng(seed), the winning probe IS the delivered result.
     alloc_rng = np.random.default_rng(seed)
     out = _run_allocation_pipeline(cluster_labels, coords, cfg, rules, cluster_ids,
@@ -939,7 +939,7 @@ def generate_clm_labels(cluster_labels: np.ndarray, coords: np.ndarray, cfg: dic
             log.info(f"target_metric: final achieved pair mcc={achieved:.4f} "
                      f"(target was {tm['value']}, pair cluster={sm['cluster']}/label={sm['label']}).")
 
-            # Honours the same 'tolerance' key the global solver reads. It was
+            # Honors the same 'tolerance' key the global solver reads. It was
             # hardcoded to 0.01 here, so a requested 0.001 was silently widened and
             # a requested 0.05 silently narrowed. Only 'max_iter' stays global-only:
             # the pair scope inverts in closed form and never iterates.

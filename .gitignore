@@ -1,17 +1,35 @@
-TESTING/
-testing
+INPUT/
 OUTPUT/
-ROADMAP.md
 .claude
-tests/
 Inspection/
 wizard_config.yaml
 Article/
+
+# A generated snapshot, kept local until it becomes the graphical statistics
+# section of the README. Tracking it means every regeneration is a diff, and a
+# stale copy publishes numbers that contradict the release it ships with.
+stats.txt
 __pycache__/
 *.py[cod]
 *.egg-info/
 build/
 dist/
+
+# Tooling caches. All three are created in the repository root by the checks CI
+# runs, so without these a local `pytest` or `ruff` run leaves the working tree
+# dirty.
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# PyCharm/IntelliJ inspection exports. Written to the repository ROOT by default,
+# not into Inspection/, so the folder rule above does not catch them. They are a
+# point-in-time report about the working tree, regenerated on demand, and one of
+# them (.descriptions.xml) is half a megabyte of rule documentation.
+.descriptions.xml
+DuplicatedCode*.xml
+UndefinedParamsPresent.xml
+Py*Inspection.xml
 .venv/
 venv/
 .idea

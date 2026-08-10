@@ -364,7 +364,7 @@ def build_clm(known_k=None) -> dict[str, Any]:
                             "           (the standard multiclass MCC). Found by search; it can\n"
                             "           fall short if the value is impossible for your data.")
             # Asked for BOTH scopes: tolerance is the band the delivered labeling
-            # is checked against afterwards, not only the global solver's
+            # is checked against afterward, not only the global solver's
             # convergence test, so the pair scope reads it too.
             tm["tolerance"] = ask_float("How close counts as 'reached'", 0.01, lo=0.0, hi=1.0,
                                         explain="If the finished labelling lands further than this "

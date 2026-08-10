@@ -21,7 +21,7 @@ def generate_additional_labels(
 ) -> None:
     """Attaches `n_labels` generated label columns to `context`.
 
-    Each label i uses seed + i, so labels differ but the run is reproducible.
+    Each label "i" uses "seed + i", so labels differ but the run is reproducible.
     With a `clm_config` the CLM engine is used.
     """
     if source_labeling not in context.ground_truths:

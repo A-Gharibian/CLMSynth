@@ -182,7 +182,7 @@ crashing or fabricating a hit (`[CLM-120]` if *no* `alpha` is feasible at all). 
 `K` equal clusters the ceiling of a balanced `M`-coarsening is
 `sqrt(M(M-1)/(K(K-1)))`; in general it is the MCC the rule set achieves at
 `alpha = 1`. Because the probe stream (`default_rng(probe_seed)`) differs from the
-output stream (`default_rng(seed)`), a solve that converged internally can still
+output stream (`default_rng(seed)`), a solution that converged internally can still
 deliver a labeling outside tolerance; the engine re-measures the labeling it
 actually writes and warns `[CLM-309]` when it does, the achieved value being
 authoritative rather than the request (most visible at small `N`, where spillover

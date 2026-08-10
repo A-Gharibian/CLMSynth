@@ -1,11 +1,11 @@
 global_settings:
-  data_source: clustbench
+  data_source: fabricated_data
   output_dir: OUTPUT
-clustbench_suite:
+fabricated_data_suite:
   batteries:
-  - g2mg
+  - fabricated
   datasets:
-  - g2mg_4_60
+  - baseline_4class
   seed: 42
 label_generation:
   n_labels: 1
@@ -13,27 +13,14 @@ label_generation:
   noise: 0.1
   seed: 42
   clm_label:
-    num_classes: 2
+    num_classes: 3
     matching_mode: single
-    balance: unbalanced
-    skew_rule: dirichlet
-    skew_params:
-      alpha: 0.3
-    target_metric:
-      type: mcc
-      value: 0.5
-      scope: pair
+    balance: balanced
     single_match:
       cluster: 1
       label: 1
     spillover_rule: proportional_to_marginal
-    competing_noise:
-    - cluster: 2
-      label: 0
-      share: 0.3
-      favors: boundary
     centroid_dependence:
       enabled: true
-      profile: exponential
+      profile: linear
       favors: core
-      steepness: 3.0

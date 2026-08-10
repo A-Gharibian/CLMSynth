@@ -10,14 +10,6 @@ name: CI
 permissions:
   contents: read
 
-# Placeholder pipeline: proves the package installs and imports cleanly
-# across every Python version pyproject.toml declares support for
-# (requires-python = ">=3.11,<3.15"). There is no git-tracked, CI-safe test
-# suite yet -- the existing adversarial harness lives under testing/, which
-# is gitignored and therefore absent from a fresh checkout, and pyproject.toml
-# has no [tool.ruff]/[tool.mypy]/[tool.pytest] sections yet either. Extend the
-# steps below once those land.
-
 on:
   push:
     branches: [main]
@@ -25,13 +17,27 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# A second push to the same branch cancels the first. Every job here is a pure
+# check with no external effect, so a superseded run has nothing worth
+# finishing.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  install-and-smoke-test:
-    name: Install & import (Python ${{ matrix.python-version }})
+  # --------------------------------------------------------------------------
+  # The suite, on every interpreter pyproject.toml claims to support.
+  # --------------------------------------------------------------------------
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
+      # Report every interpreter's result. A failure on 3.14 alone is a
+      # different diagnosis from a failure everywhere, and fail-fast would hide
+      # which of the two happened.
       fail-fast: false
       matrix:
+        # Must track requires-python (">=3.11,<3.15") in pyproject.toml.
         python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
@@ -41,28 +47,178 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
 
-      - name: Install the package
-        run: pip install -e .
+      # Installs the package, so the suite imports the INSTALLED clmsynth rather
+      # than a copy on sys.path. That is the point of the src layout: a stale
+      # working tree cannot shadow the thing under test.
+      - name: Install the package and the test extra
+        run: pip install -e ".[test]"
 
-      - name: Smoke test -- package imports and reports its version
+      - name: Package imports and reports its version
         run: python -c "import clmsynth; print('clmsynth', clmsynth.__version__)"
 
-      # TODO: once a git-tracked pytest suite exists,
-      # add a real test step, e.g.:
-      #   - name: Run tests
-      #     run: |
-      #       pip install pytest
-      #       pytest
+      # No path argument: [tool.pytest.ini_options] testpaths points at tests/.
+      # Passing one here would mean the config and CI could disagree about what
+      # the suite is.
+      #
+      # The suite needs no network and no optional dependency -- clustbench
+      # fetches are patched, and every case runs against the offline
+      # fabricated_data source or the engine directly.
+      - name: Run the test suite
+        run: pytest -q
 
-      # Security static analysis is already automated: CodeQL runs on every push
-      # via GitHub's default code-scanning setup, which needs no workflow file
-      # here. What is still manual is lint and typing (ruff, mypy) against a
-      # local, gitignored checkout. Wire those here once their configs are added
-      # to pyproject.toml, e.g.:
-      #   - name: Lint
-      #     run: |
-      #       pip install ruff mypy bandit
-      #       ruff check src/
-      #       mypy src/clmsynth
-      #       bandit -r src/clmsynth
+  # --------------------------------------------------------------------------
+  # Lint, typing and security analysis. One interpreter is enough: these read
+  # the source, they do not execute it.
+  # --------------------------------------------------------------------------
+  static-analysis:
+    name: Lint, typing, security
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # The version the tools' own findings were traced against. Pinned
+          # rather than floating so a new interpreter release cannot change the
+          # verdict on unchanged code.
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install the package and the dev toolchain
+        run: pip install -e ".[dev]"
+
+      # Each of the three is gating as of 0.6.5, and each was brought to zero
+      # findings before it was turned on -- the exemptions are recorded, with
+      # reasons, in pyproject.toml's [tool.ruff.lint] and [tool.bandit]. A gate
+      # switched on over a non-zero baseline is one people learn to ignore.
+      #
+      # `continue-on-error` is deliberately NOT set: these are gates.
+      - name: Lint (ruff)
+        run: ruff check src/ tests/
+
+      - name: Typing (mypy)
+        # Reads files and settings from [tool.mypy]; no path argument, same
+        # reasoning as pytest above.
+        run: mypy
+
+      - name: Security analysis (bandit)
+        # -c is required for bandit to read [tool.bandit] out of pyproject.toml;
+        # without it the four judged findings recorded there come back.
+        run: bandit -c pyproject.toml -r src/clmsynth -q
+
+  # --------------------------------------------------------------------------
+  # Release hygiene: the pre-flight checks that were performed by hand until
+  # 0.6.5, and that 1.0's publish workflow will bind to the tag.
+  # --------------------------------------------------------------------------
+  packaging:
+    name: Build and metadata
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install the build tools
+        run: pip install build twine
+
+      - name: Build the sdist and wheel
+        run: python -m build
+
+      # Catches the metadata faults that are invisible until an upload is
+      # rejected -- a malformed README, a bad classifier, a missing license
+      # field. Cheap here, expensive at the PyPI upload 1.0 plans for.
+      - name: Check the built artifacts
+        run: twine check dist/*
+
+      # MANIFEST.in claims the sdist carries the manual and the full
+      # troubleshooting catalog. Asserted by unpacking the artifact rather than
+      # by reading the manifest, because the manifest is the thing that can be
+      # wrong.
+      - name: The sdist contains what MANIFEST.in promises
+        run: |
+          python - <<'PY'
+          import sys, tarfile, pathlib
+
+          sdist = next(pathlib.Path("dist").glob("*.tar.gz"))
+          names = tarfile.open(sdist).getnames()
+          stripped = {n.split("/", 1)[1] for n in names if "/" in n}
+
+          required = [
+              "README.md",
+              "CHANGELOG.md",
+              "LICENSE.txt",
+              "CITATION.cff",
+              "requirements.txt",
+              "pyproject.toml",
+              "src/clmsynth/__init__.py",
+              "src/ROADMAP.md",
+              "docs/manual/CLMSynth_manual.tex",
+              "docs/troubleshooting_catalog/_data/k65_clusters.csv",
+          ]
+          missing = [p for p in required if p not in stripped]
+
+          # The catalog is a user-facing reproduction set: every documented code
+          # ships with the config that triggers it and the log it produced.
+          yamls = sum(p.startswith("docs/troubleshooting_catalog/") and p.endswith(".yaml")
+                      for p in stripped)
+          logs = sum(p.startswith("docs/troubleshooting_catalog/") and p.endswith(".log")
+                     for p in stripped)
+
+          print(f"{sdist.name}: {len(stripped)} entries, {yamls} catalog configs, {logs} logs")
+          if missing:
+              print("MISSING from the sdist:", *missing, sep="\n  ")
+          if yamls != logs:
+              print(f"catalog is lopsided: {yamls} .yaml against {logs} .log")
+          sys.exit(1 if missing or yamls != logs else 0)
+          PY
+
+      # Four declarations of the version have to agree: three in metadata and
+      # one per shipped document. They are kept in step by hand today, which is
+      # exactly the kind of thing that is remembered until once it is not.
+      - name: Version agrees across every declaration
+        run: |
+          python - <<'PY'
+          import sys, re, pathlib, tomllib
+
+          pyproject = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          version = pyproject["project"]["version"]
+
+          found = {"pyproject.toml": version}
+
+          init = pathlib.Path("src/clmsynth/__init__.py").read_text(encoding="utf-8")
+          found["__init__.py"] = re.search(r'__version__\s*=\s*"([^"]+)"', init).group(1)
+
+          cff = pathlib.Path("CITATION.cff").read_text(encoding="utf-8")
+          found["CITATION.cff"] = re.search(r"^version:\s*(\S+)", cff, re.M).group(1)
+
+          for tex in sorted(pathlib.Path("docs").rglob("*.tex")):
+              head = tex.read_text(encoding="utf-8", errors="replace")[:2000]
+              m = re.search(r"^%\s*!CLMSynth-version\s*=\s*(\S+)", head, re.M)
+              if m:
+                  found[tex.name] = m.group(1)
+
+          changelog = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          dated = re.search(rf"^##\s*\[{re.escape(version)}\]\s*[-—]\s*(\S+)",
+                            changelog, re.M)
+
+          for name, value in found.items():
+              print(f"  {name:45s} {value}")
+          disagree = {n: v for n, v in found.items() if v != version}
+
+          if disagree:
+              print("\nversion disagreement against pyproject's", version)
+              for name, value in disagree.items():
+                  print(f"  {name} declares {value}")
+          if not dated:
+              print(f"\nCHANGELOG.md has no dated [{version}] entry")
+          sys.exit(1 if disagree or not dated else 0)
+          PY

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clmsynth"
-version = "0.6.4"
+version = "0.6.5"
 description = "Synthetic label generator with configurable cluster-label matching (CLM) against ground-truth clusters"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -43,7 +43,15 @@ dependencies = [
 
 [project.optional-dependencies]
 faker = ["faker"]
-dev = ["pandas-stubs", "scipy-stubs"]
+# The static-analysis toolchain CI gates on, plus the stub packages mypy needs
+# to see through pandas and scipy. Unpinned on purpose: a finding that appears
+# because a tool improved is worth seeing, and the rule SET is pinned in
+# [tool.ruff.lint] below, which is what actually keeps the count stable.
+dev = ["pandas-stubs", "scipy-stubs", "ruff", "mypy", "bandit"]
+# pytest is a development dependency, not a runtime one: the package neither
+# imports it nor ships the suite (MANIFEST.in prunes tests/). Declared as an
+# extra so `pip install -e ".[test]"` is the one documented way to get it, and
+# so CI installs the same thing a contributor does.
 test = ["pytest>=8"]
 # NOTE: two optional dependencies are deliberately NOT extras:
 #   * mdcgenpy is only available as a git repository, and PyPI rejects
@@ -63,7 +71,7 @@ clmsynth-config = "clmsynth.generate_config:main"
 clmsynth-wizard = "clmsynth.config_wizard:main"
 
 # src-layout: the package lives at src/clmsynth/, so the import name and the
-# distribution name both remain "clmsynth" -- only the on-disk location changes.
+# distribution name both remain "clmsynth", only the on-disk location changes.
 # Note this means the package must be installed (`pip install -e .`) before
 # `python -m clmsynth.main` resolves; src/ is deliberately not on sys.path, which
 # is what stops a stale working tree from shadowing the installed package.
@@ -72,9 +80,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-# The suite still lives in the local testing workspace. 0.6.5 moves it to
-# testing/ root and tracks it; update this path with that move.
-testpaths = ["testing/Testing shipped"]
+testpaths = ["tests"]
 # Fail on an unregistered mark rather than silently treating it as a no-op.
 addopts = "--strict-markers --strict-config"
 
@@ -86,13 +92,13 @@ src = ["src"]
 [tool.ruff.lint]
 # Selected explicitly rather than inherited. Ruff's defaults widen between
 # releases, so an unpinned rule set means the finding count changes when the
-# tool updates rather than when the code does -- which makes it useless as a
+# tool updates rather than when the code does, which makes it useless as a
 # gate and misleading as a measurement.
 select = [
     "E4", "E7", "E9",  # pycodestyle: the error subset, not style policing
     "F",               # pyflakes
     "I",               # import order
-    "UP",              # pyupgrade: this project supports 3.11+, so 3.8-era typing is dead weight
+    "UP",              # pyupgrade: this project supports 3.11+
     "B",               # bugbear: real bug patterns
     "C4",              # comprehension clarity
     "DTZ",             # naive datetime use
@@ -111,7 +117,7 @@ ignore = [
     # The four fetchers and the two config writers catch broadly on purpose: a
     # dataset that cannot be fetched, generated or parsed is reported and skipped
     # so the rest of the batch survives. Narrowing these would mean enumerating
-    # every failure mode of urllib, gzip, numpy, pandas, yaml and mdcgenpy, and
+    # every failure mode of urllib, gzip, numpy, pandas, YAML and mdcgenpy, and
     # turning any unlisted one into a crash mid-batch. See main.py's per-dataset
     # error boundary for the design this serves.
     "BLE001",
@@ -125,7 +131,7 @@ ignore = [
     # feeding allocation, where a float arriving silently would be a real defect,
     # so the cast is kept as a guard rather than removed as noise.
     "RUF046",
-    # Rebinding a loop variable to its own normalised form (`tok = tok.strip()`,
+    # Rebinding a loop variable to its own normalized form (`tok = tok.strip()`,
     # `count = min(count, len(idx_avail))`) is the intended reading here, not an
     # accident. The alternative is a second name per loop that means the same
     # thing.
@@ -135,9 +141,34 @@ ignore = [
 [tool.mypy]
 # No `python_version = "3.11"` pin: numpy's own stubs use `type` statements
 # (3.12+ syntax), so pinning 3.11 makes mypy reject its dependency's stubs
-# before it reaches this package -- "Type statement is only supported in Python
+# before it reaches this package, "Type statement is only supported in Python
 # 3.12 and greater", and checking stops there. Language-level 3.11 compatibility
 # is covered where it can actually be enforced: ruff's target-version, and CI
 # genuinely installing and importing on 3.11.
 ignore_missing_imports = true
 files = ["src/clmsynth"]
+
+[tool.bandit]
+# Read with `bandit -c pyproject.toml -r src/clmsynth`. Recorded here for the
+# same reason as the ruff exemptions above: these five findings were traced by
+# hand and judged, and a judgment that lives only in prose gets re-litigated by
+# the next person. The threat model throughout is a local single-user CLI and
+# library, no auth boundary, no multi-tenancy, no untrusted caller. Every
+# input below is supplied by the person running the program, about their own
+# machine.
+#
+#   B101  Two asserts in clm_label_engine guard internal allocation invariants
+#         that no configuration can reach; they are programmer errors, not user
+#         input validation, which is what the [CLM-###] codes are for. Their
+#         disappearance under -O is acceptable exactly because nothing user-facing depends on them.
+#   B404  config_wizard imports subprocess to launch the run the user just
+#         finished configuring, at their explicit prompt.
+#   B603  That same call. The argument vector is built from sys.executable and
+#         a config path the wizard itself wrote; no shell, no user string
+#         reaching argv.
+#   B310  dataset_sources.urlopen takes a base_url from the config, so a file://
+#         scheme could read a local file. Judged unexploitable here: the config
+#         is authored by the person running it, who can already read their own
+#         files. Restricting the scheme is noted as optional hardening, if it
+#         is ever implemented, remove this skip and test it.
+skips = ["B101", "B404", "B603", "B310"]

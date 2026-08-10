@@ -416,6 +416,45 @@ def build_run_dir(base_dir: Path, friendly_source: str) -> Path:
             candidate = base_dir / f"{stem}_{n}"
 
 
+def discard_run_dir_if_barren(run_dir: Path, config_copy: Path) -> bool:
+    """Remove a run folder that a failed run left holding nothing but scaffolding.
+
+    The folder, its csv/png/txt subfolders and the config copy are all created
+    before `run_pipeline` is called, because the run needs somewhere to write
+    the moment the first dataset succeeds. When none of them does, that
+    scaffolding is all there is, and it is worse than nothing: `OUTPUT` fills
+    with timestamped folders asserting that runs happened, and anything globbing
+    `OUTPUT/*/csv/*.csv` walks over runs that produced no data.
+
+    Barren is defined narrowly and checked, never assumed: exactly the three
+    known subfolders, all empty, plus the config copy and nothing else. Any
+    other entry, a written CSV, a plot, a file someone dropped in, means the
+    folder is not ours to remove and it stays untouched. Returns whether it was
+    removed.
+    """
+    if not run_dir.is_dir():
+        return False
+
+    expected_subdirs = {"csv", "png", "txt"}
+    for entry in run_dir.iterdir():
+        if entry.is_dir():
+            if entry.name not in expected_subdirs or any(entry.iterdir()):
+                return False
+        elif entry != config_copy:
+            return False
+
+    try:
+        shutil.rmtree(run_dir)
+    except OSError as e:
+        # Never fatal: the run has already failed and reported why, and a folder
+        # that could not be removed is untidy rather than wrong.
+        log.warning(f"Could not remove the empty run folder '{run_dir}': {e}")
+        return False
+
+    log.info(f"No output was produced, so the empty run folder '{run_dir}' was removed.")
+    return True
+
+
 def main() -> None:
     """CLI entry point: ``python -m clmsynth.main [config.yaml]`` (or the
     ``clmsynth`` console script)."""
@@ -437,17 +476,23 @@ def main() -> None:
     txt_dir.mkdir(parents=True, exist_ok=True)
 
     # Copy the exact config used into the run folder for provenance.
-    shutil.copy(config_path, run_dir / Path(config_path).name)
+    config_copy = run_dir / Path(config_path).name
+    shutil.copy(config_path, config_copy)
 
     try:
         n_ok = run_pipeline(data_source, config, csv_dir, png_dir, txt_dir)
     except ValueError:
         # Coded [CLM-1xx] configuration error re-raised by run_pipeline, which has
-        # already logged it at CRITICAL.
+        # already logged it at CRITICAL. Nothing was written, so nothing is kept:
+        # this is the path `precheck_byoc_matching_ids` describes as aborting
+        # before any output is written, and the run folder is the last thing
+        # standing between that claim and the filesystem.
+        discard_run_dir_if_barren(run_dir, config_copy)
         sys.exit(2)
 
     if n_ok == 0:
         log.error("No datasets were successfully processed.")
+        discard_run_dir_if_barren(run_dir, config_copy)
         sys.exit(1)
     log.info(f"Pipeline ready. {n_ok} dataset(s) processed. Output folder: '{run_dir}'.")
 

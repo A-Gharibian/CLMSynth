@@ -5,6 +5,114 @@ All notable changes to CLMSynth are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5] — 2026-08-10
+
+The test suite becomes part of the repository, and every check that was a
+release-time activity becomes a per-commit one.
+
+### Added
+
+- **A tracked pytest suite, `tests/`.** 257 tests across seven modules, running
+  in well under a minute. It has existed for some time as a local workspace that
+  was excluded from version control, which meant a fresh checkout carried no
+  tests and CI had nothing to run.
+
+  | module                  | defends                                                                     |
+  |-------------------------|-----------------------------------------------------------------------------|
+  | `test_smoke`            | the program runs at all and produces the output it should                   |
+  | `test_00_contract`      | right input produces right output, the sensitive sweep                      |
+  | `test_01_logic`         | named suspicions and shipped-once bugs, the selective pins                  |
+  | `test_02_edge_cases`    | the ends of the input range: nothing, one, very many, degenerate, non-ASCII |
+  | `test_03_isolation`     | ownership of state: RNG, config, run folder, module registries              |
+  | `test_04_failure_modes` | the pipeline degrades rather than aborts, and reports it                    |
+  | `test_06_diagnostics`   | the `[CLM-###]` registry safety net, driven entirely by the catalog         |
+
+  The suite needs no network and no optional dependency: `clustbench` fetches
+  are patched, and every case runs against the offline `fabricated_data` source
+  or against the engine directly. `pytest` is a development dependency declared
+  as the `test` extra, not a runtime one, and the suite is not shipped in the
+  sdist.
+
+- **Continuous integration that actually checks something.** The workflow was a
+  placeholder that installed the package and imported it. It now runs three
+  jobs on every push and pull request:
+
+  - **Tests** across Python 3.11, 3.12, 3.13 and 3.14, the full range
+    `requires-python` declares, without `fail-fast` so one interpreter failing
+    alone is distinguishable from all of them failing.
+  - **Lint, typing and security**: `ruff`, `mypy` and `bandit`, all three
+    gating. Each was brought to zero findings before being turned on; a gate
+    switched on over a non-zero baseline is one people learn to ignore.
+  - **Packaging**: builds the sdist and wheel, runs `twine check`, unpacks the
+    sdist to verify it contains what `MANIFEST.in` claims, and asserts the
+    version agrees across `pyproject.toml`, `__init__.py`, `CITATION.cff` and
+    both shipped `.tex` banners, with a dated `CHANGELOG.md` entry to match.
+    Those last checks were performed by hand until now.
+
+- **`ROADMAP.md` is published**, for the first time, next to the source it
+  describes in `src/`. Planned work from 0.6.6 through 1.0.0.
+
+- **`SECURITY.md`**, stating the threat model and how to report a vulnerability
+  privately. CLMSynth is a local single-user CLI and library with no privilege
+  boundary between the person supplying input and the person running it, which
+  is why a path arriving from `sys.argv` or an interactive prompt is the
+  interface rather than a vulnerability. The document says where that reasoning
+  stops, a configuration file is a shareable artifact, so configuration values
+  are the one input that can come from someone else, and records the standing
+  verdict on each accepted scanner finding, including bandit's `B310`, so the
+  judgements are not re-derived on every scan.
+
+### Changed
+
+- **The `[tool.bandit]` judgements are recorded in `pyproject.toml`**, with the
+  reason for each, in the same form as the `ruff` exemptions added in 0.6.4.
+  Four findings (`B101`, `B404`, `B603`, `B310`) were traced by hand and judged
+  unexploitable under this package's threat model, a local single-user CLI and
+  library with no auth boundary. `B310` in particular is revisited the moment
+  URL-scheme restriction is implemented.
+
+- **The test suite is laid out flat.** Each category was a directory containing
+  exactly one module of the same name; the directory added a level that held
+  nothing. `tests/00_contract/test_00_contract.py` is now
+  `tests/test_00_contract.py`, and `smoke_test.py` follows the `test_*` prefix
+  every other module already used.
+
+### Fixed
+
+- **A run that produced nothing left a run folder behind claiming it had.** The
+  timestamped folder, its `csv/`, `png/` and `txt/` subfolders and the copy of
+  the config are all created before the pipeline starts, because the run needs
+  somewhere to write the moment the first dataset succeeds. When none did, that
+  scaffolding survived: `OUTPUT` accumulated folders that were indistinguishable
+  at a glance from successful runs, and anything globbing
+  `OUTPUT/*/csv/*.csv` walked over runs that had produced no data.
+
+  Reported against the wizard's `byoc` path, where it is easiest to reach — a
+  config naming an input folder with no CSV in it is a reasonable thing to write,
+  since the wizard configures a run rather than performing one — but it was never
+  specific to `byoc`. Any run processing zero datasets did it: an unknown
+  `data_source`, a missing `batteries` key, a source unreachable offline.
+
+  Both failure exits now discard the folder, and only when it holds exactly the
+  scaffolding and nothing else. A single written file, expected or not, means the
+  folder stays untouched. This also makes `precheck_byoc_matching_ids` truthful:
+  it documented itself as aborting "before any output is written", which was
+  already false of the filesystem by the time it ran.
+
+- **The sdist was missing the byoc catalog input.** `MANIFEST.in` included
+  `docs/**` for `.tex`, `.yaml` and `.log` but not `.csv`, so
+  `docs/troubleshooting_catalog/_data/k65_clusters.csv` never shipped, and the
+  catalog's `byoc` entries could not be reproduced from a source distribution.
+  Now asserted by CI rather than by reading the manifest.
+
+- **`[tool.pytest.ini_options] testpaths` pointed at a folder that no longer
+  existed**, a leftover from the staging layout, so a bare `pytest` collected
+  nothing at all.
+
+- **Two pinned versions in `requirements.txt` had fallen behind** what the
+  project is verified against: `matplotlib` 3.11.0 → 3.11.1 and `pandas`
+  3.0.3 → 3.0.5.
+
 ## [0.6.4] — 2026-08-09
 
 A solved target metric is now the value actually delivered,
