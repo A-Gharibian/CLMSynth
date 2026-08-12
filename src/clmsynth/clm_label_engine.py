@@ -171,17 +171,15 @@ def build_rules(cfg: dict, cluster_ids: list[int],
 def validate_matching_ids(cfg: dict, cluster_ids: list) -> None:
     """Run only the [CLM-104]/[CLM-105] id checks against ONE dataset's cluster ids.
 
+    Deliberately tolerant of a malformed config: anything other than an id
+    problem is left for the engine's own validation to report in its usual place.
     Split out of build_rules so the pipeline can apply them ahead of time, per
     dataset, without building rules or resolving recall targets. Unlike every
     other [CLM-1xx] code, 104 and 105 are statements about a *dataset* rather
     than about the configuration, under `byoc` each CSV brings its own cluster
     ids and nothing requires them to agree, so the pipeline checks every
     dataset up front and refuses the batch as a whole rather than discovering the
-    mismatch midway through.
-
-    Deliberately tolerant of a malformed config: anything other than an id
-    problem is left for the engine's own validation to report in its usual place,
-    with its usual message.
+    mismatch mid-run.
     """
     M = cfg.get("num_classes")
     if not isinstance(M, int) or isinstance(M, bool):
@@ -252,7 +250,6 @@ def _validate_target_metric_cfg(cfg: dict, cluster_ids: list) -> None:
         # surface here as [CLM-105]/[CLM-104], not a raw KeyError/IndexError.
         sm = cfg["single_match"]
         _check_pair(sm["label"], [sm["cluster"]], cfg["num_classes"], cluster_ids, "single_match")
-
         # [CLM-130] The closed form is only exact while EVERY point of l* stays
         # inside k*: _pair_label_counts sizes l* for that assumption and there is
         # no search to correct a miss. Any setting that can emit l* elsewhere
@@ -808,8 +805,8 @@ def solve_alpha_for_target_metric(cluster_labels, coords, cfg, cluster_ids,
         return best_alpha
 
     # Only the LOW end's metric is carried: the bisection decides which side to
-    # keep by comparing mid against `lo_m`, so the high end needs its alpha and
-    # nothing else. Tracking `hi_m` too looked symmetric but was never read.
+    # keep by comparing mid against `lo_m`, so the other end needs its alpha and
+    # nothing else.
     lo, lo_m = feasible[0]
     hi = feasible[-1][0]
     for (a1, m1), (a2, m2) in itertools.pairwise(feasible):
@@ -850,7 +847,7 @@ def solve_alpha_for_target_metric(cluster_labels, coords, cfg, cluster_ids,
 def generate_clm_labels(cluster_labels: np.ndarray, coords: np.ndarray, cfg: dict, seed: int = 42) -> pd.Series:
     """Generates one synthetic label column for an existing clustering.
 
-    The public entry point of the engine
+    The entry point of the engine
 
     `coords` may be None/empty only for labels-only configs; any spatial
     placement (centroid_dependence, or competing_noise favoring
@@ -921,7 +918,7 @@ def generate_clm_labels(cluster_labels: np.ndarray, coords: np.ndarray, cfg: dic
     # same seed rather than continuing the one above. Two reasons, one of them a
     # defect: resolve_label_counts consumes draws for a dirichlet skew and not
     # for any other rule, so a shared stream reaches allocation in a state that
-    # depends on which skew rule was chosen. More importantly, the target-metric
+    # depends on which skew rule was chosen. The target-metric
     # probes cannot reproduce that state, so the labeling that was scored and the
     # labeling that was written came out different, [CLM-309]. With both
     # starting from default_rng(seed), the winning probe IS the delivered result.

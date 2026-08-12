@@ -48,26 +48,15 @@ def plot_feature_scatter(
         subtitle: str | None = None,
         info_text: str | None = None
 ) -> bool:
-    """
-    Creates a scatter plot to visualize feature relationships.
+    """Renders a scatter of two features, optionally colored by `hue_col`, to
+    `output_path` (or shows it interactively when the path is omitted).
 
-    Args:
-        df: The pandas DataFrame containing the data.
-        x_col: Name of the column for the X axis.
-        y_col: Name of the column for the Y axis.
-        hue_col: (Optional) Name of the column to color-code the points (e.g., class labels).
-        output_path: (Optional) Filepath to save the plot (e.g., 'scatter.png').
-        title: (Optional) Custom title for the plot.
-        subtitle: (Optional) Smaller gray line under the title (e.g., MCC/ARI scores).
-        info_text: (Optional) Monospace annotation box in the right margin
-            (used for the CLM config summary).
-
-    Returns:
-        True if the plot was rendered and saved, False otherwise. The CSV/label
-        output is the pipeline's actual deliverable; plotting is best-effort, so
-        callers should log a plot failure, not treat it as a dataset failure.
+    `subtitle` is the smaller gray line under the title (the MCC/ARI scores);
+    `info_text` is the monospace CLM-config box in the right margin. Returns True
+    on success and False on any failure: plotting is best-effort, since the
+    CSV/labels are the pipeline's real deliverable, so callers log a plot failure
+    rather than treating it as a dataset failure.
     """
-    # Guard clause
     if df is None or df.empty:
         log.warning("Empty DataFrame provided. Skipping plot generation.")
         return False
@@ -77,7 +66,6 @@ def plot_feature_scatter(
 
     log.info(f"Generating scatter plot for {x_col} vs {y_col}...")
 
-    # Set the plot theme
     sns.set_theme(style="whitegrid", palette="muted")
     fig, ax = plt.subplots(figsize=(9, 6))
 
@@ -89,7 +77,6 @@ def plot_feature_scatter(
             order = sorted(df[hue_col].dropna().unique())
             plot_df[hue_col] = pd.Categorical(df[hue_col], categories=order, ordered=True)
 
-        # Generate the scatter plot
         sns.scatterplot(
             data=plot_df,
             x=x_col,
@@ -132,7 +119,6 @@ def plot_feature_scatter(
                     bbox={'boxstyle': 'round', 'facecolor': '#f7f7f7',
                           'edgecolor': '#cccccc'})
 
-        # Save or Show
         if output_path:
             path = Path(output_path)
             path.parent.mkdir(parents=True, exist_ok=True)

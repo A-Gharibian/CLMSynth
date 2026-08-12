@@ -6,7 +6,6 @@ edges of its inputs and duplicates.
 Runs against the engine and the BYOC loader in-process. No network, no optional
 dependencies; the only filesystem use is CSV fixtures written to pytest's
 `tmp_path`.
-
 """
 
 import logging

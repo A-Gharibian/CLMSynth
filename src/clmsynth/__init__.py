@@ -12,10 +12,10 @@ from .metrics import (
     clustering_ari,
     clustering_mcc,
     clustering_mcc_pair,
-    evaluate_cluster_label_matching,
+    # evaluate_cluster_label_matching,
 )
 
-__version__ = "0.6.6"
+__version__ = "0.6.7"
 
 __all__ = [
     "DatasetContext",
@@ -25,7 +25,7 @@ __all__ = [
     "clustering_ari",
     "clustering_mcc",
     "clustering_mcc_pair",
-    "evaluate_cluster_label_matching",
+    # "evaluate_cluster_label_matching",
     "generate_additional_labels",
     "generate_clm_labels",
 ]

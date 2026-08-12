@@ -4,9 +4,7 @@ name: CI
 # the repository's default token scope, which can include write access it never
 # uses. These jobs check out the repository and install Python: `contents: read`
 # is the whole requirement. Deliberately NOT the `pull-requests: write` from the
-# generic example -- nothing here comments on a PR, cuts a release or pushes.
-# Declared at the top level so it is the default for every job, and any future
-# job needing more has to say so where it can be seen.
+# generic example.
 permissions:
   contents: read
 
@@ -17,15 +15,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# A second push to the same ref cancels the run still in flight. Every job here is
-# a pure check with no external effect, so a superseded run has nothing worth
-# finishing -- the state being judged has already been replaced.
-#
-# Reading the result: a cancelled run reports as *cancelled*, not as failed, and
-# renders grey. Jobs that finished before the cancellation keep their own green
-# tick, so a grey run whose jobs are green means "superseded", not "broken". Open
-# the run and read the job list rather than the run icon when two pushes land
-# close together.
+# A second push to the same ref cancels the run still in flight.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -56,8 +46,7 @@ jobs:
           cache: pip
 
       # Installs the package, so the suite imports the INSTALLED clmsynth rather
-      # than a copy on sys.path. That is the point of the src layout: a stale
-      # working tree cannot shadow the thing under test.
+      # than a copy on sys.path.
       - name: Install the package and the test extra
         run: pip install -e ".[test]"
 
@@ -67,16 +56,11 @@ jobs:
       # No path argument: [tool.pytest.ini_options] testpaths points at tests/.
       # Passing one here would mean the config and CI could disagree about what
       # the suite is.
-      #
-      # The suite needs no network and no optional dependency -- clustbench
-      # fetches are patched, and every case runs against the offline
-      # fabricated_data source or the engine directly.
       - name: Run the test suite
         run: pytest -q
 
   # --------------------------------------------------------------------------
-  # Lint, typing and security analysis. One interpreter is enough: these read
-  # the source, they do not execute it.
+  # Lint, typing and security analysis.
   # --------------------------------------------------------------------------
   static-analysis:
     name: Lint, typing, security
@@ -98,10 +82,7 @@ jobs:
         run: pip install -e ".[dev]"
 
       # Each of the three is gating as of 0.6.5, and each was brought to zero
-      # findings before it was turned on -- the exemptions are recorded, with
-      # reasons, in pyproject.toml's [tool.ruff.lint] and [tool.bandit]. A gate
-      # switched on over a non-zero baseline is one people learn to ignore.
-      #
+      # findings before it was turned on.
       # `continue-on-error` is deliberately NOT set: these are gates.
       - name: Lint (ruff)
         run: ruff check src/ tests/
@@ -117,8 +98,7 @@ jobs:
         run: bandit -c pyproject.toml -r src/clmsynth -q
 
   # --------------------------------------------------------------------------
-  # Release hygiene: the pre-flight checks that were performed by hand until
-  # 0.6.5, and that 1.0's publish workflow will bind to the tag.
+  # Release hygiene
   # --------------------------------------------------------------------------
   packaging:
     name: Build and metadata
@@ -140,15 +120,12 @@ jobs:
         run: python -m build
 
       # Catches the metadata faults that are invisible until an upload is
-      # rejected -- a malformed README, a bad classifier, a missing license
-      # field. Cheap here, expensive at the PyPI upload 1.0 plans for.
+      # rejected.
       - name: Check the built artifacts
         run: twine check dist/*
 
       # MANIFEST.in claims the sdist carries the manual and the full
-      # troubleshooting catalog. Asserted by unpacking the artifact rather than
-      # by reading the manifest, because the manifest is the thing that can be
-      # wrong.
+      # troubleshooting catalog.
       - name: The sdist contains what MANIFEST.in promises
         run: |
           python - <<'PY'
@@ -190,8 +167,7 @@ jobs:
           PY
 
       # Four declarations of the version have to agree: three in metadata and
-      # one per shipped document. They are kept in step by hand today, which is
-      # exactly the kind of thing that is remembered until once it is not.
+      # one per shipped document.
       - name: Version agrees across every declaration
         run: |
           python - <<'PY'

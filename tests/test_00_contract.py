@@ -17,6 +17,7 @@ dependency.
 """
 
 import logging
+from typing import Any
 
 import numpy as np
 import pytest
@@ -135,7 +136,7 @@ def bijection(M, recall=0.8, **extra):
 
 def cases():
     """(name, geometry_key, cfg) triples spanning the valid configuration space."""
-    out = []
+    out: list[Any] = []
 
     # -- matching modes -----------------------------------------------------
     out.append(("perfect", "equal_4x200",

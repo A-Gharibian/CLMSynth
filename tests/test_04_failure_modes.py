@@ -198,9 +198,6 @@ def test_path_shaped_dataset_names_are_refused(tmp_path, monkeypatch, caplog, na
     reaches outside both configured folders. The registry sources filter names
     against a known list and cannot carry one of these; byoc trusts the config
     verbatim, which is the only route in.
-
-    This is not hypothetical hygiene: configs are shared artifacts here, so
-    reproducing published results means running a YAML you did not write.
     """
     monkeypatch.setattr(clmsynth.main, "plot_feature_scatter", lambda *a, **k: True)
 

@@ -116,11 +116,11 @@ def resolved_for_report(path_value) -> str:
 
     Relative paths are the interesting case: `output_dir: OUTPUT` means
     something different depending on the working directory a job started in,
-    which is exactly the thing that is hard to reconstruct afterwards from a
+    which is exactly the thing that is hard to reconstruct afterward from a
     cluster's captured stdout.
 
     `resolve()` does not require the path to exist, but it can still fail on a
-    malformed one -- embedded nulls, an over-long Windows path, a dead network
+    malformed one, embedded nulls, an over-long Windows path, a dead network
     mount. Falling back to the raw value keeps this a report: a line that
     describes where a run will write must never be the reason it does not.
     """
@@ -140,8 +140,8 @@ def _is_plain_name(name) -> bool:
     safe by construction; byoc trusts the config's list verbatim, which is the
     only place this can bite.
 
-    This enforces a contract the README already states -- byoc datasets are file
-    *stems*, not paths -- rather than adding a new restriction. It matters because
+    This enforces a contract the README already states, byoc datasets are file
+    *stems*, not paths, rather than adding a new restriction. It matters because
     a config is a shareable artifact here: reproducing someone's results means
     running a YAML you did not write.
 
@@ -179,8 +179,6 @@ def _byoc_cluster_ids(input_dir, dataset: str, cluster_column: str):
     """The cheapest possible peek at one BYOC dataset: a single column of one CSV.
 
     Returns the distinct cluster ids, or None when the file cannot be read at
-    all -- a missing or malformed CSV is `byoc_source`'s to report, per dataset,
-    with a message that names the actual problem.
     """
     path = (Path(input_dir) / f"{dataset}.csv") if input_dir else Path(f"{dataset}.csv")
     try:
@@ -197,8 +195,7 @@ def precheck_byoc_matching_ids(jobs, fetch_kwargs: dict, clm_config: dict | None
     ids, and under `byoc` every CSV brings its own. Discovering a mismatch
     mid-loop used to abort the whole run, discarding both the datasets already
     written and the ones that would have succeeded. Checking every CSV up front
-    -- one column each, no features parsed -- means the run either starts knowing
-    the ids line up or refuses before producing a single output file.
+    means the run either starts knowing the ids line up or refuses before producing a single output file.
 
     Raises the first offending dataset's coded error, after logging every one of
     them, so a batch with several mismatches is fixed in one pass rather than
@@ -394,7 +391,7 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
             # the config's ids against THIS dataset's cluster ids, so a failure says
             # nothing about the next dataset, whose ids may differ. Aborting on them
             # discarded datasets that would have succeeded. BYOC never reaches this
-            # branch -- its whole batch is checked before the loop starts.
+            # branch.
             if code in (104, 105):
                 log.error(f"Skipping {battery}/{dataset}: {e}")
                 continue
@@ -496,9 +493,7 @@ def main() -> None:
     # configuration value, and a configuration is a shareable artifact (see
     # SECURITY.md), so the folder a run writes into is not necessarily one the
     # person running it chose. Reporting rather than restricting: a destination
-    # outside the working directory is legitimate -- scratch space on a cluster,
-    # another volume, a path a pipeline assembled -- so the answer to "somewhere
-    # unexpected" is to make it impossible to miss, not to refuse it.
+    # outside the working directory is legitimate.
     log.info(f"Output directory: '{resolved_for_report(base_dir)}'.")
     run_dir = build_run_dir(base_dir, SOURCE_DISPLAY.get(data_source, data_source))
     csv_dir = run_dir / "csv"

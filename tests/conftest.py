@@ -1,14 +1,4 @@
 """Shared setup for the whole suite.
-
-Two things live here because three modules each had their own copy, and a
-divergence between copies would be invisible until one of them started
-rendering real plots on a headless runner.
-
-Deliberately NOT here: an autouse plot patch. `04_failure_modes` exercises
-plot *failure* on purpose, so a suite-wide patch would quietly defeat the tests
-that matter most about plotting. Modules that want plots suppressed opt in with
-their own one-line autouse fixture delegating to `no_plots` below, which keeps
-that choice visible in the module that makes it.
 """
 
 import matplotlib

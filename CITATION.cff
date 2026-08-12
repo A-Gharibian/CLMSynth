@@ -27,8 +27,8 @@ authors:
     affiliation: "VSB - Technical University of Ostrava"
     orcid: "https://orcid.org/0000-0002-7219-1008"
 
-version: 0.6.6
-date-released: 2026-08-11
+version: 0.6.7
+date-released: 2026-08-12
 license: MIT
 repository-code: "https://github.com/A-Gharibian/CLMSynth"
 doi: 10.5281/zenodo.21751081

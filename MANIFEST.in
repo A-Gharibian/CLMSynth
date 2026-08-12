@@ -14,7 +14,6 @@ include requirements.txt
 include environment.yml
 
 # Example / starter configs referenced by the README quick-start
-include test_data_config.yaml
 include test_data_config_offline.yaml
 include upstream_payload.yaml
 

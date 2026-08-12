@@ -14,6 +14,14 @@ from typing import Any
 import yaml
 
 from .dataset_sources import SOURCE_DATASETS, SOURCE_METADATA, is_heavy
+from .questions import SCHEMA
+
+# Windows' MAX_PATH. Duplicated here on purpose rather than imported from
+# visualization.py: that module pulls matplotlib and seaborn, and importing the
+# constant would drag both into this module's import graph, and therefore into
+# any help command built on the same schema. test_07_text_wizard asserts neither
+# is imported. Keep the value in step with visualization._MAX_PATH by hand.
+_MAX_PATH = 260
 
 # --------------------------------------------------------------------------- #
 # Input helpers: each explains, shows a [default], and re-asks on bad input.
@@ -40,8 +48,8 @@ def ask_str(prompt, default=None, explain=None) -> str:
         print("    (a value is required)")
 
 
-def ask_int(prompt, default=None, minv=None, explain=None) -> int:
-    """Asks for a whole number, optionally bounded below by `minv`."""
+def ask_int(prompt, default=None, minv=None, maxv=None, explain=None) -> int:
+    """Asks for a whole number, optionally bounded by `minv` and/or `maxv`."""
     _explain(explain)
     while True:
         v = _read(prompt, default)
@@ -53,11 +61,16 @@ def ask_int(prompt, default=None, minv=None, explain=None) -> int:
         if minv is not None and i < minv:
             print(f"    (must be at least {minv})")
             continue
+        if maxv is not None and i > maxv:
+            print(f"    (must be at most {maxv})")
+            continue
         return i
 
 
-def ask_float(prompt, default=None, lo=None, hi=None, explain=None) -> float:
-    """Asks for a number, optionally bounded to [lo, hi]."""
+def ask_float(prompt, default=None, lo=None, hi=None, explain=None, lo_strict=False) -> float:
+    """Asks for a number, optionally bounded to [lo, hi]. With `lo_strict` the
+    lower bound is exclusive (value must be strictly greater than `lo`), which is
+    what the engine wants for a dirichlet `alpha` (exactly 0 divides by zero)."""
     _explain(explain)
     while True:
         v = _read(prompt, default)
@@ -66,7 +79,8 @@ def ask_float(prompt, default=None, lo=None, hi=None, explain=None) -> float:
         except ValueError:
             print("    (enter a number)")
             continue
-        if (lo is not None and f < lo) or (hi is not None and f > hi):
+        below = lo is not None and (f <= lo if lo_strict else f < lo)
+        if below or (hi is not None and f > hi):
             print(f"    (must be between {lo} and {hi})")
             continue
         return f
@@ -154,6 +168,82 @@ def ask_floats(prompt, explain=None) -> list[float]:
             print("    (enter numbers separated by commas)")
 
 
+def ask_from(key, **override):
+    """Drives the schema question named `key` through the matching prompt helper.
+
+    Prompt, explain text, default, bounds and choices come from `questions.SCHEMA`;
+    the wizard keeps the control flow. `override` supplies the runtime-dependent
+    bits a static schema cannot carry, a formatted `prompt`, a `default` computed
+    from the data, or a `maxv`/`hi` that depends on M.
+    """
+    q = SCHEMA[key]
+    prompt = override.get("prompt", q.prompt)
+    default = override.get("default", q.default)
+    explain = override.get("explain", q.explain)
+    if q.kind == "str":
+        return ask_str(prompt, default, explain=explain)
+    if q.kind == "int":
+        return ask_int(prompt, default, minv=override.get("minv", q.lo),
+                       maxv=override.get("maxv", q.hi), explain=explain)
+    if q.kind == "float":
+        return ask_float(prompt, default, lo=override.get("lo", q.lo),
+                         hi=override.get("hi", q.hi), explain=explain, lo_strict=q.lo_strict)
+    if q.kind == "bool":
+        return ask_bool(prompt, default, explain=explain)
+    if q.kind == "choice":
+        return ask_choice(prompt, q.choices, default, explain=explain)
+    if q.kind == "int_list":
+        return ask_ints(prompt, explain=explain)
+    if q.kind == "float_list":
+        return ask_floats(prompt, explain=explain)
+    if q.kind == "id":
+        return ask_cluster_id(prompt, explain=explain)
+    if q.kind == "ids":
+        return ask_cluster_ids(prompt, explain=explain)
+    raise ValueError(f"unknown question kind {q.kind!r} for {key!r}")  # pragma: no cover
+
+
+def _worst_case_path_len(gs, source, suite) -> int:
+    """Length of the longest file a run of this config could write:
+
+        <output_dir>/DDMMYY_<source>_HHMMSS/png/<source>__<battery>__<dataset>__Label_<n>.png
+
+    Plot names are the longest and so cross Windows' MAX_PATH first. Pure string
+    arithmetic on values already in hand, no fetch and no run, which is what keeps
+    the check inside the wizard's rule-based remit."""
+    base = len(str(Path(gs["output_dir"]).resolve()))
+    run_stem = f"DDMMYY_{source}_HHMMSS"
+    batteries = suite.get("batteries")
+    if batteries == "all" or batteries is None:
+        batteries = list(SOURCE_DATASETS.get(source, {}).keys())
+    datasets = suite.get("datasets")
+    if datasets == "all":
+        names = [d for b in batteries for d in SOURCE_DATASETS.get(source, {}).get(b, [])]
+    elif isinstance(datasets, list):
+        names = datasets
+    else:
+        names = []
+    longest_ds = max((str(n) for n in names), key=len, default="dataset")
+    longest_bat = max((str(b) for b in batteries), key=len, default="battery")
+    leaf = f"png/{source}__{longest_bat}__{longest_ds}__Label_9.png"
+    return base + 1 + len(run_stem) + 1 + len(leaf)
+
+
+def _warn_if_paths_may_be_too_long(gs, source, suite) -> None:
+    """Warns, before anything is written, if the deepest output path could pass
+    Windows' MAX_PATH. A warning, not a refusal: the path is legitimate on other
+    platforms, and on Windows with long-path support enabled."""
+    try:
+        total = _worst_case_path_len(gs, source, suite)
+    except Exception:                        # best-effort guidance, never blocks the wizard
+        return
+    if total > _MAX_PATH:
+        print(f"\n  Note: the longest file this run could write is about {total} characters,\n"
+              f"  past Windows' {_MAX_PATH}-character path limit. Plots (.png) have the longest\n"
+              "  names and would fail first, while CSV and TXT still succeed. Shorten\n"
+              "  'output_dir' or move it nearer the drive root to stay under the limit.")
+
+
 def section(title) -> None:
     """Prints a banner separating the wizard's numbered sections."""
     print("\n" + "=" * 62 + f"\n{title}\n" + "=" * 62)
@@ -180,36 +270,21 @@ def _peek_cluster_count(suite):
 def build_source():
     """Wizard section 1: choose the data source and its suite settings."""
     section("1. Data source, where the clusters come from")
-    source = ask_choice(
-        "Data source", ["clustbench", "mdcgen", "fabricated_data", "byoc"], "clustbench",
-        explain="Choose where the base clusters come from:\n"
-                "  clustbench      : real benchmark datasets downloaded online (Gagolewski suite)\n"
-                "  mdcgen          : synthetic clusters generated on the fly (needs the mdcgenpy package)\n"
-                "  fabricated_data : tiny offline example data (no internet, no extra packages)\n"
-                "  byoc            : your OWN CSV file (features + one cluster-id column)")
-    gs = {"data_source": source,
-          "output_dir": ask_str("Where to save results (folder)", "OUTPUT",
-                                 explain="Where results go. Usually just press Enter to keep 'OUTPUT';\n"
-                                         "each run still gets its own timestamped subfolder inside it.\n"
-                                         "(Pick a plain folder name, not the same name as a file.)")}
+    source = ask_from("global_settings.data_source")
+    gs = {"data_source": source, "output_dir": ask_from("global_settings.output_dir")}
     suite = _byoc_suite() if source == "byoc" else _registry_suite(source)
+    _warn_if_paths_may_be_too_long(gs, source, suite)
     known_k = _peek_cluster_count(suite) if source == "byoc" else None
     return source, gs, suite, known_k
 
 
 def _byoc_suite():
-    input_dir = ask_str("Folder that holds your CSV file(s)", "INPUT",
-                        explain="Bring-your-own-clusters: point at your CSV(s).")
+    input_dir = ask_from("byoc_suite.input_dir")
     raw = input("  CSV file name(s) WITHOUT '.csv', comma-separated: ").strip()
     datasets = [s.strip() for s in raw.split(",") if s.strip()] or ["my_clusters"]
-    cluster_column = ask_str("Name of the single cluster-id column", "cluster",
-                             explain="Exactly ONE column holds the cluster id of each row.\n"
-                                     "Every other numeric column is treated as a feature.")
-    standardize = ask_bool("Rescale features to 0..1 on import?", default=False,
-                           explain="Min-max standardization puts every feature on the same 0..1 scale.\n"
-                                   "Use it when your features have very different units/ranges so no\n"
-                                   "single one dominates the geometry. It rescales the saved CSV too.")
-    seed = ask_int("Random seed", 42, explain="Same seed -> same result every run.")
+    cluster_column = ask_from("byoc_suite.cluster_column")
+    standardize = ask_from("byoc_suite.standardize")
+    seed = ask_from("byoc_suite.seed")
     return {"batteries": ["local"], "input_dir": input_dir, "datasets": datasets,
             "cluster_column": cluster_column, "standardize": standardize, "seed": seed}
 
@@ -255,7 +330,7 @@ def _registry_suite(source):
             elif tok in ds:
                 datasets.append(tok)
         datasets = datasets or "all"
-    seed = ask_int("Random seed", 42, explain="Used by mdcgen/fabricated_data; ignored by clustbench.")
+    seed = ask_from("registry_suite.seed")
     return {"batteries": [battery], "datasets": datasets, "seed": seed}
 
 
@@ -266,9 +341,7 @@ def _registry_suite(source):
 def build_label_generation(source) -> dict[str, Any]:
     """Wizard section 2: label count, source labeling, and seed."""
     section("2. Labels, how many and against which clusters")
-    n_labels = ask_int("How many synthetic labels to generate", 1, minv=1,
-                       explain="Each makes one Label_0, Label_1, ... column (a different random\n"
-                               "seed each), so you can compare several labellings of the same data.")
+    n_labels = ask_from("label_generation.n_labels")
     if source == "byoc":
         # byoc always stores your single cluster column internally as 'labels0',
         # so there is nothing to pick here, asking again only invites the
@@ -276,10 +349,8 @@ def build_label_generation(source) -> dict[str, Any]:
         source_labeling = "labels0"
         print("\n  (Your cluster column is the ground truth; nothing more to choose here.)")
     else:
-        source_labeling = ask_str("Which ground-truth labeling to match", "labels0",
-                                  explain="Most datasets have 'labels0'. Leave as-is unless you "
-                                          "know there are more (e.g. 'labels1').")
-    seed = ask_int("Random seed for label generation", 42)
+        source_labeling = ask_from("label_generation.source_labeling")
+    seed = ask_from("label_generation.seed")
     return {"n_labels": n_labels, "source_labeling": source_labeling, "noise": 0.1, "seed": seed}
 
 
@@ -308,21 +379,8 @@ def build_clm(known_k=None) -> dict[str, Any]:
     section("3. Cluster-label matching, the core settings")
     if known_k:
         print(f"\n  (Your data has {known_k} clusters.)")
-    M = ask_int("Number of labels (M)", 3, minv=2,
-                explain="How many DIFFERENT label values to create. This is NOT the total number\n"
-                        "of labels, every datapoint always gets a label, it's how many classes\n"
-                        "they split into (e.g. 3 -> values 0, 1, 2), sized to your whole dataset.\n"
-                        "At least 2: one label for everything has no matching to measure, and\n"
-                        "some modes/skews are undefined at M=1.")
-    mode = ask_choice(
-        "Matching mode", ["perfect", "single", "random", "custom"], "custom",
-        explain="How should the new label relate to your clusters?\n"
-                "  perfect : an exact copy, one label per cluster (score MCC = 1.0).\n"
-                "            Needs M = your cluster count.\n"
-                "  single  : ONE cluster becomes one label; all other points are unrelated.\n"
-                "  random  : the label ignores the clusters completely (MCC ~ 0), a baseline.\n"
-                "  custom  : you write rules (send a share of a label into chosen clusters).\n"
-                "            Use for partial/realistic agreement, or to aim at a target score.")
+    M = ask_from("clm_label.num_classes")
+    mode = ask_from("clm_label.matching_mode")
     clm: dict[str, Any] = {"num_classes": M, "matching_mode": mode}
 
     if mode == "perfect":
@@ -337,56 +395,31 @@ def build_clm(known_k=None) -> dict[str, Any]:
 
     use_target = False
     if mode in ("single", "custom"):
-        use_target = ask_bool("Aim for a specific agreement score instead of setting it by hand?",
-                              default=False,
-                              explain="Normally YOU set how much the label matches (recall, below).\n"
-                                      "Say yes to instead name a target MCC/ARI and let the tool solve\n"
-                                      "for it. Caveat: a target can be impossible for your data (e.g.\n"
-                                      "MCC=1 with fewer labels than clusters), then it gets as close\n"
-                                      "as it can and tells you it fell short.\n"
-                                      "Note: the spillover and competing-noise choices you make later\n"
-                                      "are held fixed and still shape the recall the solver lands on.")
+        use_target = ask_from("clm_label.target_metric._enabled")
         if use_target:
-            ttype = ask_choice("Target score", ["mcc", "ari"], "mcc",
-                               explain="Both measure agreement (1 = identical, 0 = unrelated);\n"
-                                       "either is fine, mcc is the more common choice here.")
-            tm = {"type": ttype, "value": ask_float("Target value (0..1)", 0.6, lo=-1.0, hi=1.0)}
+            ttype = ask_from("clm_label.target_metric.type")
+            tm = {"type": ttype, "value": ask_from("clm_label.target_metric.value")}
             # For an MCC target in 'single' mode you can score just your one chosen
             # cluster-label pair (exact and instant) or the whole labeling (the usual
             # multiclass score, found by search).
             if ttype == "mcc" and mode == "single":
-                tm["scope"] = ask_choice(
-                    "Measure that MCC on", ["pair", "global"], "global",
-                    explain="How much of the picture should the score judge?\n"
-                            "  pair   : only your one chosen cluster and its label, each against\n"
-                            "           everything else. The tool hits this exactly and instantly.\n"
-                            "  global : the whole set of labels against all the clusters at once\n"
-                            "           (the standard multiclass MCC). Found by search; it can\n"
-                            "           fall short if the value is impossible for your data.")
+                tm["scope"] = ask_from("clm_label.target_metric.scope")
             # Asked for BOTH scopes: tolerance is the band the delivered labeling
             # is checked against afterward, not only the global solver's
             # convergence test, so the pair scope reads it too.
-            tm["tolerance"] = ask_float("How close counts as 'reached'", 0.01, lo=0.0, hi=1.0,
-                                        explain="If the finished labelling lands further than this "
-                                                "from your target,\nthe run says so rather than "
-                                                "reporting the number you asked for.")
+            tm["tolerance"] = ask_from("clm_label.target_metric.tolerance")
             clm["target_metric"] = tm
 
     if mode == "single":
         clm["single_match"] = {
-            "cluster": ask_cluster_id("Which cluster id becomes the aligned label? "
-                                      "(an id from your cluster column, e.g. 1)"),
-            "label": ask_int("Which label value (0..M-1) it becomes", 0, minv=0),
+            "cluster": ask_from("clm_label.single_match.cluster"),
+            "label": ask_from("clm_label.single_match.label"),
         }
     elif mode == "custom":
         clm["assignment_matrix"] = _build_rules(omit_recall=use_target)
         # split_rule only bites when a rule spans more than one cluster, which
         # 'single' never does, so it stays a custom-only question.
-        clm["split_rule"] = ask_choice(
-            "If a rule targets several clusters, how to split the label between them",
-            ["proportional_to_size", "equal"], "proportional_to_size",
-            explain="proportional_to_size : bigger clusters get more of the label (usual choice).\n"
-                    "equal                : each targeted cluster gets the same amount.")
+        clm["split_rule"] = ask_from("clm_label.split_rule")
 
     # Spillover applies to BOTH single and custom: either way the rules leave
     # unclaimed points behind. It used to be asked only under 'custom', so a
@@ -401,69 +434,30 @@ def build_clm(known_k=None) -> dict[str, Any]:
             print("\n  (Spillover fixed to 'proportional_to_marginal': a pair-MCC target keeps\n"
                   "   the target label entirely inside its cluster.)")
         else:
-            clm["spillover_rule"] = ask_choice(
-                "After the rules, how to fill the leftover points",
-                ["proportional_to_marginal", "uniform", "concentrated"], "proportional_to_marginal",
-                explain="Rules rarely use every point; the rest still need a label:\n"
-                        "  proportional_to_marginal : fill them so final sizes EXACTLY match your\n"
-                        "                             proportions (recommended, keeps your split).\n"
-                        "  uniform                  : spread evenly, this CHANGES your proportions.\n"
-                        "  concentrated             : dump all leftovers into one label.")
+            clm["spillover_rule"] = ask_from("clm_label.spillover_rule")
             if clm["spillover_rule"] == "concentrated":
-                clm["concentrated_labels"] = ask_ints(
-                    "Which label value(s) should absorb the leftovers",
-                    explain="All leftover points go to these labels. Leave one value for the\n"
-                            "usual case; the default without this is the single largest label.")
+                clm["concentrated_labels"] = ask_from("clm_label.concentrated_labels")
 
-    if mode in ("single", "custom") and ask_bool(
-            "Give one cluster's leftover points a specific competing label (structured noise)?",
-            default=False,
-            explain="Optional 'structured noise': points NOT claimed by your rules normally get\n"
-                    "filler labels from the spillover rule. This instead forces a share of ONE\n"
-                    "cluster's leftover points to a single competing label, placed at that\n"
-                    "cluster's edge (or center). Consequences to be aware of:\n"
-                    "  - it BYPASSES your proportions: final label sizes will no longer match\n"
-                    "    them (same caveat as the uniform/concentrated spillover rules);\n"
-                    "  - it CHANGES the agreement score: structured noise scores differently\n"
-                    "    from random noise, comparing the two is exactly what it is for;\n"
-                    "  - it only shapes points not already claimed by the rules above."):
+    if mode in ("single", "custom") and ask_from("clm_label.competing_noise._enabled"):
         entries: list[dict[str, Any]] = []
         while True:
             print(f"\n  Competing-noise entry {len(entries) + 1}:")
             entries.append({
-                "cluster": ask_cluster_id("  which cluster id gets the competing label"),
-                "label": ask_int("    which label value (0..M-1) competes there", 0, minv=0),
-                "share": ask_float("    share of that cluster's LEFTOVER points to convert (0..1)",
-                                    1.0, lo=0.0, hi=1.0),
-                "favors": ask_choice("    where the competing label sits in the cluster",
-                                      ["boundary", "core", "random"], "boundary",
-                                      explain="boundary : the cluster's rim (the usual 'hard case').\n"
-                                              "core     : the cluster's center.\n"
-                                              "random   : anywhere in the cluster."),
+                "cluster": ask_from("clm_label.competing_noise.cluster"),
+                "label": ask_from("clm_label.competing_noise.label"),
+                "share": ask_from("clm_label.competing_noise.share"),
+                "favors": ask_from("clm_label.competing_noise.favors"),
             })
-            if not ask_bool("  Add another competing-noise entry?", default=False):
+            if not ask_from("clm_label.competing_noise._add_another"):
                 break
         clm["competing_noise"] = entries
 
-    if mode != "random" and ask_bool(
-            "Control WHERE inside each cluster the labelled points sit (center vs edge)?",
-            default=False,
-            explain="Optional, spatial only: choose whether the labelled points sit near the\n"
-                    "cluster CENTER (core) or its EDGE (boundary). This does NOT change the score,\n"
-                    "only which points carry the label. Useful for testing how a metric reacts\n"
-                    "to geometry."):
-        prof = ask_choice("How strongly to prefer them", ["linear", "exponential", "step"], "linear",
-                          explain="linear      : gentle, even preference from center to edge.\n"
-                                  "exponential : strong, points very near the target dominate\n"
-                                  "              (tune with 'steepness').\n"
-                                  "step        : a hard cut, take the N nearest (or farthest),\n"
-                                  "              nothing in between.")
+    if mode != "random" and ask_from("clm_label.centroid_dependence._enabled"):
+        prof = ask_from("clm_label.centroid_dependence.profile")
         cd = {"enabled": True, "profile": prof,
-              "favors": ask_choice("Put the labelled points at the", ["core", "boundary"], "core",
-                                   explain="core     : the center of each cluster.\n"
-                                           "boundary : the edge/rim of each cluster.")}
+              "favors": ask_from("clm_label.centroid_dependence.favors")}
         if prof == "exponential":
-            cd["steepness"] = ask_float("Steepness (higher = more extreme; typical 2-8)", 3.0, lo=0.0)
+            cd["steepness"] = ask_from("clm_label.centroid_dependence.steepness")
         clm["centroid_dependence"] = cd
 
     _final_check(clm)
@@ -471,57 +465,40 @@ def build_clm(known_k=None) -> dict[str, Any]:
 
 
 def _add_balance(clm, M):
-    balance = ask_choice("Label balance", ["balanced", "unbalanced"], "balanced",
-                         explain="balanced   : every label is roughly the same size.\n"
-                                 "unbalanced : some labels are bigger than others (like real data,\n"
-                                 "             where one class is often much more common).")
+    balance = ask_from("clm_label.balance")
     clm["balance"] = balance
     if balance != "unbalanced":
         return
-    if ask_bool("Type the exact sizes yourself?", default=True,
-                explain="Yes: you give the fraction for each label (they must add up to 1).\n"
-                        "No: a 'skew rule' invents an uneven split for you."):
+    if ask_from("clm_label._explicit_proportions"):
         while True:
-            props = ask_floats(f"Fraction for each of the {M} labels",
-                               explain="One number per label, adding up to 1.0. They become the label\n"
-                                       "sizes, scaled to your data (e.g. 0.5 of 6500 points = 3250).")
+            props = ask_from("clm_label.proportions", prompt=f"Fraction for each of the {M} labels")
             if len(props) == M and abs(sum(props) - 1.0) < 1e-6:
                 clm["proportions"] = props
                 return
             print(f"    (need exactly {M} numbers that add up to 1.0)")
-    rule = ask_choice("Skew rule", ["geometric", "dominant_minority", "dirichlet"], "geometric",
-                      explain="How to make the label sizes uneven:\n"
-                              "  geometric         : a smooth shrinking series (e.g. 50, 25, 12, ...).\n"
-                              "                      One 'ratio' knob, smaller ratio = steeper drop.\n"
-                              "  dominant_minority : ONE label takes a big share you choose; the rest\n"
-                              "                      split what's left equally (one common, several rare).\n"
-                              "  dirichlet         : sizes drawn at RANDOM but repeatable from the seed.\n"
-                              "                      'alpha' sets how uneven: <1 = very lopsided,\n"
-                              "                      >1 = nearly equal. Good for sampling many imbalances.")
+    rule = ask_from("clm_label.skew_rule")
     clm["skew_rule"] = rule
     if rule == "geometric":
-        clm["skew_params"] = {"ratio": ask_float("ratio (0..1; smaller = steeper drop-off)", 0.5, lo=0.0, hi=1.0)}
+        clm["skew_params"] = {"ratio": ask_from("clm_label.skew_params.ratio")}
     elif rule == "dominant_minority":
         clm["skew_params"] = {
-            "dominant_index": ask_int("which label is the big one (0..M-1)", 0, minv=0),
-            "dominant_share": ask_float("its share of all points (0..1, e.g. 0.6)", 0.6, lo=0.0, hi=1.0)}
+            "dominant_index": ask_from("clm_label.skew_params.dominant_index", maxv=M - 1),
+            "dominant_share": ask_from("clm_label.skew_params.dominant_share")}
     else:
-        clm["skew_params"] = {"alpha": ask_float("alpha (smaller = more lopsided; try 0.3 or 1.0)", 1.0, lo=0.0)}
+        clm["skew_params"] = {"alpha": ask_from("clm_label.skew_params.alpha")}
 
 
 def _build_rules(omit_recall):
     print("\n  Custom rules: each rule sends a share of ONE label into chosen cluster(s).")
-    n = ask_int("How many rules", 1, minv=1)
+    n = ask_from("clm_label.assignment_matrix._count")
     rules = []
     for i in range(n):
         print(f"\n  Rule {i + 1}:")
         rule: dict[str, Any] = {
-            "label": ask_int("    which label value (0..M-1)", 0, minv=0),
-            "clusters": ask_cluster_ids("  into which cluster id(s), comma-separated")}
+            "label": ask_from("clm_label.assignment_matrix.label"),
+            "clusters": ask_from("clm_label.assignment_matrix.clusters")}
         if not omit_recall:
-            rule["recall_target"] = ask_float(
-                "    recall_target, share of THAT label's points to put here "
-                "(1.0 = all/strong, lower = partial)", 0.8, lo=0.0, hi=1.0)
+            rule["recall_target"] = ask_from("clm_label.assignment_matrix.recall_target")
         rules.append(rule)
     return rules
 
@@ -547,7 +524,7 @@ def main() -> None:
     config = {"global_settings": gs, f"{source}_suite": suite, "label_generation": lg}
 
     section("4. Save & run")
-    out = ask_str("Save this config to (a .yaml file)", "test_data_config.yaml")
+    out = ask_from("output.path")
     if not out.lower().endswith((".yaml", ".yml")):
         out += ".yaml"                       # always a .yaml file, distinct from any output folder
     if Path(out).resolve() == Path(gs["output_dir"]).resolve():
@@ -555,7 +532,7 @@ def main() -> None:
     Path(out).write_text(yaml.dump(config, sort_keys=False, default_flow_style=False), encoding="utf-8")
     print(f"\n  Wrote '{out}'.")
     print(f"  Run it any time with:  python -m clmsynth.main {out}")
-    if ask_bool("Run the pipeline now?", default=True):
+    if ask_from("run.now"):
         # check=False, deliberately: the pipeline reports its own failures with a
         # coded message, and a CalledProcessError traceback on top of that would
         # bury it. But the exit code was previously discarded entirely, so a run

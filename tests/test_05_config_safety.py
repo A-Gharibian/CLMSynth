@@ -120,7 +120,7 @@ def test_a_configured_path_is_reported_as_an_absolute_path(tmp_path, monkeypatch
     """`output_dir: OUTPUT` means different folders in different working directories.
 
     Reporting the resolved form is what makes a captured stdout from a cluster
-    job or a pipeline step reconstructable afterwards, and what stops a borrowed
+    job or a pipeline step reconstructable afterward, and what stops a borrowed
     configuration from writing somewhere unremarked.
 
     Deliberately a report and not a restriction. `output_dir` is *supposed* to be

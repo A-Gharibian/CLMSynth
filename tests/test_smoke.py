@@ -145,10 +145,6 @@ def test_public_api_is_importable():
 
 def test_pipeline_produces_expected_csv(tmp_path):
     """Run the offline source end to end and check the written CSV.
-
-    The MCC assertion is the one that matters: it is the whole CLM contract in
-    a single number, the label's agreement with the clusters is the value the
-    config asked for, not whatever fell out of the allocation.
     """
     csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
     for d in (csv_dir, png_dir, txt_dir):
@@ -193,15 +189,6 @@ def test_rendered_config_runs(tmp_path):
 
         python -m clmsynth.generate_config    # payload -> config
         python -m clmsynth.main               # config  -> dataset
-
-    The renderer and the engine are otherwise tested apart, so nothing else
-    checks that what one writes the other accepts. A config that renders
-    cleanly but does not run is a broken quick start, and it is the first thing
-    a new user does.
-
-    The payload is built here rather than read from `upstream_payload.yaml`, so
-    the gate stays independent of a file anyone may edit, the same reason the
-    config above is a dict.
     """
     rendered = tmp_path / "rendered_config.yaml"
     # dict(): the module-level payload is shared, and a renderer that mutated

@@ -274,15 +274,14 @@ def test_configure_cli_logging_is_idempotent(monkeypatch):
     """Two calls must not stack two filters.
 
     A second SingleLineFilter would escape the backslash the first one wrote,
-    turning a neutralised newline into a doubled escape, and growing on every
+    turning a neutralized newline into a doubled escape, and growing on every
     further call. The console scripts each call this once today, but nothing
     stops a caller driving two of them in one process.
 
     The root logger's handler list is swapped for a private one first. Calling
     the real thing against the session's own handlers would attach the filter to
     pytest's capture handler and leave it there for every test that ran
-    afterwards -- a gate that quietly rewrites other tests' captured output is
-    worse than no gate.
+    afterward.
     """
     probe = logging.NullHandler()
     monkeypatch.setattr(logging.getLogger(), "handlers", [probe])

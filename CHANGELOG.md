@@ -5,6 +5,62 @@ All notable changes to CLMSynth are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [0.6.7] — 2026-08-12
+
+**The wizard, in isolation.**
+
+Scope is one file plus a sibling schema module: `config_wizard.py` and the new
+`questions.py`. Nothing else changes, and **program capability does not**:
+nothing here lets CLMSynth produce a labeling it could not produce before, which
+is what keeps a wizard rewrite a patch release.
+The wizard's guided path already mitigates several uncoded paths at the config
+layer, as of 0.6.1: `num_classes` is floored at 2 (closing the `M=1`
+`ZeroDivisionError` and the `M=1` single-mode rejection), and `scope: pair` pins
+`proportional_to_marginal` spillover (closing a `[CLM-130]` path). Those are
+guards in `config_wizard.py` only. Handwritten and library configs bypass them
+entirely, which is why the engine still needs its own diagnostics regardless of
+what this release does.
+The reusable half is not the wizard but the **question schema**. A future
+in-package `help` command will surface the same `explain=` text without asking
+anything, so the questions move into `questions.py`.
+
+### Added
+
+- **A declarative question schema** (`questions.py`), one `Question` per prompt
+  carrying its wording, help text, default, range, choices and a `visible_when`
+  predicate. Making the flow data rather than control flow makes it reorderable,
+  testable without driving stdin, and reusable by the upcoming `help` command.
+
+  **Question ranges belong in the schema.** The engine's `[CLM-131]` guard exists
+  because `skew_params` values did not crash but *returned*: a negative `ratio`,
+  and `dominant_share`/`dominant_index` out of range, produced label counts that
+  still summed to `N`, so largest-remainder rounding was satisfied and nothing
+  downstream objected. A schema entry carrying a range makes those un-enterable at
+  the point of asking, which is arithmetic on values already in hand. It is the
+  same move as the existing `num_classes` floor of 2, generalized.
+
+- **A wizard-only floor on a target metric.** MCC is defined on
+  `[-1, 1]`, and a negative *target* is possible, but the promise of the program
+  is not to solve for one. So the wizard floors the target at
+  `0.0` while the engine is **left exactly as it is**.
+
+- **A path-length warning where `output_dir` is asked for.** Plot writes fail on
+  Windows past the 260-character `MAX_PATH` limit; the engine names that cause in
+  its failure message as of 0.6.4, but only after a run has already produced
+  partial output. The wizard knows the intended paths before anything is written,
+  and a string-length check is a rule, so the warning comes first. The `MAX_PATH`
+  literal is duplicated rather than imported from `visualization.py`, which pulls
+  matplotlib and seaborn — importing it would drag both into the wizard's (and
+  the help command's) import graph, which a test forbids.
+
+### Fixed
+
+-  dirichlet `alpha` is floored *strictly* (`> 0`, matching the engine's
+  divide-by-zero guard, where the wizard previously accepted `0`), and
+  `dominant_index` gains its `0..M-1` upper cap at the point of asking.
+
+---
 ## [0.6.6] — 2026-08-11
 
 A patch release.
@@ -135,20 +191,6 @@ The test suite becomes part of the repository.
   verdict on each accepted scanner finding, including bandit's `B310`, so the
   judgments are not re-derived on every scan.
 
-### Changed
-
-- **The `[tool.bandit]` judgements are recorded in `pyproject.toml`**, with the
-  reason for each, in the same form as the `ruff` exemptions added in 0.6.4.
-  Four findings (`B101`, `B404`, `B603`, `B310`) were traced by hand and judged
-  unexploitable under this package's threat model, a local single-user CLI and
-  library with no auth boundary. `B310` in particular is revisited the moment
-  URL-scheme restriction is implemented.
-
-- **The test suite is laid out flat.** Each category was a directory containing
-  exactly one module of the same name; the directory added a level that held
-  nothing. `tests/00_contract/test_00_contract.py` is now
-  `tests/test_00_contract.py`, and `smoke_test.py` follows the `test_*` prefix
-  every other module already used.
 
 ### Fixed
 
@@ -185,6 +227,22 @@ The test suite becomes part of the repository.
 - **Two pinned versions in `requirements.txt` had fallen behind** what the
   project is verified against: `matplotlib` 3.11.0 → 3.11.1 and `pandas`
   3.0.3 → 3.0.5.
+
+### Changed
+
+- **The `[tool.bandit]` judgements are recorded in `pyproject.toml`**, with the
+  reason for each, in the same form as the `ruff` exemptions added in 0.6.4.
+  Four findings (`B101`, `B404`, `B603`, `B310`) were traced by hand and judged
+  unexploitable under this package's threat model, a local single-user CLI and
+  library with no auth boundary. `B310` in particular is revisited the moment
+  URL-scheme restriction is implemented.
+
+- **The test suite is laid out flat.** Each category was a directory containing
+  exactly one module of the same name; the directory added a level that held
+  nothing. `tests/00_contract/test_00_contract.py` is now
+  `tests/test_00_contract.py`, and `smoke_test.py` follows the `test_*` prefix
+  every other module already used.
+
 
 ## [0.6.4] — 2026-08-09
 
@@ -377,13 +435,12 @@ no features at all.
 
 ## [0.6.2] — 2026-08-02 — Public release
 
-The release accompanying the article submission. No change to the
-label-generation math; the engine behaves exactly as in 0.6.0.
+The release accompanying the article submission. the engine behaves exactly as in 0.6.0.
 
 ### Changed
 
 - Documentation revised throughout: the manual, the configuration troubleshooting
-  reference, and the README. The troubleshooting reference is now complete.
+  reference, and the README.
 
 ## [0.6.1] — 2026-08-02
 
@@ -526,6 +583,23 @@ text behave exactly as in 0.1.0.
   the method from sole ownership of the program.
 - This changelog.
 
+### Fixed
+
+- Repository URL in `pyproject.toml` corrected.
+- `[CLM-309]`'s explanation corrected in the README and the engine comment. The
+  probe and output streams differ because they are seeded differently
+  (`default_rng(probe_seed)` vs `default_rng(seed)`), not because the label-count
+  draw had advanced the run stream, that only happens under
+  `skew_rule: dirichlet`, and is now described as the secondary effect it is.
+- Stale `dummy` naming replaced with `fabricated_data` (the offline source's
+  current name) in the troubleshooting reference and `requirements.txt`.
+- Removed pointers to a `Latex/main.tex` that does not exist; the diagnostics
+  registry now correctly cites `Manual/troubleshooting.tex`. The accompanying
+  article will be linked here once published.
+- Raw BibTeX keys in the README replaced with readable prose citations.
+- Stale internal codename ("Layer1") removed from
+  `solve_alpha_for_target_metric`'s docstring.
+
 ### Changed
 
 - **`fabricated_data` cluster ids are now integers `0..K-1`**, matching
@@ -543,22 +617,6 @@ text behave exactly as in 0.1.0.
 - `dataset_sources.py` module docstring now describes all four sources
   (`byoc` was missing) and notes that the registry shape is the extension point.
 
-### Fixed
-
-- Repository URL in `pyproject.toml` corrected.
-- `[CLM-309]`'s explanation corrected in the README and the engine comment. The
-  probe and output streams differ because they are seeded differently
-  (`default_rng(probe_seed)` vs `default_rng(seed)`), not because the label-count
-  draw had advanced the run stream, that only happens under
-  `skew_rule: dirichlet`, and is now described as the secondary effect it is.
-- Stale `dummy` naming replaced with `fabricated_data` (the offline source's
-  current name) in the troubleshooting reference and `requirements.txt`.
-- Removed pointers to a `Latex/main.tex` that does not exist; the diagnostics
-  registry now correctly cites `Manual/troubleshooting.tex`. The accompanying
-  article will be linked here once published.
-- Raw BibTeX keys in the README replaced with readable prose citations.
-- Stale internal codename ("Layer1") removed from
-  `solve_alpha_for_target_metric`'s docstring.
 
 ### Removed
 

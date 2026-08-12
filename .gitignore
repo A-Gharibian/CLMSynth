@@ -2,20 +2,16 @@
 # Project-specific
 # ---------------------------------------------------------------------------
 
-# Run inputs and outputs. Every pipeline run writes a timestamped folder under
-# the configured output_dir, and INPUT/ holds the user's own CSVs for byoc.
+# Run inputs and outputs.
 INPUT/
 OUTPUT/
 Inspection/
 Article/
 .claude
 wizard_config.yaml
+ignore/
 
-# A generated snapshot, kept local until it becomes the graphical statistics
-# section of the README.
-stats.txt
-
-# PyCharm/IntelliJ inspection exports. Written to the repository ROOT by default,
+# PyCharm/IntelliJ inspection exports.
 
 .descriptions.xml
 DuplicatedCode*.xml

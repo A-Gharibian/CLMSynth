@@ -20,23 +20,23 @@ configuration, rather than measured after the execution and synthesis.
 
 ## Project layout
 
-| File                                   | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-|----------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `src/clmsynth/main.py`                 | Entry point. Reads a config YAML (path optional; defaults to `test_data_config.yaml`), runs the pipeline, and packages each run into a self-contained output folder.                                                                                                                                                                                                                                                                                                                                                      |
-| `src/clmsynth/dataset_sources.py`      | Four interchangeable data sources: `clustbench` (Gagolewski benchmark downloads), `mdcgen` (synthetic, via `mdcgenpy`), `fabricated_data` (offline fallback, no deps), and Bring your own clusters (BYOC) as a comma-delimited file.                                                                                                                                                                                                                                                                                      |
-| `src/clmsynth/fabricated_generator.py` | Engineered-feature generator with perfect-separation labels, used by the `fabricated_data` source.                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `src/clmsynth/byoc_source.py`          | Bring-your-own-clusters source: reads a user CSV (feature columns + exactly one cluster-id column), with optional min-max standardization on import.                                                                                                                                                                                                                                                                                                                                                                      |
-| `src/clmsynth/label_context.py`        | `DatasetContext`, holds features, every ground-truth labeling, and every generated label; rejects any misaligned column.                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `src/clmsynth/label_generator.py`      | Orchestrates label generation: calls the CLM engine per `n_labels`, or falls back to simple noise-flipping if no `clm_label` config is given.                                                                                                                                                                                                                                                                                                                                                                             |
-| `src/clmsynth/clm_label_engine.py`     | The CLM label-assignment math: proportions/skew, matching modes, recall targets, feasibility-checked allocation, spillover, structured competing noise, spatial (centroid) placement, and the global target-metric solver.                                                                                                                                                                                                                                                                                                |
-| `src/clmsynth/clm_errors.py`           | Diagnostics: message templates keyed by a `[CLM-###]` code (1xx `ValueError`, 15x `InfeasibleAllocationError`, 3xx warnings) plus helpers. `InfeasibleAllocationError` is defined here and re-exported from the engine.                                                                                                                                                                                                                                                                                                   |
-| `src/clmsynth/metrics.py`              | Standalone evaluation. Three external measures compare two labeling row by row without looking at the features: `clustering_mcc` (Hungarian-matched multiclass MCC / Gorodkin R_K), `clustering_mcc_pair` (the 2x2 Matthews phi of one cluster against one label, the quantity `target_metric.scope: pair` targets), and `clustering_ari` (adjusted Rand index). `evaluate_cluster_label_matching` is a **provisional, not-yet-implemented** internal-validity hook (see Known limitations); the pipeline never calls it. |
-| `src/clmsynth/visualization.py`        | Scatter-plot rendering for any two features, colored by a chosen label column, annotated with MCC/ARI and the generating config.                                                                                                                                                                                                                                                                                                                                                                                          |
-| `src/clmsynth/config_template.py`      | The YAML template string used to render a config.                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `src/clmsynth/generate_config.py`      | Renders `config_template.py` into a runnable config YAML from an upstream payload file (default `upstream_payload.yaml`).                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `upstream_payload.yaml`                | Example upstream payload: the minimal facts `generate_config.py` renders into the full config.                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `src/clmsynth/config_wizard.py`        | Interactive CLI wizard: asks and explains every option in plain language, then writes a config YAML (all sources, including `byoc`) and can launch the run.                                                                                                                                                                                                                                                                                                                                                               |
-| `test_data_config.yaml`                | The default config `main.py` reads. Generated by `generate_config.py`, or hand-edited, or passed explicitly as `python -m clmsynth.main my_config.yaml`.                                                                                                                                                                                                                                                                                                                                                                  |
+| File                                   | Role                                                                                                                                                                                                         |
+|----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `src/clmsynth/main.py`                 | Entry point, defaults to `test_data_config.yaml`.                                                                                                                                                            |
+| `src/clmsynth/dataset_sources.py`      | Online data sources: `clustbench` (Gagolewski benchmark downloads), `mdcgen` (synthetic, via `mdcgenpy`). For the two offline data sources see below.                                                        |
+| `src/clmsynth/fabricated_generator.py` | Feature generator with perfect-separation labels, used by the `fabricated_data` source.                                                                                                                      |
+| `src/clmsynth/byoc_source.py`          | Bring-your-own-clusters: imports user-provided CSV, with optional min-max standardization on import.                                                                                                         |
+| `src/clmsynth/label_context.py`        | `DatasetContext`, holds features, every ground-truth labeling, and every generated label.                                                                                                                    |
+| `src/clmsynth/label_generator.py`      | Orchestrates label generation: calls the CLM engine per `n_labels`, or falls back to simple noise-flipping if no `clm_label` config is given.                                                                |
+| `src/clmsynth/clm_label_engine.py`     | The CLM label-assignment: proportions/skew, matching modes, recall targets, allocation, spillover, competing noise, spatial placement, and the global target-metric solver.                                  |
+| `src/clmsynth/clm_errors.py`           | Diagnostics: message templates keyed by a `[CLM-###]` code (1xx `ValueError`, 15x `InfeasibleAllocationError`, 3xx warnings) plus helpers.                                                                   |
+| `src/clmsynth/metrics.py`              | Three standalone measures: `clustering_mcc` (Hungarian-matched multiclass MCC / Gorodkin R_K), `clustering_mcc_pair` (the quantity `target_metric.scope: pair`), and `clustering_ari` (adjusted Rand index). |
+| `src/clmsynth/visualization.py`        | Scatter-plot colored by a chosen label column, annotated with measured MCC/ARI and the generating config.                                                                                                    |
+| `src/clmsynth/config_template.py`      | The YAML template string used to render a config.                                                                                                                                                            |
+| `src/clmsynth/generate_config.py`      | Renders `config_template.py` into a runnable config YAML from an upstream payload file (default `upstream_payload.yaml`).                                                                                    |
+| `upstream_payload.yaml`                | Example upstream payload: the minimal facts `generate_config.py` renders into the full config.                                                                                                               |
+| `src/clmsynth/config_wizard.py`        | Interactive CLI wizard: asks and explains every option, then writes a config YAML.                                                                                                                           |
+| `src/clmsynth/questions.py`            | The wizard's `Question`s per prompt (wording, help, default, range, `visible_when`), read by `config_wizard.py`.                                                                                             |
 
 ## Install
 
@@ -77,10 +77,13 @@ pip install git+https://github.com/CN-TU/mdcgenpy    # only needed for data_sour
 
 **The wizard:** run `python -m clmsynth.config_wizard`. It asks a question for every setting, writes the config YAML,
 and can run the pipeline. Works for every source, including user-provided (`byoc`) data. No YAML editing required.
+CLMSynth is fully functional from a config file
+alone; the wizard only *creates* one, for a user who would rather answer
+questions than write YAML. Deleting `config_wizard.py` leaves a working program,
+so core never imports it and the dependency runs one way only (wizard → core), a
+property a test now pins.
 
-Or configure it yourself:
-
-1. Generate a config (edit `upstream_payload.yaml`, or pass your own payload file):
+1. How to generate a config (edit `upstream_payload.yaml`, or pass your own payload file):
    ```bash
    python -m clmsynth.generate_config                    # reads upstream_payload.yaml, writes test_data_config.yaml
    python -m clmsynth.generate_config my_payload.yaml    # or an explicit payload (and optionally an output path)
@@ -309,20 +312,21 @@ pytest
 ```
 
 No arguments: `[tool.pytest.ini_options]` in `pyproject.toml` points at `tests/`.
-266 tests run in well under a minute, and need **no network and no optional
+280 tests run in well under a minute, and need **no network and no optional
 dependency**, `clustbench` fetches are patched, and every case runs against the
 offline `fabricated_data` source or against the engine directly.
 
-| module                  | defends                                                                     |
-|-------------------------|-----------------------------------------------------------------------------|
-| `test_smoke`            | the program runs at all and produces the output it should                   |
-| `test_00_contract`      | right input produces right output, the sensitive sweep                      |
-| `test_01_logic`         | named suspicions and shipped-once bugs, the selective pins                  |
-| `test_02_edge_cases`    | the ends of the input range: nothing, one, very many, degenerate, non-ASCII |
-| `test_03_isolation`     | ownership of state: RNG, config, run folder, module registries              |
-| `test_04_failure_modes` | the pipeline degrades rather than aborts, and reports it                    |
-| `test_05_config_safety` | the program's own defenses against a configuration it did not author       |
-| `test_06_diagnostics`   | the `[CLM-###]` registry safety net, driven entirely by the catalog         |
+| module                  | defends                                                              |
+|-------------------------|----------------------------------------------------------------------|
+| `test_smoke`            | the program runs with output                                         |
+| `test_00_contract`      | right input produces right output, sensitive                         |
+| `test_01_logic`         | named suspicions and previous bugs, selective                        |
+| `test_02_edge_cases`    | input range edge cases: nothing, one, many, degenerate, non-ASCII    |
+| `test_03_isolation`     | ownership of state: RNG, config, run folder, module registries       |
+| `test_04_failure_modes` | the pipeline degrades rather than aborts, and reports it             |
+| `test_05_config_safety` | the program's own defenses against a configuration it did not author |
+| `test_06_diagnostics`   | the `[CLM-###]` registry safety net, driven entirely by the catalog  |
+| `test_07_text_wizard`   | the wizard's schema agrees with the engine                           |
 
 For the static analysis CI gates on, install the dev extra instead:
 

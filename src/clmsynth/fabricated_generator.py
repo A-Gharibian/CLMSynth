@@ -1,8 +1,7 @@
 # fabricated_generator.py
-"""Offline synthetic-feature generator backing the "fabricated_data" data source.
-
-Produces six engineered numeric features plus an optional categorical
-column.
+"""Offline synthetic-feature generator
+ the "fabricated_data" data source.
+Six numeric feature types, plus a categorical column generator.
 """
 
 import logging
@@ -31,9 +30,9 @@ def generate_faker_categories(n_samples: int, labels: list, seed: int) -> pd.Ser
     if Faker is not None:
         Faker.seed(seed)
         fake = Faker()
-        # Create a mapping of generic labels to realistic Fake categories (e.g., medical conditions or cohorts)
+        # Draw base labels first (so the class distribution is the intended one),
+        # then map each to a display string; the Faker names are cosmetic.
         group_mapping = {label: fake.company() for label in labels}
-        # Randomly assign the base labels to maintain distribution, then map to the Faker strings
         base_assignments = rng.choice(labels, size=n_samples)
         faker_assignments = [group_mapping[val] for val in base_assignments]
         return pd.Series(faker_assignments, name="Cohort_Class")
@@ -71,13 +70,11 @@ def generate_synthetic_data(
     f5 = rng.uniform(0, 100, n_samples)
     f6_raw = 50 + rng.choice([-1, 1], size=n_samples) * (f5 / 2) + rng.normal(0, 5, n_samples)
 
-    # Assemble Numeric DataFrame
     raw_df = pd.DataFrame({
         'Feature_1': f1, 'Feature_2': f2, 'Feature_3': f3, 'Feature_4': f4_raw,
         'Feature_5': f5, 'Feature_6': f6_raw
     }, index=np.arange(index_start, index_start + n_samples))
 
-    # Clean and Scale
     feature_cols = raw_df.columns
     raw_df[feature_cols] = raw_df[feature_cols].clip(0, 100)
     scaler = MinMaxScaler()
@@ -89,14 +86,6 @@ def generate_synthetic_data(
     ground_truths = config_dict.get("ground_truths", {})
 
     # labels_only: emit the reserved 'Cohort_Class' column and nothing else.
-    #
-    # The engine accepts a labels-only run -- cluster ids with no feature space at
-    # all -- because recall targets, proportions, allocation and spillover are
-    # pure counting. Until this existed no *config* could produce one, since every
-    # source emits at least one feature column, so that capability was reachable
-    # only from Python. Downstream, build_context maps 'Cohort_Class' to the
-    # ground truth and excludes it from the features, leaving the geometry
-    # genuinely empty.
     labels_only = bool(cat_config.get("enable", False) and cat_config.get("labels_only", False))
     if labels_only:
         log.warning(
@@ -113,19 +102,17 @@ def generate_synthetic_data(
     if cat_config.get("enable", False):
         labels = cat_config.get("labels", ["Class_0", "Class_1"])
 
-        # Apply Perfect Separation Ground Truth if requested
         clustering_config = ground_truths.get("class_clustering", {})
         if labels_only:
             # Drawn directly rather than through generate_faker_categories: this
             # mode must be reproducible from the seed alone, and that helper
             # substitutes Faker company names whenever Faker happens to be
-            # installed. Perfect separation is unavailable here by construction --
-            # it splits on Feature_1, and there is no Feature_1.
+            # installed.
             cat_series = pd.Series(rng.choice(labels, size=n_samples), name="Cohort_Class")
         elif clustering_config.get("enforce_perfect_separation", False):
             log.info("Applying perfect separation ground truth to categorical labels...")
-            # Example logic: Assign class purely based on the percentile of Feature_1
-            # This guarantees your pipeline's clustering algorithms will find a 1:1 match
+            # Perfect separation: class is the Feature_1 percentile bin, so a
+            # clustering algorithm recovers a 1:1 label/cluster match.
             percentiles = pd.qcut(scaled_df['Feature_1'], q=len(labels), labels=labels)
 
             if cat_config.get("use_faker", False):
@@ -140,7 +127,6 @@ def generate_synthetic_data(
 
             cat_series = pd.Series(percentiles, name=clustering_config.get("target_label", "Cohort_Class"))
         else:
-            # Generate random categories if perfect separation is not enforced
             cat_series = generate_faker_categories(n_samples, labels, seed)
 
         cat_series.index = scaled_df.index
