@@ -27,15 +27,14 @@ recursive-include docs *.log
 recursive-include docs *.csv
 
 # Planning and design notes that sit beside the source they describe.
-include src/ROADMAP.md
-# include src/engine_internals.md
+include src/engine_internals.md
 
 # Package source (normally auto-included via packages.find for a pure-Python
 # package; listed explicitly here for sdist robustness regardless of build
 # backend behavior).
 recursive-include src/clmsynth *.py
 
-# Never ship build/tooling byproducts
+# Never ship build/tooling
 global-exclude __pycache__
 global-exclude *.py[cod]
 global-exclude .DS_Store

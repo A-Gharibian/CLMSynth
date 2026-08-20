@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clmsynth"
-version = "0.6.7"
+version = "0.6.8"
 description = "Synthetic label generator with configurable cluster-label matching (CLM) against ground-truth clusters"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -44,23 +44,18 @@ dependencies = [
 [project.optional-dependencies]
 faker = ["faker"]
 # The static-analysis toolchain CI gates on, plus the stub packages mypy needs
-# to see through pandas and scipy. Unpinned on purpose: a finding that appears
-# because a tool improved is worth seeing, and the rule SET is pinned in
-# [tool.ruff.lint] below, which is what actually keeps the count stable.
+# to see through pandas and scipy. Unpinned on purpose and the rule SET is pinned in
+# [tool.ruff.lint] below.
 dev = ["pandas-stubs", "scipy-stubs", "ruff", "mypy", "bandit"]
-# pytest is a development dependency, not a runtime one: the package neither
+# pytest is a development dependency, the package neither
 # imports it nor ships the suite (MANIFEST.in prunes tests/). Declared as an
-# extra so `pip install -e ".[test]"` is the one documented way to get it, and
+# extra so `pip install -e ".[test]"` is the only documented way to get it, and
 # so CI installs the same thing a contributor does.
 test = ["pytest>=8"]
-# NOTE: two optional dependencies are deliberately NOT extras:
+# NOTE: one optional dependency is deliberately NOT an extra:
 #   * mdcgenpy is only available as a git repository, and PyPI rejects
 #     uploads whose metadata contains direct-URL dependencies. Install with:
 #         pip install git+https://github.com/CN-TU/mdcgenpy
-#   * pyivm 0.1.0 declares numpy<2.0, which would downgrade this project's
-#     numpy during dependency resolution. It runs correctly against numpy 2.x;
-#     install it with:
-#         pip install --no-deps pyivm
 
 [project.urls]
 Repository = "https://github.com/A-Gharibian/CLMSynth"
@@ -72,9 +67,6 @@ clmsynth-wizard = "clmsynth.config_wizard:main"
 
 # src-layout: the package lives at src/clmsynth/, so the import name and the
 # distribution name both remain "clmsynth", only the on-disk location changes.
-# Note this means the package must be installed (`pip install -e .`) before
-# `python -m clmsynth.main` resolves; src/ is deliberately not on sys.path, which
-# is what stops a stale working tree from shadowing the installed package.
 [tool.setuptools.packages.find]
 where = ["src"]
 
@@ -90,10 +82,9 @@ line-length = 100
 src = ["src"]
 
 [tool.ruff.lint]
-# Selected explicitly rather than inherited. Ruff's defaults widen between
+# Ruff's defaults widen between
 # releases, so an unpinned rule set means the finding count changes when the
-# tool updates rather than when the code does, which makes it useless as a
-# gate and misleading as a measurement.
+# tool updates rather than when the code does.
 select = [
     "E4", "E7", "E9",  # pycodestyle: the error subset, not style policing
     "F",               # pyflakes
@@ -105,8 +96,8 @@ select = [
     "ISC", "PIE", "RUF",
     # Pylint's error and warning subsets only. PLR is complexity metrics
     # (too-many-branches, too-many-statements) and the engine's allocation and
-    # validation functions are branchy because the problem is; a line count is
-    # not evidence of a defect. PLC0415 flags function-local imports, which are
+    # validation functions are branchy because the problem it is solving matches it.
+    # PLC0415 flags function-local imports, which are
     # deliberate here: mdcgenpy and fabricated_generator are imported inside
     # their fetchers so an optional or slow dependency is not paid for at
     # package import.
@@ -116,12 +107,9 @@ select = [
 ignore = [
     # The four fetchers and the two config writers catch broadly on purpose: a
     # dataset that cannot be fetched, generated or parsed is reported and skipped
-    # so the rest of the batch survives. Narrowing these would mean enumerating
-    # every failure mode of urllib, gzip, numpy, pandas, YAML and mdcgenpy, and
-    # turning any unlisted one into a crash mid-batch. See main.py's per-dataset
+    # so the rest of the batch survives. See main.py's per-dataset
     # error boundary for the design this serves.
     "BLE001",
-    # build_run_dir names run folders from the LOCAL wall clock, deliberately:
     # the folder name is for a human reading their own output directory, not a
     # timestamp to be compared across machines.
     "DTZ005",
@@ -132,30 +120,26 @@ ignore = [
     # so the cast is kept as a guard rather than removed as noise.
     "RUF046",
     # Rebinding a loop variable to its own normalized form (`tok = tok.strip()`,
-    # `count = min(count, len(idx_avail))`) is the intended reading here, not an
-    # accident. The alternative is a second name per loop that means the same
-    # thing.
+    # `count = min(count, len(idx_avail))`) is the intended reading here.
     "PLW2901",
 ]
 
 [tool.mypy]
-# No `python_version = "3.11"` pin: numpy's own stubs use `type` statements
-# (3.12+ syntax), so pinning 3.11 makes mypy reject its dependency's stubs
-# before it reaches this package, "Type statement is only supported in Python
+# Planned to phase out Python 3.11 in first major release, since
+# numpy's own stubs use `type` statements,
+# (3.12+ syntax), "Type statement is only supported in Python
 # 3.12 and greater", and checking stops there. Language-level 3.11 compatibility
 # is covered where it can actually be enforced: ruff's target-version, and CI
-# genuinely installing and importing on 3.11.
+# genuinely installing and importing on 3.11 (will be supported only up to release v1.0.0).
 ignore_missing_imports = true
 files = ["src/clmsynth"]
 
 [tool.bandit]
 # Read with `bandit -c pyproject.toml -r src/clmsynth`. Recorded here for the
 # same reason as the ruff exemptions above: these five findings were traced by
-# hand and judged, and a judgment that lives only in prose gets re-litigated by
-# the next person. The threat model throughout is a local single-user CLI and
-# library, no auth boundary, no multi-tenancy, no untrusted caller. Every
-# input below is supplied by the person running the program, about their own
-# machine.
+# hand and judged. The threat model throughout is a local single-user CLI and
+# library, no auth boundary, and no untrusted caller (see security.md). Every
+# input below is supplied by the user.
 #
 #   B101  Two asserts in clm_label_engine guard internal allocation invariants
 #         that no configuration can reach; they are programmer errors, not user
@@ -167,8 +151,7 @@ files = ["src/clmsynth"]
 #         a config path the wizard itself wrote; no shell, no user string
 #         reaching argv.
 #   B310  dataset_sources.urlopen takes a base_url from the config, so a file://
-#         scheme could read a local file. Judged unexploitable here: the config
-#         is authored by the person running it, who can already read their own
-#         files. Restricting the scheme is noted as optional hardening, if it
-#         is ever implemented, remove this skip and test it.
+#         scheme could read a local file. Judged unexploitable: Restricting the scheme
+#         is noted as optional hardening (v0.6.9), if it is
+#         implemented, remove this skip and test it.
 skips = ["B101", "B404", "B603", "B310"]
