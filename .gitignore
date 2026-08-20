@@ -7,7 +7,6 @@ INPUT/
 OUTPUT/
 Inspection/
 Article/
-.claude
 wizard_config.yaml
 ignore/
 
@@ -112,6 +111,6 @@ cython_debug/
 .spyproject
 .ropeproject
 tempCodeRunnerFile.py
-
+/docs/Error_Warning_Codes.md
 # PyPI configuration file
 .pypirc

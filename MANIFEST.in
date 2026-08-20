@@ -28,7 +28,7 @@ recursive-include docs *.csv
 
 # Planning and design notes that sit beside the source they describe.
 include src/ROADMAP.md
-include src/engine_internals.md
+# include src/engine_internals.md
 
 # Package source (normally auto-included via packages.find for a pure-Python
 # package; listed explicitly here for sdist robustness regardless of build
@@ -44,9 +44,6 @@ prune .venv
 prune .idea
 prune .claude
 prune Inspection
-# The suite is tracked in git as of 0.6.5 but stays out of the sdist: it is a
-# development gate, not something an installing user runs. Revisit at 1.0, when
-# the conda-forge recipe may want to run it against the built artifact.
 prune tests
 prune build
 prune dist
