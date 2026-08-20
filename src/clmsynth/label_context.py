@@ -60,8 +60,7 @@ class DatasetContext:
 
 
 def build_context(source: str, battery: str, dataset: str, df: pd.DataFrame) -> DatasetContext:
-    """Splits a fetched DataFrame, from any of the three fetchers in
-    test_cluster_generators.py, back into a DatasetContext."""
+    """Splits a fetched DataFrame, from any of the three fetchers back into a DatasetContext."""
     gt_cols = [c for c in df.columns if c.startswith("GroundTruth_")]
     feature_cols = [c for c in df.columns if c not in gt_cols and c != "Cohort_Class"]
     ground_truths = {c.replace("GroundTruth_", ""): df[c] for c in gt_cols}

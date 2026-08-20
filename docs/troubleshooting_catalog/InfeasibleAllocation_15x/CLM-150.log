@@ -2,6 +2,7 @@ $ python -m clmsynth.main InfeasibleAllocation_15x/CLM-150.yaml
 # exit code: 0
 
 INFO - Starting Test Data Orchestrator...
+INFO - Output directory: '{catalog}/_scratch/CLM-150'.
 INFO - Available 'fabricated_data' dataset batteries:
 INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
 INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.

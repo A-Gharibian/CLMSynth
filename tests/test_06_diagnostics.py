@@ -4,7 +4,7 @@
  This covers wrong input produces the right diagnostic.
 
 **This module authors no cases.** Every configuration it runs already exists
-in `docs/troubleshooting_catalog/`, written and verified by `make_catalog.py`.
+in `docs/troubleshooting_catalog/`, written and verified by `CLM_catalog_gen.py`.
 The only thing asserted here is that the expected outcome still appears. A new
 catalog entry is picked up automatically; nothing needs editing here when a
 code is added.
@@ -15,30 +15,28 @@ suite, not this module's exclusive job. A code asserted in `01_logic` or
 that no code can fall through the cracks, it is where a diagnostic with no
 home elsewhere gets one.
 
-Four bands, three mechanisms, decided by what the pipeline actually does:
+Four bands, two mechanisms, decided by what the pipeline actually does:
 
   ValueError_1xx           run_pipeline re-raises: a coded config error is
                            equally wrong for every dataset, so it aborts the
                            run rather than being swallowed per dataset.
                            Asserted on the exception and its `.code`.
-                           TWO EXCEPTIONS, [CLM-104] and [CLM-105]: they judge
-                           the DATASET's ids rather than the config, so since
-                           0.6.3 they are logged per dataset and the batch
-                           continues. See MECHANISM_OVERRIDES below.
+                           FIVE EXCEPTIONS, [CLM-102], [CLM-105], [CLM-119],
+                           [CLM-125] and [CLM-127]: they judge the DATASET's K, cluster ids or
+                           features rather than the config, so they are logged
+                           per dataset and the batch continues. See
+                           MECHANISM_OVERRIDES below.
   InfeasibleAllocation_15x per-dataset skip (another dataset's cluster sizes
                            may satisfy the same rules), logged with its code.
   Warnings_3xx             run succeeds, warning logged with its code.
-  KeyError_2xx             documentation-only band. Missing required config
-                           keys are deliberately left as raw KeyErrors with no
-                           [CLM-###] code, so these are asserted on the
-                           documented behavior instead, label generation is
-                           skipped and the run continues.
+  KeyError_2xx             per-dataset skip, like 15x. Missing required config
+                           keys are coded KeyErrors, asserted on the code:
+                           label generation is skipped and the run continues.
 
 Warnings matter more than exceptions. An exception that stops
 firing announces itself: the run crashes differently or produces nothing. A
 warning that stops firing is silent, the run completes and writes a CSV that
-looks correct while being not what was configured ([CLM-304] and
-[CLM-308] are exactly that shape).
+looks correct while being not what was configured.
 Those are the cases where a regression is invisible without this module.
 """
 
@@ -61,16 +59,16 @@ from clmsynth.clm_label_engine import generate_clm_labels, resolve_label_counts
 from clmsynth.main import run_pipeline
 
 # How each catalog band surfaces its diagnostic.
-RAISES, LOGGED, UNCODED_SKIP = "raises", "logged", "uncoded_skip"
+RAISES, LOGGED = "raises", "logged"
 BANDS = {
     "ValueError_1xx": RAISES,
     "InfeasibleAllocation_15x": LOGGED,
     "Warnings_3xx": LOGGED,
-    "KeyError_2xx": UNCODED_SKIP,
+    "KeyError_2xx": LOGGED,
 }
 
 
-MECHANISM_OVERRIDES = {104: LOGGED, 105: LOGGED}
+MECHANISM_OVERRIDES = {102: LOGGED, 105: LOGGED, 119: LOGGED, 125: LOGGED, 127: LOGGED}
 
 
 def _catalog_dir() -> Path:
@@ -151,23 +149,13 @@ def _catalog_codes() -> set:
 
 def test_every_registry_code_has_a_catalog_fixture():
     """Coverage is asserted against the registry, not against a stored checksum.
-
-    This replaces the CATALOG.sha256 fingerprint that used to guard this file.
-    The fingerprint answered "have the bytes changed", which git already answers,
-    and it had to be updated by hand on every deliberate catalog edit. It also
-    guarded less than it appeared to: a config edited so that it stops triggering
-    its code already fails `test_catalog_diagnostic_fires`, because the expected
-    code is parsed from the FILENAME and cannot drift from it.
-
-    What the fingerprint really caught was a *deleted* fixture silently shrinking
-    the parametrization. This catches that and more: a code added to the registry
-    with no fixture written for it fails here immediately, which is exactly how
-    [CLM-310] and [CLM-131] went missing unnoticed.
+    a code added to the registry
+    with no fixture written for it fails here immediately.
     """
     missing = set(CODES) - _catalog_codes() - set(NO_CATALOG_FIXTURE)
     assert not missing, (
         f"registry codes with no catalog fixture: {sorted(missing)}. "
-        "Add one with make_catalog.py, or record it in NO_CATALOG_FIXTURE with "
+        "Add one with CLM_catalog_gen.py, or record it in NO_CATALOG_FIXTURE with "
         "the reason it cannot have one."
     )
 
@@ -241,8 +229,8 @@ def test_catalog_is_present():
     would silently vanish and the suite would report all-green over nothing.
     """
     assert FIXTURES, "no catalog fixtures collected from " + str(CATALOG)
-    bands = {p.values[1] for p in FIXTURES}
-    assert bands == {RAISES, LOGGED, UNCODED_SKIP}, "a whole catalog band is missing: " + str(bands)
+    bands = {p.values[0].parent.name for p in FIXTURES}
+    assert bands == set(BANDS), "a whole catalog band is missing: " + str(bands)
 
 
 @pytest.mark.parametrize("config_path,mechanism", FIXTURES)
@@ -266,7 +254,7 @@ def test_catalog_diagnostic_fires(config_path, mechanism, tmp_path, caplog):
             input_dir = CATALOG / input_dir
         assert input_dir.is_dir(), (
             f"catalog byoc fixture points at a missing input folder: {input_dir}. "
-            "make_catalog.py generates it next to the configs; it must ship with them."
+            "CLM_catalog_gen.py generates it next to the configs; it must ship with them."
         )
         suite["input_dir"] = str(input_dir)
 
@@ -288,11 +276,7 @@ def test_catalog_diagnostic_fires(config_path, mechanism, tmp_path, caplog):
 
         run_pipeline(source, config, csv_dir, png_dir, txt_dir)
 
-    if mechanism == LOGGED:
-        assert tag in caplog.text, f"{tag} was not logged. Captured:\n{caplog.text}"
-    else:  # UNCODED_SKIP, the 2xx band carries no code, by design
-        assert "Skipping label generation" in caplog.text, \
-            f"expected a skipped labeling for the {code} KeyError band. Captured:\n{caplog.text}"
+    assert tag in caplog.text, f"{tag} was not logged. Captured:\n{caplog.text}"
 
 
 CLUSTERS = np.concatenate([np.full(400, 0), np.full(300, 1), np.full(200, 2), np.full(100, 3)])
@@ -377,12 +361,9 @@ def test_cardinality_guard():
 
 # The base payload the render-time cases below mutate via `overrides`/`drop`.
 #
-# `test_smoke.py` carries a MINIMAL_PAYLOAD with the same contents. The two are
-# deliberately independent copies, not one shared fixture: the smoke gate must
-# import nothing from another test module, and this one needs a payload it is
-# free to mutate per case. Same name on both sides so the relationship is
-# visible; a change to the payload schema fails both, so neither can drift into
-# testing less than it claims.
+# `test_smoke.py` carries a MINIMAL_PAYLOAD with the same contents: the gate must
+# import nothing from another test module, and diagnostics needs a payload it is
+# free to mutate per case.
 MINIMAL_PAYLOAD = {
     "data_source": "fabricated_data",
     "batteries": ["fabricated"], "datasets": ["baseline_4class"], "source_seed": 42,
@@ -469,11 +450,12 @@ def test_proportions_as_dict_is_still_uncoded():
                               "proportions": {"a": 0.5, "b": 0.5}}, N, np.random.default_rng(0))
 
 
-def test_assignment_matrix_missing_key_is_a_bare_error():
-    """The 2xx band: missing required keys stay raw KeyErrors, uncoded by design."""
-    with pytest.raises(KeyError):
+def test_assignment_matrix_missing_key_is_coded():
+    """[CLM-207] names the row the rule came from."""
+    with pytest.raises(KeyError) as excinfo:
         generate_clm_labels(CLUSTERS, COORDS, {
             "num_classes": 2, "balance": "balanced", "matching_mode": "custom",
             "assignment_matrix": [{"label": 0}],
             "split_rule": "equal", "spillover_rule": "proportional_to_marginal",
         }, seed=1)
+    assert "[CLM-207] assignment_matrix row 0" in str(excinfo.value)

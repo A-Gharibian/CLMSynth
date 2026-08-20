@@ -122,7 +122,7 @@ def plot_feature_scatter(
         if output_path:
             path = Path(output_path)
             path.parent.mkdir(parents=True, exist_ok=True)
-            plt.savefig(path, dpi=300)  # fixed figsize (no tight bbox) -> constant panel
+            fig.savefig(path, dpi=300)  # fixed figsize (no tight bbox) -> constant panel
             log.info(f"Plot saved successfully to: '{path}'")
         else:
             plt.show()

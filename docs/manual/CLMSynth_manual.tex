@@ -1,5 +1,5 @@
 % !CLMSynth-doc = manual
-% !CLMSynth-version = 0.6.7
+% !CLMSynth-version = 0.6.8
 % These two lines are a machine-readable marker, so the
 % file can be renamed freely, and checks the version above against the
 % package version so documentation cannot silently fall behind a release.
@@ -49,7 +49,7 @@
 }
 \lstset{style=mystyle}
 
-\title{CLMSynth v0.6.7}
+\title{CLMSynth v0.6.8}
 \author{Arootin Gharibian}
 \date{\today}
 
@@ -139,6 +139,7 @@ clm_label:
                                    #   before CLM-309/CLM-310 is raised
     max_iter: 40                   # global only, bisection budget; the pair
                                    #   scope inverts exactly and never iterates
+    probe_seed: 42                 # optional; defaults to the run seed
   competing_noise:                 # optional (single/custom): structured noise.
                                    # Converts a share of ONE cluster's UNCLAIMED
                                    # points to one competing label. Bypasses the
@@ -205,6 +206,7 @@ L = generate_clm_labels(
   \vhEntry{0.6.5}{2026-08-10}{AG}{The test suite becomes part of the repository.}
   \vhEntry{0.6.6}{2026-08-11}{AG}{A patch release}
   \vhEntry{0.6.7}{2026-08-12}{AG}{CLI-Wizard update and improvement}
+  \vhEntry{0.6.8}{2026-08-20}{AG}{Patch release, preparation for CLMSynth-GUI}
 \end{versionhistory}
 \newpage
 % \section*{License}
@@ -225,7 +227,7 @@ L = generate_clm_labels(
 
 \section*{Licenses for Third-Party Libraries}
 
-Python is distributed under the Python Software Foundation License V.2. This project relies on several open-source third-party Python libraries, including \texttt{NumPy}, \texttt{Pandas}, \texttt{SciPy}, \texttt{scikit-learn}, \texttt{Matplotlib}, \texttt{Seaborn}, and \texttt{PyYAML}. Optionally \texttt{faker}, \texttt{mdcgenpy}, and \texttt{pyivm}. These packages are distributed under their respective licenses (BSD 3-Clause, MIT, and Apache 2.0). Refer to the official documentation of each package or the project repository for full third-party licensing details.
+Python is distributed under the Python Software Foundation License V.2. This project relies on several open-source third-party Python libraries, including \texttt{NumPy}, \texttt{Pandas}, \texttt{SciPy}, \texttt{scikit-learn}, \texttt{Matplotlib}, \texttt{Seaborn}, and \texttt{PyYAML}. Optionally \texttt{faker} and \texttt{mdcgenpy}. These packages are distributed under their respective licenses (BSD 3-Clause, MIT, and Apache 2.0). Refer to the official documentation of each package or the project repository for full third-party licensing details.
 
 \section{References}
 \begin{itemize}
@@ -261,6 +263,6 @@ D1 & single (cluster 1, $M{=}2$) & fills cluster exactly; MCC $\approx 1$ & MCC 
 \label{tab:g2mg-outcomes}
 \end{table}
 
-\includepdf[pages=-]{troubleshooting.pdf}
-
+\includepdf[pages=-]{CLMSynth_configuration_troubleshooting.pdf}
+\includepdf[pages=-]{engine_decision_map_v068.pdf}
 \end{document}

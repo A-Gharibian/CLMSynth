@@ -146,15 +146,7 @@ def test_byoc_id_mismatch_is_refused_before_any_output(tmp_path, monkeypatch, ca
 
     These two codes are unlike every other coded `[CLM-1xx]`: they compare the
     configuration's ids against *each dataset's own* cluster ids, and under
-    `byoc` every CSV brings its own. Before 0.6.3 the mismatch surfaced midway
-    through the loop and aborted the run, discarding both the datasets already
-    written and the ones that would have succeeded, the scenario F3 was created
-    to fix, reintroduced for one class of code.
-
-    Now the whole batch's cluster columns are read before any work begins, so the
-    run is refused with nothing written at all, and *every* offending dataset is
-    named rather than only the first one reached. Reading one column of each CSV
-    is what makes that affordable.
+    `byoc` every CSV brings its own.
     """
     monkeypatch.setattr(clmsynth.main, "plot_feature_scatter", lambda *a, **k: True)
 
@@ -227,12 +219,14 @@ def test_non_byoc_id_mismatch_skips_only_that_dataset(tmp_path, monkeypatch):
 
     Cluster ids there are only knowable by fetching or generating the dataset,
     and doing that twice for every run to gain an early refusal is not a trade
-    worth making. So `[CLM-104]`/`[CLM-105]` are reported per dataset and the
+    worth making. So `[CLM-105]` is reported per dataset and the
     batch continues, `baseline_2class` has ids {0, 1} and cannot satisfy a rule
     naming cluster 3, while `baseline_4class` has ids 0..3 and can.
 
-    Every *other* coded `[CLM-1xx]` still aborts the run; only these two are
-    per-dataset, because only these two are statements about the data.
+    Every *other* coded `[CLM-1xx]` aborts the run unless it too is a statement
+    about the data: `[CLM-102]`, `[CLM-125]` and `[CLM-127]` judge the dataset's
+    K or its features and are per-dataset for the same reason. `[CLM-104]` is
+    not, its bound is num_classes, which no dataset can change.
     """
     monkeypatch.setattr(clmsynth.main, "plot_feature_scatter", lambda *a, **k: True)
 
@@ -339,7 +333,7 @@ def test_plot_failure_does_not_reduce_the_processed_count(tmp_path, monkeypatch)
 
 
 def test_figure_creation_failure_escapes_the_functions_own_handler(tmp_path):
-    """Finding N4, characterised rather than fixed.
+    """Finding N4, characterized rather than fixed.
 
     `fig, ax = plt.subplots(...)` executes BEFORE the function's try/except, so
     a failure there is the one plotting error that does not get the friendly
@@ -407,7 +401,7 @@ def test_the_three_exit_codes_stay_distinguishable(tmp_path, clm_label, expected
     that release created was never verified.
 
     The third case reaches exit 1 through a dataset whose only cluster cannot
-    hold label 0's budget, so labelling is skipped for every dataset and none
+    hold label 0's budget, so labeling is skipped for every dataset and none
     is written.
     """
     monkeypatch.setattr(clmsynth.main, "plot_feature_scatter", lambda *a, **k: True)
@@ -461,7 +455,7 @@ def minimal_byoc_config(input_dir, output_dir, datasets, clm_label=None):
 
     Distinct from `byoc_config` at the top of the module, which pins a
     `scope: pair` single-match because the batch-isolation tests need one
-    dataset to fail while its neighbours succeed. These tests care only about
+    dataset to fail while its neighbors succeed. These tests care only about
     whether a run produced output, so they want the plainest config that runs
     and, in one case, one that is rejected outright.
     """
@@ -621,7 +615,7 @@ def test_generate_config_exits_one_on_a_missing_payload(tmp_path, monkeypatch):
     """The other console script's failure path, alongside the pipeline's.
 
     `clmsynth-config` reads a payload file. A missing one must exit 1 with a
-    message pointing at the fix, not raise `FileNotFoundError` out of the CLI --
+    message pointing at the fix, not raise `FileNotFoundError` out of the CLI,
     it is the first command in the documented quick start, so it is the most
     likely place for a user to mistype a path.
     """
@@ -645,9 +639,6 @@ def test_context_refuses_a_misaligned_generated_label():
     and the labels. If a short or long series could be attached, every MCC and
     ARI computed from the written CSV would be comparing misaligned rows, and
     nothing downstream would notice, the file would look entirely well-formed.
-
-    This guard is the only thing enforcing that, and nothing in the suite
-    exercised it.
     """
     features = pd.DataFrame({"f1": range(10), "f2": range(10)})
     context = DatasetContext("src", "battery", features,

@@ -1,7 +1,8 @@
 $ python -m clmsynth.main ValueError_1xx/CLM-125.yaml
-# exit code: 2
+# exit code: 1
 
 INFO - Starting Test Data Orchestrator...
+INFO - Output directory: '{catalog}/_scratch/CLM-125'.
 INFO - Available 'fabricated_data' dataset batteries:
 INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
 INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
@@ -9,4 +10,6 @@ INFO - Generating offline fabricated_data dataset 'labels_only_4class' (n=800, s
 INFO - Generating synthetic data (Seed: 42)...
 WARNING - fabricated_data 'labels_only': emitting ONLY the reserved 'Cohort_Class' column, drawn uniformly, and none of the six engineered features. The result carries cluster ids and no geometry, which is exactly what the [CLM-125] guard refuses when spatial placement is also configured. Use this to exercise the labels-only path; it is not a general-purpose fabrication mode and any centroid_dependence will be rejected.
 INFO - Generated fabricated_data 'labels_only_4class': 800 rows, 0 feature(s), 1 labeling(s) (cluster ids 0..3).
-CRITICAL - Configuration error, aborting run: [CLM-125] centroid placement requires per-point feature vectors: centroid_dependence.enabled is set but coords is empty. Provide an (N, d) feature array, or disable centroid_dependence and any competing_noise favors 'core'/'boundary'.
+ERROR - Skipping fabricated/labels_only_4class: [CLM-125] centroid placement requires per-point feature vectors: centroid_dependence.enabled is set but coords is empty. Provide an (N, d) feature array, or disable centroid_dependence and any competing_noise favors 'core'/'boundary'.
+ERROR - No datasets were successfully processed.
+INFO - No output was produced, so the empty run folder '_scratch/CLM-125/{run}' was removed.

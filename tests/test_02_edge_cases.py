@@ -469,7 +469,8 @@ def test_emoji_feature_column_name_loads(tmp_path):
 
 
 def test_config_value_with_trailing_space_is_rejected():
-    """`matching_mode: "custom "` is a typo, not a synonym.
+    """
+    `matching_mode: "custom"` is a typo, not a synonym.
 
     Config values are matched exactly. Trimming them would be leniency that
     hides the mistake, and the same leniency would have to be decided for

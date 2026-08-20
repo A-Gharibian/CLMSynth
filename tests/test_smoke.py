@@ -27,15 +27,6 @@ EXPECTED_COLUMNS = [
 ]
 # Four equal clusters, four equal labels, every rule at recall 0.8: the achieved
 # agreement lands on the configured recall.
-#
-# This is NOT asserted exactly, deliberately. The measured value is exactly 0.8
-# (zero deviation) on the interpreter this was written against, so an exact
-# comparison would pass here, but the number is produced through numpy/BLAS,
-# whose results can differ in the last bits between platforms, wheel builds and
-# interpreter versions. An exact float comparison is the standard way a correct
-# engine goes red on one CI runner and nowhere else. The gate therefore allows a
-# tolerance and treats anything inside it as a hit. Tighten only with measured
-# evidence from every platform CI actually runs on.
 EXPECTED_MCC = 0.8
 MCC_TOLERANCE = 0.01
 
@@ -85,13 +76,8 @@ SMOKE_CONFIG = {
 # The upstream payload `generate_base_config` renders into a config, expressed
 # as the minimal set of facts the template needs.
 #
-# `test_06_diagnostics.py` defines a MINIMAL_PAYLOAD with the same contents, and
-# the two are deliberately independent copies rather than one shared fixture.
-# This module is the gate you run first when everything else is suspect, so it
-# takes nothing from another test module; 06 mutates its copy per case
-# (`overrides`/`drop`) to provoke render-time warnings, which this one must not
-# do. They are named alike so the relationship is visible, and they fail
-# together if the payload schema changes -- neither can weaken silently.
+# `test_06_diagnostics.py` defines a MINIMAL_PAYLOAD with the same contents; 06 mutates its copy per case
+# (`overrides`/`drop`) to provoke render-time warnings.
 MINIMAL_PAYLOAD = {
     "data_source": "fabricated_data",
     "batteries": ["fabricated"], "datasets": ["baseline_4class"], "source_seed": 42,

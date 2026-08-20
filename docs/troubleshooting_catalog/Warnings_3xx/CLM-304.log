@@ -2,6 +2,7 @@ $ python -m clmsynth.main Warnings_3xx/CLM-304.yaml
 # exit code: 0
 
 INFO - Starting Test Data Orchestrator...
+INFO - Output directory: '{catalog}/_scratch/CLM-304'.
 INFO - Available 'fabricated_data' dataset batteries:
 INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
 INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
@@ -9,7 +10,7 @@ INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed
 INFO - Generating synthetic data (Seed: 42)...
 INFO - Applying perfect separation ground truth to categorical labels...
 INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
-WARNING - [CLM-304] competing_noise active: achieved label counts will deviate from the target proportions (structured noise bypasses the marginal, like uniform/concentrated spillover).
+WARNING - [CLM-304] competing_noise active: achieved label counts are no longer held to the target proportions, structured noise bypasses the marginal. Exact counts are delivered only by spillover_rule 'proportional_to_marginal' with no competing_noise.
 INFO - CLM labels generated. Target counts: [200, 200, 200, 200], achieved: [200, 200, 200, 200].
 INFO - [fabricated_data/fabricated/baseline_4class] Attached generated label 'Label_0'.
 INFO - Saved: _scratch/CLM-304/{run}/csv/fabricated_data__fabricated__baseline_4class.csv

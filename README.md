@@ -9,34 +9,15 @@
 [![Cite](https://img.shields.io/badge/cite-CITATION.cff-blueviolet)](CITATION.cff)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21751081.svg)](https://doi.org/10.5281/zenodo.21751081)
 
-Generates synthetic label columns on top of existing or generated clusters, with mathematically controlled agreement
-(recall, class balance, spatial placement, or a solved target metric) against the ground-truth clusters, per the
-Cluster-Label Matching (CLM) specification.
+Generates synthetic label columns on top of existing or generated clusters, 
+with mathematically controlled agreement
+(recall, class balance, spatial placement, or a solved target metric) 
+against the ground-truth clusters.
 
-A generated dataset therefore carries three things, strictly row-aligned:
+A generated dataset therefore carries three things:
 the original features, the ground-truth cluster IDs, and one or more synthetic
 labels whose relationship to those clusters is characterized by user-defined
-configuration, rather than measured after the execution and synthesis.
-
-## Project layout
-
-| File                                   | Role                                                                                                                                                                                                         |
-|----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `src/clmsynth/main.py`                 | Entry point, defaults to `test_data_config.yaml`.                                                                                                                                                            |
-| `src/clmsynth/dataset_sources.py`      | Online data sources: `clustbench` (Gagolewski benchmark downloads), `mdcgen` (synthetic, via `mdcgenpy`). For the two offline data sources see below.                                                        |
-| `src/clmsynth/fabricated_generator.py` | Feature generator with perfect-separation labels, used by the `fabricated_data` source.                                                                                                                      |
-| `src/clmsynth/byoc_source.py`          | Bring-your-own-clusters: imports user-provided CSV, with optional min-max standardization on import.                                                                                                         |
-| `src/clmsynth/label_context.py`        | `DatasetContext`, holds features, every ground-truth labeling, and every generated label.                                                                                                                    |
-| `src/clmsynth/label_generator.py`      | Orchestrates label generation: calls the CLM engine per `n_labels`, or falls back to simple noise-flipping if no `clm_label` config is given.                                                                |
-| `src/clmsynth/clm_label_engine.py`     | The CLM label-assignment: proportions/skew, matching modes, recall targets, allocation, spillover, competing noise, spatial placement, and the global target-metric solver.                                  |
-| `src/clmsynth/clm_errors.py`           | Diagnostics: message templates keyed by a `[CLM-###]` code (1xx `ValueError`, 15x `InfeasibleAllocationError`, 3xx warnings) plus helpers.                                                                   |
-| `src/clmsynth/metrics.py`              | Three standalone measures: `clustering_mcc` (Hungarian-matched multiclass MCC / Gorodkin R_K), `clustering_mcc_pair` (the quantity `target_metric.scope: pair`), and `clustering_ari` (adjusted Rand index). |
-| `src/clmsynth/visualization.py`        | Scatter-plot colored by a chosen label column, annotated with measured MCC/ARI and the generating config.                                                                                                    |
-| `src/clmsynth/config_template.py`      | The YAML template string used to render a config.                                                                                                                                                            |
-| `src/clmsynth/generate_config.py`      | Renders `config_template.py` into a runnable config YAML from an upstream payload file (default `upstream_payload.yaml`).                                                                                    |
-| `upstream_payload.yaml`                | Example upstream payload: the minimal facts `generate_config.py` renders into the full config.                                                                                                               |
-| `src/clmsynth/config_wizard.py`        | Interactive CLI wizard: asks and explains every option, then writes a config YAML.                                                                                                                           |
-| `src/clmsynth/questions.py`            | The wizard's `Question`s per prompt (wording, help, default, range, `visible_when`), read by `config_wizard.py`.                                                                                             |
+configuration.
 
 ## Install
 
@@ -65,9 +46,10 @@ pip install -r requirements.txt
 [//]: # (conda env create -f environment.yml)
 
 [//]: # (conda activate clmsynth)
-```
+
 
 Optional, depending on which source/utility you use:
+
 ```bash
 pip install faker                                    # only used by the fabricated_data source
 pip install git+https://github.com/CN-TU/mdcgenpy    # only needed for data_source: "mdcgen"
@@ -75,8 +57,10 @@ pip install git+https://github.com/CN-TU/mdcgenpy    # only needed for data_sour
 
 ## Quick start
 
-**The wizard:** run `python -m clmsynth.config_wizard`. It asks a question for every setting, writes the config YAML,
-and can run the pipeline. Works for every source, including user-provided (`byoc`) data. No YAML editing required.
+**The wizard:** run `python -m clmsynth.config_wizard`. It asks a question for every setting,
+writes the config YAML,
+and can run the pipeline. Works for every source, including user-provided (`byoc`) data.
+No YAML editing required.
 CLMSynth is fully functional from a config file
 alone; the wizard only *creates* one, for a user who would rather answer
 questions than write YAML. Deleting `config_wizard.py` leaves a working program,
@@ -124,84 +108,6 @@ OUTPUT/{DDMMYY}_{Source}_{HHMMSS}/
   computed from the written CSV columns themselves (single source of truth).
 - If a run fails (no data provided, wrong shape of data, etc.), only the config is retained
   and the rest of the folders are removed.
-
-## Config schema
-
-```yaml
-global_settings:
-  data_source: "clustbench"        # clustbench | mdcgen | fabricated_data | byoc
-  output_dir: "OUTPUT"             # base folder for the timestamped run folders
-
-clustbench_suite:                  # key must be "{data_source}_suite"
-  batteries: ["sipu"]               # "all" or a list
-  datasets: ["unbalance"]           # "all" or a list
-  seed: 42                          # only used by mdcgen/fabricated_data; ignored by clustbench
-
-label_generation:
-  n_labels: 1                       # produces Label_0, Label_1, ...
-  source_labeling: "labels0"        # which ground-truth labeling to key CLM math off
-  noise: 0.15                       # fallback only, if clm_label is omitted
-  seed: 42
-
-  clm_label:
-    # 1. CARDINALITY & BALANCE ------------------------------------------------
-    num_classes: 3                  # M, the number of labels (1-64; see Known limitations)
-    balance: "unbalanced"           # balanced -> uniform 1/M (proportions ignored, warns)
-                                     # unbalanced -> proportions below, else skew_rule
-    proportions: [0.5, 0.3, 0.2]    # used directly when balance == "unbalanced"
-    skew_rule: "geometric"          # fallback when unbalanced AND no proportions given:
-                                     #   geometric          p_i ~ ratio^i
-                                     #   dominant_minority  one dominant class, uniform rest
-                                     #   dirichlet          Dirichlet(alpha), drawn once per seed
-    skew_params: {ratio: 0.5, dominant_index: 0, dominant_share: 0.6, alpha: 1.0}
-
-    # 2. MATCHING MODE --------------------------------------------------------
-    matching_mode: "custom"         # perfect | single | random | custom
-    single_match: {cluster: 4, label: 0}       # required if matching_mode == single
-    assignment_matrix:                          # required if matching_mode == custom
-      - {label: 0, clusters: [1, 2], recall_target: 0.8}
-      - {label: 1, clusters: [3],    recall_target: 0.5}
-      - {label: 2, clusters: [3],    recall_target: 0.3}
-
-    # 3. ALLOCATION -----------------------------------------------------------
-    split_rule: "proportional_to_size"          # proportional_to_size | equal
-    spillover_rule: "proportional_to_marginal"  # proportional_to_marginal | uniform | concentrated
-                                     # NOTE: only proportional_to_marginal makes the achieved
-                                     # label counts honor 'proportions'. uniform spreads leftover
-                                     # points evenly; concentrated dumps them into one label.
-
-    # 4. STRUCTURED COMPETING NOISE (optional; single/custom only) ------------
-    competing_noise:
-      - {cluster: 1, label: 2, share: 1.0, favors: "boundary"}
-                                     # converts `share` of ONE cluster's UNCLAIMED
-                                     # (leftover) points into a specific competing
-                                     # label, placed at that cluster's boundary/
-                                     # core/random. Withdrawn from the leftover pool
-                                     # BEFORE spillover_rule above fills the rest.
-                                     # Deliberately bypasses 'proportions' (like
-                                     # uniform/concentrated) and changes the achieved
-                                     # MCC/ARI; that structured-vs-random contrast
-                                     # is its point.
-
-    # 5. TARGET METRIC (optional; single/custom only) -------------------------
-    target_metric: {type: "mcc", value: 0.6, tolerance: 0.01, max_iter: 40}
-                                     # solves one global recall level so the achieved
-                                     # mcc/ari meets 'value'; recall_target may be omitted
-                                     # from the rules when this is present.
-                                     # scope (mcc only): "global" (default) targets the
-                                     # whole-partition multiclass MCC by numerical search;
-                                     # "pair" (single mode only) targets the 2x2 MCC of the
-                                     # single_match cluster/label and is solved exactly and
-                                     # instantly, sizing that label to sit inside its cluster.
-    # target_metric: {type: "mcc", scope: "pair", value: 0.6}   # exact single-pair MCC
-
-    # 6. SPATIAL PLACEMENT (optional) -----------------------------------------
-    centroid_dependence:
-      enabled: true
-      profile: "linear"             # linear | exponential | step
-      favors: "core"                # core | boundary
-      steepness: 3.0                # exponential only
-```
 
 ### Data sources
 
@@ -292,59 +198,12 @@ Every error and warning the engine raises carries a `[CLM-###]` code
 defined once in `clm_errors.py`. The full catalogue is available in the CLMSynth
 User Manual under the Troubleshooting appendix.
 
-A coded `1xx` error aborts the whole run: a malformed config is equally wrong for
-every dataset. The two exceptions are **`[CLM-104]`** and **`[CLM-105]`**, which
-check label and cluster ids against *each dataset's own* ids. For `byoc` the
-whole batch is checked before any work begins, so a mismatch refuses the run
-before a single file is written and names every offending dataset; for the other
-sources it is reported per dataset and the batch continues.
-
-## Development
-
-Install the package with the test extra and run the suite:
-
-```bash
-pip install -e ".[test]"
-```
-
-```bash
-pytest
-```
-
-No arguments: `[tool.pytest.ini_options]` in `pyproject.toml` points at `tests/`.
-280 tests run in well under a minute, and need **no network and no optional
-dependency**, `clustbench` fetches are patched, and every case runs against the
-offline `fabricated_data` source or against the engine directly.
-
-| module                  | defends                                                              |
-|-------------------------|----------------------------------------------------------------------|
-| `test_smoke`            | the program runs with output                                         |
-| `test_00_contract`      | right input produces right output, sensitive                         |
-| `test_01_logic`         | named suspicions and previous bugs, selective                        |
-| `test_02_edge_cases`    | input range edge cases: nothing, one, many, degenerate, non-ASCII    |
-| `test_03_isolation`     | ownership of state: RNG, config, run folder, module registries       |
-| `test_04_failure_modes` | the pipeline degrades rather than aborts, and reports it             |
-| `test_05_config_safety` | the program's own defenses against a configuration it did not author |
-| `test_06_diagnostics`   | the `[CLM-###]` registry safety net, driven entirely by the catalog  |
-| `test_07_text_wizard`   | the wizard's schema agrees with the engine                           |
-
-For the static analysis CI gates on, install the dev extra instead:
-
-```bash
-pip install -e ".[dev]"
-```
-
-```bash
-ruff check src/ tests/ && mypy && bandit -c pyproject.toml -r src/clmsynth -q
-```
-
-All three are expected to report nothing. Where a finding was traced and
-deliberately exempted, the exemption is recorded with its reason next to the
-rule it exempts, in `[tool.ruff.lint]` and `[tool.bandit]` in `pyproject.toml`.
-
-CI runs the suite on Python 3.11–3.14, the static analysis above, and a
-packaging job that builds the distributions and checks that the version agrees
-across `pyproject.toml`, `__init__.py`, `CITATION.cff` and the shipped manuals.
+A coded 1xx error aborts the whole run: a malformed config is equally wrong for every dataset.
+The exceptions are [CLM-102/105/125/127], judged against each dataset's own cluster count,
+cluster ids or feature columns, so a failure there says nothing about the next dataset.
+For byoc, [CLM-104] and [CLM-105] are additionally checked across the whole batch before
+any work begins, so an id mismatch refuses the run before a file is written and names
+every erroneous dataset; everything else is reported per dataset and the run continues.
 
 ## Known limitations
 
@@ -362,7 +221,11 @@ across `pyproject.toml`, `__init__.py`, `CITATION.cff` and the shipped manuals.
   target exceeds the ceiling, the solver reports best-effort + a `[CLM-306]`
   non-convergence warning. *(planned for 0.7.0)*
 - **Proportions are only honored with `spillover_rule: proportional_to_marginal`.**
-  `uniform`/`concentrated` deliberately do not preserve the target label counts.
+  `uniform`/`concentrated` deliberately do not preserve the target label counts:
+  when either rule leaves the delivered counts off
+  their target, it warns `[CLM-304]`, the same code `competing_noise` raises,
+  because it is the same fact. The warning is checked against the counts actually written,
+  so a rule set that leaves no unclaimed points should not warn.
 - **`concentrated_labels` must be a *list* of existing label ids.** Under
   `spillover_rule: concentrated` the value is drawn from directly and written
   into the label column, so it is validated up front (`[CLM-128]`): every entry
@@ -381,7 +244,6 @@ across `pyproject.toml`, `__init__.py`, `CITATION.cff` and the shipped manuals.
   is the feature's purpose. Only valid under `single`/`custom`; a warned no-op
   under `perfect` (no leftover capacity); rejected under `random`.
 - **`balance: balanced` ignores `proportions`** (enforces uniform 1/M) and warns.
-- **`pyivm` is not implemented yet.** `evaluate_cluster_label_matching` is unsupported (see Install). *(planned for 1.0.0)*
 - **A solved `target_metric` can still miss, and the achieved value is the
   authoritative one.** The generator measures what it actually writes rather than
   what the search believed, and raises **`[CLM-309]`** when that value falls

@@ -187,7 +187,10 @@ def test_wizard_rejects_alpha_of_zero(stdin):
 def test_wizard_import_graph_excludes_plotting():
     """A fresh interpreter, because the suite's conftest imports matplotlib for
     the whole process; an in-process check could never fail."""
-    code = ("import sys, clmsynth.config_wizard, clmsynth.questions\n"
+    # Path injected because -E drops PYTHONPATH.
+    root = str(Path(clmsynth.__file__).resolve().parents[1])
+    code = (f"import sys; sys.path.insert(0, {root!r})\n"
+            "import clmsynth.config_wizard, clmsynth.questions\n"
             "bad = [m for m in ('matplotlib', 'seaborn') if m in sys.modules]\n"
             "assert not bad, bad\n")
     result = subprocess.run(
@@ -263,7 +266,7 @@ def test_canned_answers_build_an_engine_valid_config(stdin):
     assert len(out) == len(c)
     assert set(np.unique(out)).issubset({0, 1, 2})
 
-    # survives serialisation: the wizard writes YAML, so what it built must reload.
+    # survives serialization: the wizard writes YAML, so what it built must reload.
     reloaded = yaml.safe_load(yaml.dump(config, sort_keys=False))["label_generation"]["clm_label"]
     out2 = np.asarray(generate_clm_labels(c, X, reloaded, seed=42))
     assert np.array_equal(out, out2)

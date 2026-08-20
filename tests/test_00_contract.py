@@ -352,7 +352,7 @@ def _assert_all_hold(results, context):
 
 
 def test_case_inventory_is_not_empty():
-    """Guard the parametrisation itself.
+    """Guard the parametrization itself.
 
     A module that collects nothing is silently green inside a directory run:
     `pytest` succeeds identically whether this file contributes 41 tests or

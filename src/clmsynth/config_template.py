@@ -6,7 +6,7 @@ braces here are template slots, not f-string expressions."""
 YAML_TEMPLATE = """\
 global_settings:
   data_source: "{data_source}"  # clustbench | mdcgen | fabricated_data | byoc
-  output_dir: "{output_dir}"    # base folder; created on the run, one timestamped subfolder per run
+  output_dir: {output_dir}    # base folder; created on the run, one timestamped subfolder per run
 
 # --- {data_source_suite_key} CONFIGURATION ---
 {data_source_suite_key}:

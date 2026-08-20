@@ -2,6 +2,7 @@ $ python -m clmsynth.main ValueError_1xx/CLM-131.yaml
 # exit code: 2
 
 INFO - Starting Test Data Orchestrator...
+INFO - Output directory: '{catalog}/_scratch/CLM-131'.
 INFO - Available 'fabricated_data' dataset batteries:
 INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
 INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
@@ -10,3 +11,4 @@ INFO - Generating synthetic data (Seed: 42)...
 INFO - Applying perfect separation ground truth to categorical labels...
 INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
 CRITICAL - Configuration error, aborting run: [CLM-131] skew_params: dirichlet 'alpha' must be a number > 0, got 0.0; at exactly 0 every draw is 0 and normalising them divides by zero. These are read only when 'balance' is not 'balanced' and no explicit 'proportions' are given. Out-of-range values mostly do NOT crash there: they produce NEGATIVE label counts that still sum to N, so largest-remainder rounding is satisfied, nothing downstream objects, and the run delivers a labeling nobody asked for. Valid ranges: geometric 'ratio' >= 0; dominant_minority 'dominant_share' in [0, 1] and 'dominant_index' an integer in 0..3, with num_classes >= 2; dirichlet 'alpha' > 0. Omit skew_params entirely to take the documented defaults.
+INFO - No output was produced, so the empty run folder '_scratch/CLM-131/{run}' was removed.

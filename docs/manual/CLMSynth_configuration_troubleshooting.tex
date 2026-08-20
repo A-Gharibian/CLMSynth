@@ -1,5 +1,5 @@
 % !CLMSynth-doc = configuration-troubleshooting
-% !CLMSynth-version = 0.6.7
+% !CLMSynth-version = 0.6.8
 % test suite locates this document by
 % the marker rather than by filename, and checks the version above 
 % against the package version
@@ -47,7 +47,7 @@
 \setlength{\tabcolsep}{5pt}
 
 \title{\textbf{Configuration Troubleshooting Reference}}
-\author{CLMSynth v0.6.7}
+\author{CLMSynth v0.6.8}
 \date{\today}
 
 \begin{document}
@@ -65,7 +65,7 @@
 \vcode{1xx} & \textbf{ValueError} invalid value (\vcode{100}--\vcode{110}) or\\
  & \textbf{Incompatible} option (\vcode{111}--\vcode{149}) or \\
  & \textbf{InfeasibleAllocationError}, Infeasible outcome (\vcode{150}--\vcode{169}). \\
-\kcode{2xx} & \textbf{KeyError} a required configuration key is missing (message is just the key name). \\
+\kcode{2xx} & \textbf{KeyError} a required configuration key is missing (message carries the code). \\
 \wcode{3xx} & \textbf{Warning} non-fatal; logged via \texttt{logging.warning}, execution continues. \\
 \end{tabular}
 \end{center}
@@ -276,7 +276,7 @@ per-row \texttt{recall\_target} & \texttt{target\_metric} is set & Overridden by
 \kcode{208} & \texttt{recall\_target} inside a rule & In \texttt{custom} \emph{without} \texttt{target\_metric}. Add \texttt{recall\_target}, or add \texttt{target\_metric} to solve it globally. \\
 \kcode{209} & \texttt{value} inside \texttt{target\_metric} & When \texttt{target\_metric} is present. Add \texttt{value: <target>}. \\
 \bottomrule
-\caption{Supplementary information for the context of KeyErrors (e.g.\ \texttt{KeyError: 'single\_match'}).}
+\caption{Supplementary information for the context of KeyErrors (e.g.\ \texttt{[CLM-204]}).}
 \end{longtable}
 \newpage
 \subsection{Warnings (non-fatal) \texorpdfstring{\wcode{3xx}}{3xx} }
@@ -290,7 +290,7 @@ per-row \texttt{recall\_target} & \texttt{target\_metric} is set & Overridden by
 \wcode{301} & \texttt{balance: balanced} \emph{and} \texttt{proportions} given & Expected. To use your \texttt{proportions}, set \texttt{balance: unbalanced}; otherwise remove them to silence the warning. \\
 \wcode{302} & \texttt{perfect} ignores \texttt{proportions}/\texttt{balance}/\texttt{skew\_rule} & Expected. Perfect fixes counts to cluster sizes; drop those keys to make intent clear. \\
 \wcode{303} & \texttt{target\_metric} present with per-row \texttt{recall\_target}s & Expected. The global $\alpha$ overrides them; you may delete \texttt{recall\_target} from the rows. \\
-\wcode{304} & \texttt{competing\_noise} active & Expected: achieved counts deviate from \texttt{proportions}. If you need exact proportions, do not use \texttt{competing\_noise}. \\
+\wcode{304} & \texttt{competing\_noise} active, or \texttt{spillover\_rule} \texttt{uniform}/\texttt{concentrated} moved the delivered counts off their target & Expected: the label marginal is no longer binding, so achieved counts are not held to \texttt{proportions}. One code, two causes; the message names which. For exact counts use \texttt{spillover\_rule: proportional\_to\_marginal} and no \texttt{competing\_noise}. \\
 \wcode{305} & A \texttt{competing\_noise} entry hits a cluster with no unclaimed points & The cluster is fully claimed (or \texttt{share} rounds to $0$): Lower a rule's \texttt{recall\_target}, or target a different cluster. \\
 \wcode{306} & \texttt{target\_metric} did not converge within tolerance & The target likely exceeds the structural ceiling (e.g.\ $M\ll K$). The closest feasible value is returned; lower the target, raise \texttt{max\_iter}/\texttt{tolerance}, or change \texttt{proportions}/clusters. \\
 \wcode{307} & \texttt{scope: pair} target outside the pair's reachable range & The request is clamped to the nearest reachable value; the message reports the range. Choose a target within it, or change the pair. \\

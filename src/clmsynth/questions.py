@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 Kind = Literal["str", "int", "float", "bool", "choice",
-               "int_list", "float_list", "id", "ids"]
+               "int_list", "float_list", "str_list", "selection", "id", "ids"]
 
 
 @dataclass(frozen=True)
@@ -108,6 +108,11 @@ _QUESTIONS: list[Question] = [
         "byoc_suite.input_dir", "str", "Folder that holds your CSV file(s)",
         explain="Bring-your-own-clusters: point at your CSV(s).", default="INPUT"),
     Question(
+        "byoc_suite.datasets", "str_list", "CSV file name(s) WITHOUT '.csv'",
+        explain="The file stem only, no folder and no '.csv'. A stem must not\n"
+                "contain '/', '\\' or ':', since the pipeline builds both the input\n"
+                "and the output paths from it. List several to run them in one go."),
+    Question(
         "byoc_suite.cluster_column", "str", "Name of the single cluster-id column",
         explain="Exactly ONE column holds the cluster id of each row.\n"
                 "Every other numeric column is treated as a feature.",
@@ -122,7 +127,14 @@ _QUESTIONS: list[Question] = [
         "byoc_suite.seed", "int", "Random seed",
         explain="Same seed -> same result every run.", default=42),
 
-    # -- 1c. registry suite (the picker loops stay procedural in the wizard) -
+    # -- 1c. registry suite (the battery picker stays procedural in the wizard) -
+    Question(
+        "registry_suite.datasets", "selection",
+        "Pick dataset(s) by number/name, comma-separated, or 'all'",
+        explain="The numbered list above is this group's datasets. Give numbers,\n"
+                "names, or a mix of both; 'all' takes the whole group, which can be\n"
+                "hundreds of datasets in the larger ones.",
+        default="all"),
     Question(
         "registry_suite.seed", "int", "Random seed",
         explain="Used by mdcgen/fabricated_data; ignored by clustbench.", default=42),
@@ -345,7 +357,7 @@ _QUESTIONS: list[Question] = [
         "clm_label.skew_params.dominant_share", "float", "its share of all points (0..1, e.g. 0.6)",
         default=0.6, lo=0.0, hi=1.0, engine_min=0.0, engine_max=1.0,
         visible_when=_skew_live("dominant_minority")),
-    # alpha > 0 strictly: the engine divides by the normalised draw, so exactly 0
+    # alpha > 0 strictly: the engine divides by the normalized draw, so exactly 0
     # is a divide-by-zero. lo_strict makes the wizard refuse 0.0 as the engine does.
     Question(
         "clm_label.skew_params.alpha", "float", "alpha (smaller = more lopsided; try 0.3 or 1.0)",

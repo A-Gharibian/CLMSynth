@@ -127,7 +127,8 @@ def test_different_seeds_actually_differ():
 # ---------------------------------------------------------------------------
 
 def test_run_pipeline_does_not_mutate_the_callers_config(tmp_path):
-    """The suite block is consumed by popping keys, so it must be copied first.
+    """
+    The suite block is consumed by popping keys, so it must be copied first.
     `run_pipeline` pops `batteries`, `datasets` off the per-source
     suite block as it resolves them. Without the defensive copy those keys are
     gone from the caller's dict afterward, so a second call with the same
@@ -135,10 +136,7 @@ def test_run_pipeline_does_not_mutate_the_callers_config(tmp_path):
     parsed config, would silently resolve zero datasets.
     """
     # Asserted behaviourally. This was previously checked by reading the function
-    # source with `inspect.getsource` and searching for the literal text
-    # `_suite", {}).copy()`, which would survive the defense being removed and
-    # reimplemented differently, and would break on a reformatting that changed
-    # the quote style.
+    # source with `inspect.getsource` and searching for the literal text.
     config = pipeline_config(tmp_path)
     before = {k: list(v) if isinstance(v, list) else v
               for k, v in config["fabricated_data_suite"].items()}

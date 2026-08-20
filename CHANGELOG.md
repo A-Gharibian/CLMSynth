@@ -6,6 +6,55 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.6.8] — 2026-08-20
+
+**Staging for CLMSynth-GUI.**
+
+A patch release.
+
+### Added
+
+- **`[CLM-201]`–`[CLM-209]`: the missing-key band is coded `KeyError`s.`MissingConfigKey`
+  subclasses, next to the `1xx` `ValueError` the bands separate an
+  *absent* key from a *wrong* key.
+
+- **`target_metric.probe_seed` is renderable.** 
+  (when `[CLM-309]` sets it, the config renderer can now emit it).
+
+### Fixed
+
+- **Which failures are per dataset, corrected in both directions.** The rule is
+  whether a code judges the *configuration* or *this dataset*. [CLM-102] (M == K), [CLM-119]
+  (a competing_noise cluster this dataset does not have), [CLM-125] (no features) and [CLM-127]
+  (K over the cap) are statements about the dataset
+  and now skip it and continue, where they used to
+  abort a batch that later datasets could have satisfied. `[CLM-104]` moves the
+  other way: its bound is `num_classes`, which no dataset can change, so it is a
+  configuration error and now aborts like the rest of the band. `[CLM-105]` is
+  unchanged, and the BYOC precheck is unchanged.
+
+- **A bare `concentrated_labels:` key no longer crashes uncoded.**
+  `dict.get(key, default)` returns the default only when the key is *absent*,
+  and YAML parses a valueless key to `None`, so `spillover_rule: concentrated`
+  with an empty `concentrated_labels:` reached `rng.choice(None, ...)`.
+
+- **`clmsynth-config` exits non-zero when it writes nothing.** A failed write was
+  logged and then reported success to the shell. It also now writes UTF-8.
+
+- **`clmsynth`, `clmsynth-config`, `clmsynth-wizard` cancels with `KeyboardInterrupt`**.
+
+- **The wizard's last two free-text prompts re-ask.** The BYOC filename list and
+  the dataset picker were the only prompts bypassing `questions.SCHEMA`.
+
+- `plot_feature_scatter` saves the figure it built rather than whatever pyplot
+  considers current.
+
+### Removed
+
+- **`evaluate_cluster_label_matching`.** `pyivm` is scheduled for release 1.0.0,
+  it is pinned to `numpy<2.0`, which may prevent implementation, removed until decided.
+
+
 ## [0.6.7] — 2026-08-12
 
 **The wizard, in isolation.**

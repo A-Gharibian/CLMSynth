@@ -5,7 +5,7 @@ Central registry of CLM engine diagnostics: reference Manual/troubleshooting.tex
 Bands:
     1xx  ValueError:                invalid configuration / incompatible options
     15x  InfeasibleAllocationError: a ValueError subclass; valid config, counts don't fit
-    2xx  raw Python KeyError, a required config key is missing (NOT represented here)
+    2xx  MissingConfigKey:          a KeyError subclass; a required key is absent
     3xx  Warning:                   non-fatal; logged, execution continues
 
 Codes are a public contract: never renumber or reuse an assigned code; new
@@ -22,6 +22,18 @@ class InfeasibleAllocationError(ValueError):
     must remain a distinct type: a config typo (plain ValueError) has to
     stay uncaught by those handlers and fail.
     """
+
+
+class MissingConfigKey(KeyError):
+    """A required config key is absent.
+
+    A KeyError subclass so main.py keeps skipping the dataset rather than
+    aborting the run; only the message gains a code.
+    """
+
+    def __str__(self) -> str:
+        # KeyError.__str__ would repr-quote the message.
+        return self.args[0] if self.args else ""
 
 
 CODES = {
@@ -111,6 +123,18 @@ CODES = {
          "so they sum to at most 1.0, or write one rule listing all the clusters and let "
          "split_rule divide the budget between them.",
 
+    # --- 2xx : MissingConfigKey (a required config key is absent) -----------
+    201: "num_classes is required.",
+    202: "matching_mode is required.",
+    203: "skew_rule is required when balance is not 'balanced' and no proportions "
+         "are given.",
+    204: "single_match is required by matching_mode 'single'.",
+    205: "single_match.cluster is required.",
+    206: "assignment_matrix is required by matching_mode 'custom'.",
+    207: "{where}: 'clusters' is required.",
+    208: "{where}: 'recall_target' is required without target_metric.",
+    209: "target_metric.value is required.",
+
     # --- 3xx : Warnings (non-fatal) -----------------------------------------
     301: "balance='balanced': explicit 'proportions' are ignored (uniform 1/M split "
          "enforced). Set balance to 'unbalanced' to have your proportions used.",
@@ -118,9 +142,10 @@ CODES = {
          "are forced to match their paired cluster's size.",
     303: "target_metric present: per-rule recall_target values in assignment_matrix are "
          "ignored; recall_target is solved for globally.",
-    304: "competing_noise active: achieved label counts will deviate from the target "
-         "proportions (structured noise bypasses the marginal, like uniform/concentrated "
-         "spillover).",
+    # One code, two causes; {cause} names which. Precedent: 104, 131.
+    304: "{cause}: achieved label counts are no longer held to the target proportions, "
+         "{why} bypasses the marginal. Exact counts are delivered only by spillover_rule "
+         "'proportional_to_marginal' with no competing_noise.",
     305: "competing_noise: cluster {k} has no unclaimed points (or share rounds to 0); "
          "entry {entry} has no effect.",
     306: "target_metric: did not converge within tolerance after {max_iter} iterations. "
@@ -153,13 +178,7 @@ def _format(code: int, **kw) -> str:
 
 
 # `exc.code = code` attaches an attribute Python allows on any exception instance
-# but that no exception type declares, so a type checker objects. The alternative
-# is a CLMError base class carrying `code: int`, which would fix the typing and
-# change the runtime type of every coded 1xx error. This module's own contract
-# argues against that: InfeasibleAllocationError "must remain a distinct type: a
-# config typo (plain ValueError) has to stay uncaught by those handlers and fail",
-# and introducing a shared base redefines what a plain ValueError is here.
-# Ignored narrowly, at the two sites, rather than silenced module-wide.
+# but that no exception type declares, so a type checker objects.
 
 def clm_error(code: int, **kw) -> ValueError:
     """Build a coded ValueError (1xx). Use: ``raise clm_error(102, M=M, K=K)``."""
@@ -171,6 +190,13 @@ def clm_error(code: int, **kw) -> ValueError:
 def clm_infeasible(code: int, **kw) -> InfeasibleAllocationError:
     """Build a coded InfeasibleAllocationError (15x)."""
     exc = InfeasibleAllocationError(_format(code, **kw))
+    exc.code = code  # type: ignore[attr-defined]
+    return exc
+
+
+def clm_missing(code: int, **kw) -> MissingConfigKey:
+    """Build a coded MissingConfigKey (2xx)."""
+    exc = MissingConfigKey(_format(code, **kw))
     exc.code = code  # type: ignore[attr-defined]
     return exc
 

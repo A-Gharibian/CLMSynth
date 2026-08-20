@@ -2,6 +2,7 @@ $ python -m clmsynth.main ValueError_1xx/CLM-107.yaml
 # exit code: 2
 
 INFO - Starting Test Data Orchestrator...
+INFO - Output directory: '{catalog}/_scratch/CLM-107'.
 INFO - Available 'fabricated_data' dataset batteries:
 INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
 INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
@@ -10,3 +11,4 @@ INFO - Generating synthetic data (Seed: 42)...
 INFO - Applying perfect separation ground truth to categorical labels...
 INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
 CRITICAL - Configuration error, aborting run: [CLM-107] Unknown skew_rule 'bogus_rule'. Supported: geometric, dominant_minority, dirichlet.
+INFO - No output was produced, so the empty run folder '_scratch/CLM-107/{run}' was removed.

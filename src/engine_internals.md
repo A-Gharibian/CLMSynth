@@ -119,6 +119,14 @@ not from `len(m_counts)` (deriving it from the counts array is what let a too-lo
 validated up front by `_validate_spillover_cfg` (`[CLM-128]`: a list of integer ids
 in `0..M-1`; a bare number would otherwise be read by numpy as a *range*).
 
+Breaking the proportions is no longer silent: after allocation,
+`generate_clm_labels` compares the delivered counts against the Stage-1 targets
+and warns `[CLM-304]` when `uniform`/`concentrated` moved them. The same code
+Stage 4 raises, because it is the same statement, the label marginal has stopped
+being binding; `cause` names which setting did it. Checked against the achieved
+counts rather than predicted from the config, so a rule set that leaves no
+leftover capacity (nothing for the rule to fill) stays quiet.
+
 ## Stage 6: Spatial placement (`assign_points_in_cluster`, `_weighted_pick`)
 
 Within each cluster the demanded labels are assigned to specific points, then the
@@ -188,13 +196,174 @@ actually writes and warns `[CLM-309]` when it does, the achieved value being
 authoritative rather than the request (most visible at small `N`, where spillover
 placement is a large share of the outcome).
 
+
+## Config schema
+
+```yaml
+global_settings:
+  data_source: "clustbench"        # clustbench | mdcgen | fabricated_data | byoc
+  output_dir: "OUTPUT"             # base folder for the timestamped run folders
+
+clustbench_suite:                  # key must be "{data_source}_suite"
+  batteries: ["sipu"]               # "all" or a list
+  datasets: ["unbalance"]           # "all" or a list
+  seed: 42                          # only used by mdcgen/fabricated_data; ignored by clustbench
+
+label_generation:
+  n_labels: 1                       # produces Label_0, Label_1, ...
+  source_labeling: "labels0"        # which ground-truth labeling to key CLM math off
+  noise: 0.15                       # fallback only, if clm_label is omitted
+  seed: 42
+
+  clm_label:
+    # 1. CARDINALITY & BALANCE ------------------------------------------------
+    num_classes: 3                  # M, the number of labels (1-64; see Known limitations)
+    balance: "unbalanced"           # balanced -> uniform 1/M (proportions ignored, warns)
+                                     # unbalanced -> proportions below, else skew_rule
+    proportions: [0.5, 0.3, 0.2]    # used directly when balance == "unbalanced"
+    skew_rule: "geometric"          # fallback when unbalanced AND no proportions given:
+                                     #   geometric          p_i ~ ratio^i
+                                     #   dominant_minority  one dominant class, uniform rest
+                                     #   dirichlet          Dirichlet(alpha), drawn once per seed
+    skew_params: {ratio: 0.5, dominant_index: 0, dominant_share: 0.6, alpha: 1.0}
+
+    # 2. MATCHING MODE --------------------------------------------------------
+    matching_mode: "custom"         # perfect | single | random | custom
+    single_match: {cluster: 4, label: 0}       # required if matching_mode == single
+    assignment_matrix:                          # required if matching_mode == custom
+      - {label: 0, clusters: [1, 2], recall_target: 0.8}
+      - {label: 1, clusters: [3],    recall_target: 0.5}
+      - {label: 2, clusters: [3],    recall_target: 0.3}
+
+    # 3. ALLOCATION -----------------------------------------------------------
+    split_rule: "proportional_to_size"          # proportional_to_size | equal
+    spillover_rule: "proportional_to_marginal"  # proportional_to_marginal | uniform | concentrated
+                                     # NOTE: only proportional_to_marginal makes the achieved
+                                     # label counts honor 'proportions'. uniform spreads leftover
+                                     # points evenly; concentrated dumps them into one label.
+
+    # 4. STRUCTURED COMPETING NOISE (optional; single/custom only) ------------
+    competing_noise:
+      - {cluster: 1, label: 2, share: 1.0, favors: "boundary"}
+                                     # converts `share` of ONE cluster's UNCLAIMED
+                                     # (leftover) points into a specific competing
+                                     # label, placed at that cluster's boundary/
+                                     # core/random. Withdrawn from the leftover pool
+                                     # BEFORE spillover_rule above fills the rest.
+                                     # Deliberately bypasses 'proportions' (like
+                                     # uniform/concentrated) and changes the achieved
+                                     # MCC/ARI; that structured-vs-random contrast
+                                     # is its point.
+
+    # 5. TARGET METRIC (optional; single/custom only) -------------------------
+    target_metric: {type: "mcc", value: 0.6, tolerance: 0.01, max_iter: 40}
+                                     # solves one global recall level so the achieved
+                                     # mcc/ari meets 'value'; recall_target may be omitted
+                                     # from the rules when this is present.
+                                     # scope (mcc only): "global" (default) targets the
+                                     # whole-partition multiclass MCC by numerical search;
+                                     # "pair" (single mode only) targets the 2x2 MCC of the
+                                     # single_match cluster/label and is solved exactly and
+                                     # instantly, sizing that label to sit inside its cluster.
+    # target_metric: {type: "mcc", scope: "pair", value: 0.6}   # exact single-pair MCC
+
+    # 6. SPATIAL PLACEMENT (optional) -----------------------------------------
+    centroid_dependence:
+      enabled: true
+      profile: "linear"             # linear | exponential | step
+      favors: "core"                # core | boundary
+      steepness: 3.0                # exponential only
+```
+
+## Project layout
+
+| File                                   | Role                                                                                                                                                                                                         |
+|----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `src/clmsynth/main.py`                 | Entry point, defaults to `test_data_config.yaml`.                                                                                                                                                            |
+| `src/clmsynth/dataset_sources.py`      | Online data sources: `clustbench` (Gagolewski benchmark downloads), `mdcgen` (synthetic, via `mdcgenpy`). For the two offline data sources see below.                                                        |
+| `src/clmsynth/fabricated_generator.py` | Feature generator with perfect-separation labels, used by the `fabricated_data` source.                                                                                                                      |
+| `src/clmsynth/byoc_source.py`          | Bring-your-own-clusters: imports user-provided CSV, with optional min-max standardization on import.                                                                                                         |
+| `src/clmsynth/label_context.py`        | `DatasetContext`, holds features, every ground-truth labeling, and every generated label.                                                                                                                    |
+| `src/clmsynth/label_generator.py`      | Orchestrates label generation: calls the CLM engine per `n_labels`, or falls back to simple noise-flipping if no `clm_label` config is given.                                                                |
+| `src/clmsynth/clm_label_engine.py`     | The CLM label-assignment: proportions/skew, matching modes, recall targets, allocation, spillover, competing noise, spatial placement, and the global target-metric solver.                                  |
+| `src/clmsynth/clm_errors.py`           | Diagnostics: message templates keyed by a `[CLM-###]` code (1xx `ValueError`, 15x `InfeasibleAllocationError`, 3xx warnings) plus helpers.                                                                   |
+| `src/clmsynth/metrics.py`              | Three standalone measures: `clustering_mcc` (Hungarian-matched multiclass MCC / Gorodkin R_K), `clustering_mcc_pair` (the quantity `target_metric.scope: pair`), and `clustering_ari` (adjusted Rand index). |
+| `src/clmsynth/visualization.py`        | Scatter-plot, annotated with measured MCC/ARI and the generating config.                                                                                                                                     |
+| `src/clmsynth/config_template.py`      | The YAML template string used to render a config.                                                                                                                                                            |
+| `src/clmsynth/generate_config.py`      | Renders `config_template.py` into a runnable config YAML from an upstream payload file (default `upstream_payload.yaml`).                                                                                    |
+| `upstream_payload.yaml`                | Example upstream payload: the minimal facts `generate_config.py` renders into the full config.                                                                                                               |
+| `src/clmsynth/config_wizard.py`        | Interactive CLI wizard: asks and explains every option, then writes a config YAML.                                                                                                                           |
+| `src/clmsynth/questions.py`            | The wizard's `Question`s per prompt (wording, help, default, range, `visible_when`), read by `config_wizard.py`.                                                                                             |
+
+
+- The global solver builds rules, runs allocation **and assignment**, then
+  measures the candidate labeling on every probe. It is shown as a loop-shaped
+  subgraph rather than every grid and bisection iteration.
+- Spillover is an application stage after allocation (and, when configured,
+  competing-noise reservation). The early `concentrated_labels` check is only a
+  narrow configuration guard; it is not spillover itself.
+- The engine checks a requested metric only after the final label array has
+  been assigned. Pipeline reporting is separate again: it measures written
+  labels after the CSV is saved.
+
+```mermaid
+flowchart TD
+    Start["generate_clm_labels()"]
+    Start --> Setup["Initialise RNG; derive N, M, cluster ids and sizes\nCardinality / coordinate guards"]
+    Setup --> Totals["Validate live skew parameters; resolve label totals"]
+    Totals --> Mode{"matching_mode"}
+
+    Mode -- "random" --> RandomOptions{"target metric or competing noise?"}
+    RandomOptions -- "no" --> Random["Shuffle resolved totals and return"]
+    Random --> Return["Return label series"]
+    RandomOptions -- "yes" --> RandomError["Reject incompatible setting\nCLM-114 or CLM-115"]
+    Mode -- "perfect" --> Perfect["Force totals to paired cluster sizes"]
+    Mode -- "single or custom" --> Guards
+    Perfect --> Guards
+
+    Guards["Configuration guards before rule construction\nconcentrated_labels only; centroid config; target-metric config"]
+    Guards --> Target{"target_metric?"}
+    Target -- "no" --> FinalRules["Build final matching rules"]
+    Target -- "pair MCC" --> Pair["Derive target-label count; alpha = 1"]
+    Pair --> FinalRules
+
+    Target -- "global MCC / ARI" --> ProbeRules
+    subgraph Solver["Global target solve: repeated probe evaluations"]
+        ProbeRules["Build rules for candidate alpha"] --> ProbeRun["Run allocation and assignment"]
+        ProbeRun --> ProbeMetric["Measure candidate MCC / ARI"]
+        ProbeMetric --> Alpha["Choose / refine alpha\nNo feasible alpha: CLM-120\nNo convergence: CLM-306"]
+    end
+    Alpha --> FinalRules
+
+    FinalRules --> FinalRun["Run final allocation and assignment"]
+    FinalRun -. "expands to" .-> Allocate
+
+    subgraph Apply["Allocation and assignment used by probes and final delivery"]
+        Allocate["Allocate rule claims and remaining capacity\nCLM-150, -151, -153"]
+        Allocate --> Noise{"competing_noise?"}
+        Noise -- "yes" --> Competing["Reserve competing claims\nCLM-116..119, -152; warnings -304/-305"]
+        Noise -- "no" --> Spillover["Draw spillover labels\nCLM-109"]
+        Competing --> Spillover
+        Spillover --> Place["Assign concrete points per cluster\nRule claims first, spillover fills the rest\nCLM-110 if the placement profile is invalid"]
+    end
+
+    FinalRun --> Assigned["Final assigned label array"]
+    Assigned --> Verify{"target_metric?"}
+    Verify -- "no" --> Return
+    Verify -- "pair MCC" --> PairMetric["Measure delivered pair MCC\nWarn CLM-310 on a miss"]
+    Verify -- "global MCC / ARI" --> GlobalMetric["Measure delivered global metric\nWarn CLM-309 on a miss"]
+    PairMetric --> Return
+    GlobalMetric --> Return
+```
+
+
 ## Diagnostics (`clm_errors.py`)
 
 Every raise/warning above carries a stable `[CLM-###]` code from a single
 registry: `1xx` config `ValueError`, `15x` `InfeasibleAllocationError` (a
 `ValueError` subclass, caught by the solver as "try another alpha" and by
 `main.py` to skip a dataset), `3xx` warnings. Missing required config keys
-surface as raw Python `KeyError`s (documentation-only `2xx` in
+surface as raw Python `KeyError`s `2xx` in
 `troubleshooting.tex`).
 
 ## What it does *not* do

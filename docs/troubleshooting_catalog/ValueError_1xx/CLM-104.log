@@ -1,7 +1,8 @@
 $ python -m clmsynth.main ValueError_1xx/CLM-104.yaml
-# exit code: 1
+# exit code: 2
 
 INFO - Starting Test Data Orchestrator...
+INFO - Output directory: '{catalog}/_scratch/CLM-104'.
 INFO - Available 'fabricated_data' dataset batteries:
 INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
 INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
@@ -9,5 +10,5 @@ INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed
 INFO - Generating synthetic data (Seed: 42)...
 INFO - Applying perfect separation ground truth to categorical labels...
 INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
-ERROR - Skipping fabricated/baseline_4class: [CLM-104] single_match: label 9 out of range 0..3.
-ERROR - No datasets were successfully processed.
+CRITICAL - Configuration error, aborting run: [CLM-104] single_match: label 9 out of range 0..3.
+INFO - No output was produced, so the empty run folder '_scratch/CLM-104/{run}' was removed.

@@ -1,20 +1,11 @@
 # metrics.py
 """Evaluation metrics for cluster-label agreement.
 """
-import logging
-
 import numpy as np
-import pandas as pd
 from scipy.optimize import linear_sum_assignment
 from sklearn.metrics import adjusted_rand_score, matthews_corrcoef
 from sklearn.metrics.cluster import contingency_matrix
 
-try:
-    import pyivm
-except ImportError:
-    pyivm = None
-
-log = logging.getLogger(__name__)
 
 def clustering_ari(labels_true, labels_pred) -> float:
     """
@@ -92,64 +83,3 @@ def clustering_mcc(labels_true, labels_pred):
 
     recoded_pred = pred_relabel[pred_codes]
     return matthews_corrcoef(true_codes, recoded_pred)
-
-def evaluate_cluster_label_matching(
-        df: pd.DataFrame,
-        label_col: str = "Cohort_Class"
-) -> dict[str, float]:
-    """
-    Evaluates the Cluster-Label Matching (CLM) of a dataset.
-    This measures how well the provided ground-truth labels align with the
-    actual data clusters, using Adjusted Internal Validation Measures (IVMAs)
-    from TPAMI 2025 (https://arxiv.org/abs/2503.01097).
-    """
-    if pyivm is None:
-        log.warning("The 'pyivm' package is not installed. Cannot compute CLM metrics. Run 'pip install pyivm'")
-        return {}
-
-    if df is None or df.empty:
-        log.warning("DataFrame is empty. Skipping metrics calculation.")
-        return {}
-
-    if label_col not in df.columns:
-        log.warning(f"Label column '{label_col}' not found in dataset. Skipping CLM evaluation.")
-        return {}
-
-    log.info("Computing Adjusted IVMs for Cluster-Label Matching (CLM)...")
-
-    # 1. Separate features and labels
-    feature_cols = [col for col in df.columns if col != label_col]
-    X = df[feature_cols].to_numpy(dtype=np.float64)
-
-    # 2. Handle string/categorical labels by converting them to integers
-    # (pyivm, like most clustering metrics, requires numeric labels).
-    if not pd.api.types.is_numeric_dtype(df[label_col]):
-        _, labels = np.unique(df[label_col].astype(str).to_numpy(), return_inverse=True)
-    else:
-        labels = df[label_col].to_numpy()
-
-    # 3. Guard against single-class datasets (IVMs require at least 2 clusters)
-    if len(np.unique(labels)) < 2:
-        log.warning("Dataset contains fewer than 2 distinct classes. Cannot compute CLM.")
-        return {}
-
-    metrics = {}
-
-    try:
-        # 4. Compute Adjusted Metrics (higher = better CLM)
-        # Using adjusted=True ensures fair cross-dataset evaluation, removing biases
-        # related to dimensionality, dataset size, and cluster count.
-        metrics["adj_silhouette"] = pyivm.silhouette(X, labels, adjusted=True)
-        metrics["adj_calinski_harabasz"] = pyivm.calinski_harabasz(X, labels, adjusted=True)
-        metrics["adj_davies_bouldin"] = pyivm.davies_bouldin(X, labels, adjusted=True)
-
-        log.info(
-            f"CLM Evaluation Complete: Adj_Sil={metrics['adj_silhouette']:.3f}, "
-            f"Adj_CH={metrics['adj_calinski_harabasz']:.3f}, "
-            f"Adj_DB={metrics['adj_davies_bouldin']:.3f}"
-        )
-
-    except Exception as e:
-        log.error(f"Error computing CLM metrics: {e}")
-
-    return metrics

@@ -1,9 +1,9 @@
 # generate_config.py
 """Renders config_template.YAML_TEMPLATE into a runnable pipeline config.
-
 The input is a flat "upstream payload" mapping (see upstream_payload.yaml).
 """
 
+import json
 import logging
 import sys
 
@@ -42,7 +42,8 @@ def _yaml_scalar(value) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, str):
-        return f'"{value}"'
+        # JSON strings are valid YAML double-quoted scalars.
+        return json.dumps(value)
     return str(value)
 
 
@@ -122,14 +123,15 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
     if target_metric:
         target_lines = [
             "",
-            "    # TARGET METRIC (single/custom only): solves the recall level for you.",
+            "    # TARGET METRIC (single/custom only): solves the recall level.",
             "    # scope 'global' (default) searches numerically; 'pair' is exact but needs",
             "    # type 'mcc' AND matching_mode 'single'. tolerance applies to both scopes;",
             "    # max_iter is global-only (the pair scope never iterates).",
             "    target_metric:",
         ]
-        for key in ("type", "value", "scope", "tolerance", "max_iter"):
-            if key in target_metric:
+        for key in ("type", "value", "scope", "tolerance", "max_iter", "probe_seed"):
+            # Null would render as the word None.
+            if target_metric.get(key) is not None:
                 target_lines.append(f"      {key}: {_yaml_scalar(target_metric[key])}")
     target_block = _optional_block(target_lines)
 
@@ -155,7 +157,7 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
 
     rendered_yaml = YAML_TEMPLATE.format(
         data_source=data_source,
-        output_dir=upstream_data.get("output_dir", "OUTPUT"),
+        output_dir=_yaml_scalar(str(upstream_data.get("output_dir", "OUTPUT"))),
         byoc_extra=byoc_extra,
         data_source_suite_key=f"{data_source}_suite",
         batteries=format_list_or_all(upstream_data.get("batteries", "all")),
@@ -189,16 +191,22 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
     )
 
     try:
-        with open(output_path, 'w') as file:
+        yaml.safe_load(rendered_yaml)
+    except yaml.YAMLError as e:
+        log.critical(f"Rendered configuration is not valid YAML: {e}")
+        sys.exit(1)
+
+    try:
+        with open(output_path, 'w', encoding="utf-8") as file:
             file.write(rendered_yaml)
         log.info(f"Test data configuration successfully written to '{output_path}'")
-    except Exception as e:
-        log.error(f"Failed to write configuration file: {e}")
+    except OSError as e:
+        log.critical(f"Failed to write configuration file: {e}")
+        sys.exit(1)
 
 
 def main() -> None:
-    """CLI entry point: ``python -m clmsynth.generate_config [payload.yaml] [output.yaml]``
-    (or the ``clmsynth-config`` console script).
+    """CLI entry point: ``python -m clmsynth.generate_config [payload.yaml] [output.yaml]``.
 
     Loads the upstream payload from the given YAML file (default
     ``upstream_payload.yaml``) and renders the pipeline config (default
@@ -220,7 +228,11 @@ def main() -> None:
         log.critical(f"Payload file '{payload_path}' must contain a YAML mapping.")
         sys.exit(1)
 
-    generate_base_config(upstream_data=payload, output_path=output_path)
+    try:
+        generate_base_config(upstream_data=payload, output_path=output_path)
+    except KeyboardInterrupt:
+        log.warning("Interrupted; nothing written.")
+        sys.exit(130)
 
 
 if __name__ == "__main__":

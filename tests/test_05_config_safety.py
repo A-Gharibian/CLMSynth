@@ -3,13 +3,8 @@
 **What the program does to protect the machine running a configuration it did
 not author.** The premise is ordinary and scientific rather than adversarial: a
 config here is a shareable artifact, and reproducing someone's published results
-means running a YAML you did not write. These tests assert the measures that
+means running a YAML they wrote. These tests assert the measures that
 make that safe to do.
-
-This slot was empty until 0.6.6, and deliberately so. The category was retired
-because it had no subject, the program implemented no protective measure worth
-asserting, and what remained under the name "security" was input validation
-producing coded `[CLM-###]` errors, which is diagnostics and belongs in `06`.
 Two measures now exist, so the category does:
 
   log forgery      `SingleLineFilter` keeps one log call to one line, so a
@@ -27,19 +22,15 @@ original category. Re-read this list before adding anything here:
                    there is nothing to bypass.
   ReDoS            The package contains no regular expressions.
   recursion        No recursive descent over user input, so no depth to exhaust.
-  timing           Wall-clock characterisations are not tests, here or anywhere
+  timing           Wall-clock characterizations are not tests, here or anywhere
                    in this suite. They assert against the clock rather than
-                   against behaviour.
-
-Nothing here uses a pipeline configuration or touches the filesystem: these are
-unit assertions on a log record and a path string. That is deliberate. A measure
-whose test needs a full run is a measure that cannot be reasoned about.
+                   against behavior.
 
 Related, and deliberately not moved here: `04_failure_modes` asserts that
 path-shaped battery and dataset names are refused. It is the third config-borne
-guard, and it lives there because the behaviour it pins is that the batch skips
+guard, and it lives there because the behavior it pins is that the batch skips
 the offender and continues, which is `04`'s subject. Overlap between categories
-is fine; moving a test away from the behaviour it asserts is not.
+is fine; moving a test away from the behavior it asserts is not.
 
 See SECURITY.md for the threat model these measures serve, and for the standing
 verdicts on the scanner findings that are accepted rather than fixed.
@@ -67,13 +58,13 @@ from clmsynth.main import resolved_for_report
 def test_a_newline_in_a_message_cannot_forge_a_second_record(raw, expected):
     """Whatever the configuration value contained, the record stays one line.
 
-    Config values reach messages by design: a warning naming an unrecognised
+    Config values reach messages by design: a warning naming an unrecognized
     `skew_rule` has to quote it. A value containing a newline would otherwise
     split one record into what reads as two, and the second can be shaped to
     look like a line the program never emitted.
 
     Escaped rather than stripped, and asserted as such: `\\n` in the output says
-    a newline was present and was neutralised, where deleting it would leave a
+    a newline was present and was neutralized, where deleting it would leave a
     plausible single line and hide that anything was attempted.
 
     Asserted on the filter directly rather than through `caplog`. caplog installs
@@ -118,11 +109,6 @@ def test_the_filter_finishes_lazy_percent_formatting_before_scrubbing():
 
 def test_a_configured_path_is_reported_as_an_absolute_path(tmp_path, monkeypatch):
     """`output_dir: OUTPUT` means different folders in different working directories.
-
-    Reporting the resolved form is what makes a captured stdout from a cluster
-    job or a pipeline step reconstructable afterward, and what stops a borrowed
-    configuration from writing somewhere unremarked.
-
     Deliberately a report and not a restriction. `output_dir` is *supposed* to be
     a path, so there is no category error to refuse, and every candidate
     restriction rejects something legitimate: scratch space on a cluster, an

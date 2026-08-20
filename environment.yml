@@ -7,19 +7,15 @@ channels:
   - conda-forge
 dependencies:
   - python=3.14
-  - numpy=2.5.1
-  - pandas=3.0.3
+  - numpy=2.5.2
+  - pandas=3.0.5
   - pyyaml=6.0.3
   - scipy=1.18.0
   - scikit-learn=1.9.0
-  - matplotlib=3.11.0
+  - matplotlib=3.11.1
   - seaborn=0.13.2
   - pip
   # Optional, feature-specific (uncomment what you use):
   # - faker                                     # fabricated_data source; numpy fallback if absent
   # - pip:
   #     - git+https://github.com/CN-TU/mdcgenpy # data_source: "mdcgen"
-  # pyivm (metrics.evaluate_cluster_label_matching) declares numpy<2.0 but
-  # runs correctly against numpy 2.x; the pip section cannot pass --no-deps,
-  # so install it manually after activation:
-  #     pip install --no-deps pyivm

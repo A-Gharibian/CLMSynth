@@ -265,6 +265,23 @@ def test_balanced_ignores_explicit_proportions():
     assert list(counts) == [250, 250, 250, 250], list(counts)
 
 
+@pytest.mark.parametrize("rule,deviates", [
+    ("proportional_to_marginal", False), ("uniform", True), ("concentrated", True),
+], ids=["marginal", "uniform", "concentrated"])
+def test_spillover_reports_a_broken_marginal(rule, deviates, caplog):
+    """[CLM-304] fires exactly when the delivered counts left their target.
+
+    The catalog holds one fixture per code, so the spillover arm of 304 (the
+    competing_noise arm owns the fixture) can only be covered here.
+    """
+    cfg = base_custom_cfg(spillover_rule=rule)
+    with caplog.at_level(logging.WARNING, logger="clmsynth"):
+        out = generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+    counts = list(np.bincount(np.asarray(out), minlength=4))
+    assert (counts != [400, 300, 200, 100]) is deviates, counts
+    assert ("[CLM-304]" in caplog.text) is deviates, caplog.text
+
+
 @pytest.mark.parametrize("cfg,tag", [
     ({"num_classes": 4, "matching_mode": "perfect",
       "target_metric": {"type": "mcc", "value": 0.5}}, "[CLM-111]"),

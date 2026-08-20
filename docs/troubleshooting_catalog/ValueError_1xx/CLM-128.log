@@ -2,6 +2,7 @@ $ python -m clmsynth.main ValueError_1xx/CLM-128.yaml
 # exit code: 2
 
 INFO - Starting Test Data Orchestrator...
+INFO - Output directory: '{catalog}/_scratch/CLM-128'.
 INFO - Available 'fabricated_data' dataset batteries:
 INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
 INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
@@ -10,3 +11,4 @@ INFO - Generating synthetic data (Seed: 42)...
 INFO - Applying perfect separation ground truth to categorical labels...
 INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
 CRITICAL - Configuration error, aborting run: [CLM-128] spillover_rule 'concentrated': concentrated_labels must be a LIST of integer label ids, each in 0..3; got [99]. Values reaching the output unchecked would put labels in the dataset that num_classes never declared. Note a bare number is not a shorthand for a list: numpy reads it as a RANGE, scattering the remainder over that many labels, the opposite of 'concentrated'. A non-integer (e.g. 1.5) is silently truncated on write, so it is rejected rather than guessed.
+INFO - No output was produced, so the empty run folder '_scratch/CLM-128/{run}' was removed.

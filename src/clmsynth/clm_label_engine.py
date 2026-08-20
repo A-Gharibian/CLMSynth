@@ -14,7 +14,13 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from .clm_errors import InfeasibleAllocationError, clm_error, clm_infeasible, clm_warn
+from .clm_errors import (
+    InfeasibleAllocationError,
+    clm_error,
+    clm_infeasible,
+    clm_missing,
+    clm_warn,
+)
 from .metrics import clustering_ari, clustering_mcc, clustering_mcc_pair
 
 log = logging.getLogger(__name__)
@@ -76,11 +82,7 @@ def resolve_label_counts(cfg: dict, N: int,
     elif cfg.get("proportions"):
         proportions = cfg["proportions"]
         # [CLM-121] Length must match M exactly. A longer list used to enlarge the
-        # label space silently: m_counts is sized from `proportions`, and
-        # _spillover_draws derived M from len(m_counts), so uniform/concentrated
-        # spillover emitted label ids >= num_classes into the written dataset.
-        # (proportional_to_marginal happened to fail with a numpy broadcasting
-        # error instead, which is why this went unnoticed under the default rule.)
+        # label space silently
         if len(proportions) != M:
             detail = (
                 f"The surplus entries become labels {list(range(M, len(proportions)))}, "
@@ -97,6 +99,8 @@ def resolve_label_counts(cfg: dict, N: int,
         # `or {}`, not a .get default: a bare `skew_params:` key in YAML parses to
         # None, which .get would hand straight to _skewed_proportions as the params
         # mapping and crash on .get() there.
+        if "skew_rule" not in cfg:
+            raise clm_missing(203)
         proportions = _skewed_proportions(M, cfg["skew_rule"], cfg.get("skew_params") or {}, rng)
 
     return np.array(_largest_remainder_counts(proportions, N))
@@ -151,17 +155,32 @@ def build_rules(cfg: dict, cluster_ids: list[int],
     if mode == "single":
         if M < 2 or K < 2:
             raise clm_error(103, M=M, K=K)
-        sm = cfg["single_match"]
+        sm = cfg.get("single_match")
+        if sm is None:
+            raise clm_missing(204)
+        if "cluster" not in sm:
+            raise clm_missing(205)
         _check_pair(sm["label"], [sm["cluster"]], M, cluster_ids, "single_match")
         rt = recall_target_override if recall_target_override is not None else 1.0
         return [Rule(label=sm["label"], clusters=[sm["cluster"]], recall_target=rt)]
 
     if mode == "custom":
+        # `is None`, not falsiness: [] is zero rules, which is legal.
+        matrix = cfg.get("assignment_matrix")
+        if matrix is None:
+            raise clm_missing(206)
         rules = []
-        for i, row in enumerate(cfg["assignment_matrix"]):
-            _check_pair(row["label"], row["clusters"], M, cluster_ids,
-                        f"assignment_matrix row {i}")
-            rt = recall_target_override if recall_target_override is not None else row["recall_target"]
+        for i, row in enumerate(matrix):
+            where = f"assignment_matrix row {i}"
+            if "clusters" not in row:
+                raise clm_missing(207, where=where)
+            _check_pair(row["label"], row["clusters"], M, cluster_ids, where)
+            if recall_target_override is not None:
+                rt = recall_target_override
+            elif "recall_target" not in row:
+                raise clm_missing(208, where=where)
+            else:
+                rt = row["recall_target"]
             rules.append(Rule(label=row["label"], clusters=row["clusters"], recall_target=rt))
         return rules
 
@@ -171,15 +190,9 @@ def build_rules(cfg: dict, cluster_ids: list[int],
 def validate_matching_ids(cfg: dict, cluster_ids: list) -> None:
     """Run only the [CLM-104]/[CLM-105] id checks against ONE dataset's cluster ids.
 
-    Deliberately tolerant of a malformed config: anything other than an id
-    problem is left for the engine's own validation to report in its usual place.
-    Split out of build_rules so the pipeline can apply them ahead of time, per
-    dataset, without building rules or resolving recall targets. Unlike every
+    Deliberately tolerant of a malformed config: Unlike every
     other [CLM-1xx] code, 104 and 105 are statements about a *dataset* rather
-    than about the configuration, under `byoc` each CSV brings its own cluster
-    ids and nothing requires them to agree, so the pipeline checks every
-    dataset up front and refuses the batch as a whole rather than discovering the
-    mismatch mid-run.
+    than about the configuration.
     """
     M = cfg.get("num_classes")
     if not isinstance(M, int) or isinstance(M, bool):
@@ -222,8 +235,7 @@ def _ensure_coords(cfg: dict, coords, N: int) -> np.ndarray:
 
 def _validate_target_metric_cfg(cfg: dict, cluster_ids: list) -> None:
     # An absent OR empty/null target_metric (e.g. `target_metric:` in YAML -> None)
-    # is a no-op; the caller gates the whole block on the same truthiness so the two
-    # can never disagree.
+    # is a no-op
     tm = cfg.get("target_metric")
     if not tm:
         return
@@ -232,8 +244,10 @@ def _validate_target_metric_cfg(cfg: dict, cluster_ids: list) -> None:
         raise clm_error(111, mode=mode)
     if tm.get("type") not in ("mcc", "ari"):
         raise clm_error(112, type=tm.get("type"))
-    if not (-1.0 <= tm.get("value", 0) <= 1.0):
-        raise clm_error(113, value=tm.get("value"))
+    if "value" not in tm:
+        raise clm_missing(209)
+    if not (-1.0 <= tm["value"] <= 1.0):
+        raise clm_error(113, value=tm["value"])
     scope = tm.get("scope", "global")
     if scope not in ("pair", "global"):
         raise clm_error(122, scope=scope)
@@ -244,16 +258,11 @@ def _validate_target_metric_cfg(cfg: dict, cluster_ids: list) -> None:
             raise clm_error(123)
         if mode != "single":
             raise clm_error(124)
-        # Validate the (cluster, label) pair up front: _pair_label_counts indexes
-        # cluster_sizes[cluster] and m_counts[label] BEFORE build_rules' own
-        # _check_pair would run, so an unknown cluster / out-of-range label must
-        # surface here as [CLM-105]/[CLM-104], not a raw KeyError/IndexError.
+        # Validate the (cluster, label) pair
         sm = cfg["single_match"]
         _check_pair(sm["label"], [sm["cluster"]], cfg["num_classes"], cluster_ids, "single_match")
         # [CLM-130] The closed form is only exact while EVERY point of l* stays
-        # inside k*: _pair_label_counts sizes l* for that assumption and there is
-        # no search to correct a miss. Any setting that can emit l* elsewhere
-        # silently delivers a different coefficient, so the combination is rejected.
+        # inside k*
         lstar = sm["label"]
         spill = cfg.get("spillover_rule", "proportional_to_marginal")
         bad = None
@@ -317,10 +326,7 @@ def _validate_skew_cfg(cfg: dict) -> None:
     is where the parameters are consumed, a guard placed alongside the other
     validators would run after the counts it protects had already been computed.
 
-    Only the parameters that will actually be read are checked, using the same
-    predicate resolve_label_counts branches on, so a config that supplies explicit
-    proportions (or asks for a balanced split) is not failed for a stale
-    skew_params block it never consults.
+    Only the parameters that will actually be read are checked.
 
     Unknown skew_rule values stay [CLM-107], raised by _skewed_proportions itself.
     """
@@ -386,16 +392,6 @@ def _pair_label_counts(cfg: dict, cluster_sizes: dict[int, int],
                        m_counts: np.ndarray, N: int) -> np.ndarray:
     """Exact single-pair MCC target via the single-dominant construction
     (target_metric.scope='pair', single mode).
-
-    The target label l* is sized so that placing *all* of it inside its cluster
-    k* (recall 1, so no leftover spills back in) makes the 2x2 Matthews phi of
-    the (k*, l*) pair equal the requested value. Inverting
-        phi = sqrt( m_c (N - n_k) / (n_k (N - m_c)) )
-    for the label size gives, with n_k = |k*|,
-        m_c* = phi^2 n_k N / (N - n_k (1 - phi^2)).
-    Returns a copy of `m_counts` with l*'s count set to m_c* and the remaining
-    labels rescaled to fill N - m_c*. No numerical search; the achieved phi
-    equals the target to within one point of integer rounding.
     """
     tm = cfg["target_metric"]
     sm = cfg["single_match"]
@@ -406,7 +402,7 @@ def _pair_label_counts(cfg: dict, cluster_sizes: dict[int, int],
     # of label l* entirely inside k* yields a pair phi in [phi_min, 1.0], phi_min
     # at m_c = 1 (phi_max = 1 at m_c = n_k, an exact 1:1 pair). A request outside
     # the range is clamped to the nearest reachable value with [CLM-307]; the
-    # subset construction can never produce a negative phi.
+    # subset construction can not produce a negative phi.
     phi_max = 1.0
     phi_min = float(np.sqrt((N - n_k) / (n_k * (N - 1)))) if (n_k >= 1 and N > 1) else 0.0
     if not (phi_min <= phi <= phi_max):
@@ -528,7 +524,7 @@ def _spillover_draws(cfg: dict, m_counts: np.ndarray, used_per_label: np.ndarray
     if rule_name == "uniform":
         return rng.integers(0, M, size=n_spillover).tolist()
     if rule_name == "concentrated":
-        targets = cfg.get("concentrated_labels", [int(np.argmax(m_counts))])
+        targets = cfg.get("concentrated_labels") or [int(np.argmax(m_counts))]
         return rng.choice(targets, size=n_spillover).tolist()
     raise clm_error(109, rule_name=rule_name)
 
@@ -593,9 +589,7 @@ def assign_points_in_cluster(
         # `enabled` implies the branch above ran, so distances is real here. The
         # assert states that for a reader and for a type checker, which cannot
         # correlate this condition with the one four lines up. Deliberately not
-        # a zeros array in the else-branch: a placeholder that looks like real
-        # geometry is exactly the silent-wrong-output shape this engine refuses
-        # elsewhere ([CLM-125] exists for the same reason).
+        # a zeros array in the else-branch: [CLM-125] exists for the same reason.
         assert distances is not None
         coreness = -distances if favors == "core" else distances
     else:
@@ -615,7 +609,7 @@ def assign_points_in_cluster(
             # machinery as the global setting (defaults to 'linear' when the
             # global centroid_dependence is off).
             # A favors_override for this label means `favors_overrides` was
-            # truthy, so distances was computed above.
+            # true, so distances was computed above.
             assert distances is not None
             sc = -distances if override == "core" else distances
             chosen = _weighted_pick(idx_avail, count, sc[idx_avail], profile, steepness, rng)
@@ -682,7 +676,8 @@ def _competing_demand(cfg: dict, remaining_capacity: dict[int, int], M: int):
             raise clm_infeasible(152, k=k, claimed=claimed, remaining=remaining_capacity[k])
 
     if extra:
-        clm_warn(log, 304)
+        # Predicted before placement; the counts may still coincide.
+        clm_warn(log, 304, cause="competing_noise active", why="structured noise")
     return extra, overrides
 
 
@@ -760,8 +755,7 @@ def solve_alpha_for_target_metric(cluster_labels, coords, cfg, cluster_ids,
     No closed form: the achieved global metric depends on every rule's
     outcome jointly (unlike the single-pair solve of scope='pair', which
     inverts exactly in _pair_label_counts). This runs a
-    coarse grid scan first, both to bracket the target and to guard
-    against non-strict monotonicity, then bisects within the bracket.
+    coarse grid scan first, then bisects within the bracket.
     All probe evaluations share a fixed seed (common random numbers) so
     differences across candidates come from alpha, not randomization noise.
 
@@ -803,7 +797,6 @@ def solve_alpha_for_target_metric(cluster_labels, coords, cfg, cluster_ids,
         log.info("target_metric: grid search hit tolerance directly "
                  f"(alpha={best_alpha:.3f}, achieved={best_metric:.3f}, target={target:.3f}).")
         return best_alpha
-
     # Only the LOW end's metric is carried: the bisection decides which side to
     # keep by comparing mid against `lo_m`, so the other end needs its alpha and
     # nothing else.
@@ -855,6 +848,8 @@ def generate_clm_labels(cluster_labels: np.ndarray, coords: np.ndarray, cfg: dic
     """
     rng = np.random.default_rng(seed)
     N = len(cluster_labels)
+    if "num_classes" not in cfg:
+        raise clm_missing(201)
     M = cfg["num_classes"]
     if not (1 <= M <= MAX_CARDINALITY):
         raise clm_error(126, M=M, max_val=MAX_CARDINALITY)
@@ -872,6 +867,10 @@ def generate_clm_labels(cluster_labels: np.ndarray, coords: np.ndarray, cfg: dic
     _validate_skew_cfg(cfg)
 
     m_counts = resolve_label_counts(cfg, N, rng)
+
+    # Guarded here, where it is first read.
+    if "matching_mode" not in cfg:
+        raise clm_missing(202)
 
     if cfg["matching_mode"] == "perfect":
         if cfg["num_classes"] != len(cluster_ids):
@@ -918,16 +917,18 @@ def generate_clm_labels(cluster_labels: np.ndarray, coords: np.ndarray, cfg: dic
     # same seed rather than continuing the one above. Two reasons, one of them a
     # defect: resolve_label_counts consumes draws for a dirichlet skew and not
     # for any other rule, so a shared stream reaches allocation in a state that
-    # depends on which skew rule was chosen. The target-metric
-    # probes cannot reproduce that state, so the labeling that was scored and the
-    # labeling that was written came out different, [CLM-309]. With both
-    # starting from default_rng(seed), the winning probe IS the delivered result.
+    # depends on which skew rule was chosen.
     alloc_rng = np.random.default_rng(seed)
     out = _run_allocation_pipeline(cluster_labels, coords, cfg, rules, cluster_ids,
                                     cluster_sizes, m_counts, alloc_rng)
 
     achieved_counts = np.bincount(out, minlength=cfg["num_classes"])
     log.info(f"CLM labels generated. Target counts: {m_counts.tolist()}, achieved: {achieved_counts.tolist()}.")
+
+    # [CLM-304] spillover arm: checked against delivered counts, not the config.
+    spill = cfg.get("spillover_rule", "proportional_to_marginal")
+    if spill in ("uniform", "concentrated") and not np.array_equal(achieved_counts, m_counts):
+        clm_warn(log, 304, cause=f"spillover_rule {spill!r}", why="the leftover fill")
 
     if tm:
         if tm.get("scope", "global") == "pair":
@@ -936,9 +937,7 @@ def generate_clm_labels(cluster_labels: np.ndarray, coords: np.ndarray, cfg: dic
             log.info(f"target_metric: final achieved pair mcc={achieved:.4f} "
                      f"(target was {tm['value']}, pair cluster={sm['cluster']}/label={sm['label']}).")
 
-            # Honors the same 'tolerance' key the global solver reads. It was
-            # hardcoded to 0.01 here, so a requested 0.001 was silently widened and
-            # a requested 0.05 silently narrowed. Only 'max_iter' stays global-only:
+            # The same 'tolerance' key the global solver reads. Only 'max_iter' stays global-only:
             # the pair scope inverts in closed form and never iterates.
             pair_tol = tm.get("tolerance", 0.01)
             if abs(achieved - tm["value"]) > pair_tol:

@@ -168,6 +168,43 @@ def ask_floats(prompt, explain=None) -> list[float]:
             print("    (enter numbers separated by commas)")
 
 
+def ask_strs(prompt, explain=None) -> list[str]:
+    """Comma-separated list of names."""
+    _explain(explain)
+    while True:
+        raw = input(f"  {prompt} (comma-separated): ")
+        vals = [s.strip() for s in raw.split(",") if s.strip()]
+        if vals:
+            return vals
+        print("    (at least one name is required)")
+
+
+def ask_selection(prompt, options, default=None, explain=None):
+    """Picks by number, name, or 'all'."""
+    _explain(explain)
+    while True:
+        raw = _read(prompt, default)
+        if raw == "all":
+            return "all"
+        picked, unknown = [], []
+        for tok in raw.split(","):
+            tok = tok.strip()
+            if not tok:
+                continue
+            if tok.isdigit() and 1 <= int(tok) <= len(options):
+                picked.append(options[int(tok) - 1])
+            elif tok in options:
+                picked.append(tok)
+            else:
+                unknown.append(tok)
+        if unknown:
+            print(f"    (not in this group: {', '.join(unknown)})")
+            continue
+        if picked:
+            return picked
+        print(f"    (choose 1-{len(options)}, name(s), or 'all')")
+
+
 def ask_from(key, **override):
     """Drives the schema question named `key` through the matching prompt helper.
 
@@ -196,6 +233,10 @@ def ask_from(key, **override):
         return ask_ints(prompt, explain=explain)
     if q.kind == "float_list":
         return ask_floats(prompt, explain=explain)
+    if q.kind == "str_list":
+        return ask_strs(prompt, explain=explain)
+    if q.kind == "selection":
+        return ask_selection(prompt, override["options"], default, explain=explain)
     if q.kind == "id":
         return ask_cluster_id(prompt, explain=explain)
     if q.kind == "ids":
@@ -280,8 +321,7 @@ def build_source():
 
 def _byoc_suite():
     input_dir = ask_from("byoc_suite.input_dir")
-    raw = input("  CSV file name(s) WITHOUT '.csv', comma-separated: ").strip()
-    datasets = [s.strip() for s in raw.split(",") if s.strip()] or ["my_clusters"]
+    datasets = ask_from("byoc_suite.datasets")
     cluster_column = ask_from("byoc_suite.cluster_column")
     standardize = ask_from("byoc_suite.standardize")
     seed = ask_from("byoc_suite.seed")
@@ -318,18 +358,7 @@ def _registry_suite(source):
         print(f"    {i}) {d}")
     if len(ds) > 40:
         print(f"    ... and {len(ds) - 40} more")
-    raw = _read("Pick dataset(s) by number/name, comma-separated, or 'all'", "all")
-    if raw == "all":
-        datasets = "all"
-    else:
-        datasets = []
-        for tok in raw.split(","):
-            tok = tok.strip()
-            if tok.isdigit() and 1 <= int(tok) <= len(ds):
-                datasets.append(ds[int(tok) - 1])
-            elif tok in ds:
-                datasets.append(tok)
-        datasets = datasets or "all"
+    datasets = ask_from("registry_suite.datasets", options=ds)
     seed = ask_from("registry_suite.seed")
     return {"batteries": [battery], "datasets": datasets, "seed": seed}
 
@@ -413,10 +442,11 @@ def build_clm(known_k=None) -> dict[str, Any]:
     if mode == "single":
         clm["single_match"] = {
             "cluster": ask_from("clm_label.single_match.cluster"),
-            "label": ask_from("clm_label.single_match.label"),
+            # Cap at M-1 here; the engine's [CLM-104] aborts the whole run.
+            "label": ask_from("clm_label.single_match.label", maxv=M - 1),
         }
     elif mode == "custom":
-        clm["assignment_matrix"] = _build_rules(omit_recall=use_target)
+        clm["assignment_matrix"] = _build_rules(omit_recall=use_target, M=M)
         # split_rule only bites when a rule spans more than one cluster, which
         # 'single' never does, so it stays a custom-only question.
         clm["split_rule"] = ask_from("clm_label.split_rule")
@@ -444,7 +474,7 @@ def build_clm(known_k=None) -> dict[str, Any]:
             print(f"\n  Competing-noise entry {len(entries) + 1}:")
             entries.append({
                 "cluster": ask_from("clm_label.competing_noise.cluster"),
-                "label": ask_from("clm_label.competing_noise.label"),
+                "label": ask_from("clm_label.competing_noise.label", maxv=M - 1),
                 "share": ask_from("clm_label.competing_noise.share"),
                 "favors": ask_from("clm_label.competing_noise.favors"),
             })
@@ -488,14 +518,14 @@ def _add_balance(clm, M):
         clm["skew_params"] = {"alpha": ask_from("clm_label.skew_params.alpha")}
 
 
-def _build_rules(omit_recall):
+def _build_rules(omit_recall, M):
     print("\n  Custom rules: each rule sends a share of ONE label into chosen cluster(s).")
     n = ask_from("clm_label.assignment_matrix._count")
     rules = []
     for i in range(n):
         print(f"\n  Rule {i + 1}:")
         rule: dict[str, Any] = {
-            "label": ask_from("clm_label.assignment_matrix.label"),
+            "label": ask_from("clm_label.assignment_matrix.label", maxv=M - 1),
             "clusters": ask_from("clm_label.assignment_matrix.clusters")}
         if not omit_recall:
             rule["recall_target"] = ask_from("clm_label.assignment_matrix.recall_target")
@@ -507,7 +537,7 @@ def _build_rules(omit_recall):
 # Entry point
 # --------------------------------------------------------------------------- #
 
-def main() -> None:
+def _run() -> None:
     """Runs the wizard: all sections, save the YAML, optionally run main.py."""
     print("=" * 62)
     print("  CLMSynth, User-Friendly Configuration Generator")
@@ -544,8 +574,17 @@ def main() -> None:
                   f"\n      python -m clmsynth.main {out}")
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Entry point; Ctrl-C cancels cleanly."""
     try:
-        main()
-    except (KeyboardInterrupt, EOFError):
+        _run()
+    except KeyboardInterrupt:
         print("\nCancelled.")
+        raise SystemExit(130) from None
+    except EOFError:
+        print("\nCancelled.")
+        raise SystemExit(1) from None
+
+
+if __name__ == "__main__":
+    main()

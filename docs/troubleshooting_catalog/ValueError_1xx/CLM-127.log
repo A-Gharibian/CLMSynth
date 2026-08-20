@@ -1,10 +1,14 @@
 $ python -m clmsynth.main ValueError_1xx/CLM-127.yaml
-# exit code: 2
+# exit code: 1
 
 INFO - Starting Test Data Orchestrator...
+INFO - Output directory: '{catalog}/_scratch/CLM-127'.
 INFO - Available 'byoc' dataset batteries:
 INFO -   - 'local': Bring-your-own-clusters: your CSV with feature columns and exactly one cluster-id column (named by byoc_suite.cluster_column). (Examples: the CSV path(s) listed in byoc_suite.datasets)
 INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'byoc'.
 INFO - Extra fetch kwargs forwarded to 'byoc': {'input_dir': '_data', 'cluster_column': 'cluster', 'standardize': False}
+INFO - BYOC input directory: '{catalog}/_data'.
 INFO - byoc: loaded 'k65_clusters.csv': 195 rows, 2 feature(s), 1 cluster labeling from column 'cluster' (65 clusters).
-CRITICAL - Configuration error, aborting run: [CLM-127] the dataset's cluster count K=65 exceeds the supported maximum of 64.
+ERROR - Skipping local/k65_clusters: [CLM-127] the dataset's cluster count K=65 exceeds the supported maximum of 64.
+ERROR - No datasets were successfully processed.
+INFO - No output was produced, so the empty run folder '_scratch/CLM-127/{run}' was removed.

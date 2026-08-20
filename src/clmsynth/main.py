@@ -387,12 +387,8 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
             n_ok += 1
         except ValueError as e:
             code = getattr(e, "code", None)
-            # [CLM-104]/[CLM-105] are the exception to the rule below: they compare
-            # the config's ids against THIS dataset's cluster ids, so a failure says
-            # nothing about the next dataset, whose ids may differ. Aborting on them
-            # discarded datasets that would have succeeded. BYOC never reaches this
-            # branch.
-            if code in (104, 105):
+            # Judged against THIS dataset's K, ids or features.
+            if code in (102, 105, 119, 125, 127):
                 log.error(f"Skipping {battery}/{dataset}: {e}")
                 continue
             # Any other coded [CLM-1xx] error means the *configuration* is wrong,
@@ -517,6 +513,11 @@ def main() -> None:
         # standing between that claim and the filesystem.
         discard_run_dir_if_barren(run_dir, config_copy)
         sys.exit(2)
+    except KeyboardInterrupt:
+        # Interrupted runs leave no empty folder.
+        log.warning("Interrupted; stopping.")
+        discard_run_dir_if_barren(run_dir, config_copy)
+        sys.exit(130)
 
     if n_ok == 0:
         log.error("No datasets were successfully processed.")
