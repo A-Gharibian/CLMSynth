@@ -1,0 +1,68 @@
+{
+    "@context": "https://doi.org/10.5063/schema/codemeta-2.0",
+    "type": "SoftwareSourceCode",
+    "author": [
+        {
+            "id": "https://orcid.org/0000-0001-7819-0842",
+            "type": "Person",
+            "affiliation": {
+                "type": "Organization",
+                "name": "VSB - Technical University of Ostrava"
+            },
+            "email": "arootin.gharibian@vsb.cz",
+            "familyName": "Gharibian",
+            "givenName": "Arootin"
+        },
+        {
+            "type": "schema:Role",
+            "schema:author": "https://orcid.org/0000-0001-7819-0842",
+            "schema:roleName": "Developer",
+            "schema:startDate": "2026-07-01"
+        }
+    ],
+    "codeRepository": "https://github.com/A-Gharibian/CLMSynth",
+    "contributor": [
+        {
+            "id": "https://orcid.org/0000-0002-7219-1008",
+            "type": "Person",
+            "affiliation": {
+                "type": "Organization",
+                "name": "VSB - Technical University of Ostrava"
+            },
+            "email": "milos.kudelka@vsb.cz",
+            "familyName": "Kudelka",
+            "givenName": "Milos"
+        },
+        {
+            "type": "schema:Role",
+            "contributor": "https://orcid.org/0000-0002-7219-1008",
+            "schema:roleName": "Supervisor ",
+            "schema:startDate": "2026-01-01"
+        }
+    ],
+    "dateCreated": "2026-07-15",
+    "dateModified": "2026-08-20",
+    "datePublished": "2026-07-31",
+    "description": "A synthetic dataset generator that decouples cluster formation from class labels to evaluate cluster-label matching algorithms and measures.",
+    "downloadUrl": "https://github.com/A-Gharibian/CLMSynth/archive/refs/tags/v0.6.8.tar.gz",
+    "funder": {
+        "type": "Organization",
+        "name": "VSB - Technical University of Ostrava"
+    },
+    "keywords": [
+        "cluster-labels",
+        "synthetic benchmark"
+    ],
+    "license": "https://spdx.org/licenses/MIT",
+    "name": "CLMSynth",
+    "operatingSystem": [
+        "Windows",
+        "Linux",
+        "Mac",
+        "BSD"
+    ],
+    "programmingLanguage": "Python 3",
+    "schema:releaseNotes": "Full Changelog: https://github.com/A-Gharibian/CLMSynth/blob/main/CHANGELOG.md",
+    "version": "0.6.8",
+    "developmentStatus": "active"
+}
