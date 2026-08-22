@@ -66,10 +66,11 @@ def plot_feature_scatter(
 
     log.info(f"Generating scatter plot for {x_col} vs {y_col}...")
 
-    sns.set_theme(style="whitegrid", palette="muted")
-    fig, ax = plt.subplots(figsize=(9, 6))
-
+    fig = None
     try:
+        sns.set_theme(style="whitegrid", palette="muted")
+        fig, ax = plt.subplots(figsize=(9, 6))
+
         # Cluster/label ids are categorical, not a continuous scale.
         plot_df = df
         if hue_col is not None and pd.api.types.is_numeric_dtype(df[hue_col]):
@@ -134,4 +135,5 @@ def plot_feature_scatter(
         log.error(f"[PLOT-FAIL] Failed to generate scatter plot: {e}{_max_path_hint(output_path)}")
         return False
     finally:
-        plt.close(fig)
+        if fig is not None:
+            plt.close(fig)

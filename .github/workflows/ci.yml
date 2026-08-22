@@ -166,12 +166,15 @@ jobs:
           sys.exit(1 if missing or yamls != logs else 0)
           PY
 
-      # Four declarations of the version have to agree: three in metadata and
-      # one per shipped document.
+      # Every declaration of the version has to agree: four in metadata (one of
+      # them twice, in codemeta's downloadUrl tag) and one per shipped document.
+      # The release DATE is declared three times over and is checked with them:
+      # it is the half that survives a version bump untouched, so nothing else
+      # would catch it.
       - name: Version agrees across every declaration
         run: |
           python - <<'PY'
-          import sys, re, pathlib, tomllib
+          import sys, re, json, pathlib, tomllib
 
           pyproject = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
           version = pyproject["project"]["version"]
@@ -183,6 +186,12 @@ jobs:
 
           cff = pathlib.Path("CITATION.cff").read_text(encoding="utf-8")
           found["CITATION.cff"] = re.search(r"^version:\s*(\S+)", cff, re.M).group(1)
+
+          codemeta = json.loads(pathlib.Path("codemeta.json").read_text(encoding="utf-8"))
+          found["codemeta.json"] = codemeta.get("version", "(absent)")
+          # The tag the archive URL points at is a second, easily forgotten copy.
+          tag = re.search(r"/v([^/]+)\.tar\.gz$", codemeta.get("downloadUrl", ""))
+          found["codemeta.json downloadUrl"] = tag.group(1) if tag else "(unparsable)"
 
           for tex in sorted(pathlib.Path("docs").rglob("*.tex")):
               head = tex.read_text(encoding="utf-8", errors="replace")[:2000]
@@ -198,11 +207,28 @@ jobs:
               print(f"  {name:45s} {value}")
           disagree = {n: v for n, v in found.items() if v != version}
 
+          # The CHANGELOG entry's date is the reference the other two follow.
+          stale = {}
+          if dated:
+              release_date = dated.group(1)
+              dates = {
+                  "CITATION.cff date-released":
+                      re.search(r"^date-released:\s*(\S+)", cff, re.M).group(1),
+                  "codemeta.json dateModified": codemeta.get("dateModified", "(absent)"),
+              }
+              for name, value in dates.items():
+                  print(f"  {name:45s} {value}")
+              stale = {n: v for n, v in dates.items() if v != release_date}
+
           if disagree:
               print("\nversion disagreement against pyproject's", version)
               for name, value in disagree.items():
                   print(f"  {name} declares {value}")
           if not dated:
               print(f"\nCHANGELOG.md has no dated [{version}] entry")
-          sys.exit(1 if disagree or not dated else 0)
+          if stale:
+              print(f"\ndate disagreement against the CHANGELOG's {dated.group(1)}")
+              for name, value in stale.items():
+                  print(f"  {name} declares {value}")
+          sys.exit(1 if disagree or not dated or stale else 0)
           PY

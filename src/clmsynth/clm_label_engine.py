@@ -190,9 +190,9 @@ def build_rules(cfg: dict, cluster_ids: list[int],
 def validate_matching_ids(cfg: dict, cluster_ids: list) -> None:
     """Run only the [CLM-104]/[CLM-105] id checks against ONE dataset's cluster ids.
 
-    Deliberately tolerant of a malformed config: Unlike every
-    other [CLM-1xx] code, 104 and 105 are statements about a *dataset* rather
-    than about the configuration.
+    Deliberately tolerant of a malformed config. [CLM-105] is a statement about a
+    *dataset*, unlike every other [CLM-1xx] code. [CLM-104] bounds labels by
+    num_classes, so it is configuration-scoped; main.py evaluates it once.
     """
     M = cfg.get("num_classes")
     if not isinstance(M, int) or isinstance(M, bool):

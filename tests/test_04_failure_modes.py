@@ -15,9 +15,9 @@ What is checked:
                        line) and does NOT count as a dataset failure, since
                        the CSV is the deliverable and plotting is best-effort
                        (finding N3)
-  error boundary       a failure inside `plt.subplots()` escapes the function's
-                       own handler, unlike every other plotting failure
-                       (finding N4, characterized not fixed)
+  error boundary       a failure inside `plt.subplots()` returns False like
+                       every other plotting failure (finding N4, closed in
+                       0.6.9)
   exit codes           a missing or malformed config exits 1, distinct from
                        exit 2 for a coded config error and 0 for success
   network timeout      `CLUSTBENCH_TIMEOUT` is passed to `urlopen`
@@ -37,6 +37,7 @@ import yaml
 import clmsynth.main
 from clmsynth import dataset_sources
 from clmsynth.label_context import DatasetContext
+from clmsynth.label_generator import generate_additional_labels
 from clmsynth.main import load_config, resolved_for_report, run_pipeline
 from clmsynth.visualization import plot_feature_scatter
 
@@ -111,9 +112,7 @@ def test_infeasible_allocation_skips_only_the_labelling(tmp_path, monkeypatch):
     That is per-dataset by design, another dataset's cluster sizes may well
     satisfy the same rules, so the batch continues. `good_c` comes *after* the
     failure in iteration order, which is what proves it continued rather than
-    merely having finished everything before it.
-
-    Note what "skipped" means here, because it is narrower than it sounds: only
+    merely having finished everything before it. only
     the *labeling* is skipped. The dataset is still written, still counted in
     `n_ok`, and its CSV simply has no `Label_0` column.
     """
@@ -142,11 +141,11 @@ def test_infeasible_allocation_skips_only_the_labelling(tmp_path, monkeypatch):
 
 
 def test_byoc_id_mismatch_is_refused_before_any_output(tmp_path, monkeypatch, caplog):
-    """`[CLM-104]`/`[CLM-105]` are decided up front for BYOC, as of 0.6.3.
+    """`[CLM-105]` is decided up front for BYOC, as of 0.6.3.
 
-    These two codes are unlike every other coded `[CLM-1xx]`: they compare the
-    configuration's ids against *each dataset's own* cluster ids, and under
-    `byoc` every CSV brings its own.
+    Unlike every other coded `[CLM-1xx]`, it compares the configuration's ids
+    against *each dataset's own* cluster ids, and under `byoc` every CSV brings
+    its own.
     """
     monkeypatch.setattr(clmsynth.main, "plot_feature_scatter", lambda *a, **k: True)
 
@@ -177,6 +176,35 @@ def test_byoc_id_mismatch_is_refused_before_any_output(tmp_path, monkeypatch, ca
         assert offender in caplog.text, f"{offender} was not named in the refusal"
     assert "2 of 4" in caplog.text, "the refusal did not count the offending datasets"
 
+
+
+def test_byoc_label_out_of_range_is_reported_once_not_per_dataset(tmp_path, caplog):
+    """[CLM-104] is a configuration error, reported once."""
+    inputs = tmp_path / "input"
+    inputs.mkdir()
+    rng = np.random.default_rng(0)
+    for name in ("a", "b", "c", "d"):
+        pd.DataFrame({
+            "f1": rng.normal(size=40), "f2": rng.normal(size=40),
+            "cluster": np.repeat([0, 1], 20),
+        }).to_csv(inputs / f"{name}.csv", index=False)
+
+    config = byoc_config(inputs, tmp_path, ["a", "b", "c", "d"])
+    config["label_generation"]["clm_label"]["single_match"]["label"] = 9
+
+    csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
+    for d in (csv_dir, png_dir, txt_dir):
+        d.mkdir()
+
+    with caplog.at_level(logging.CRITICAL, logger="clmsynth"):
+        with pytest.raises(ValueError) as excinfo:
+            run_pipeline("byoc", config, csv_dir, png_dir, txt_dir)
+
+    assert "[CLM-104]" in str(excinfo.value)
+    assert caplog.text.count("[CLM-104]") == 1, \
+        f"104 was reported per dataset, not once:\n{caplog.text}"
+    assert "of 4 BYOC dataset(s)" not in caplog.text, \
+        "the batch summary blamed the datasets for a configuration error"
 
 @pytest.mark.parametrize("name", [
     "../escape", "..\\escape", "sub/dir", "sub\\dir", "C:evil", "..", ".",
@@ -332,25 +360,14 @@ def test_plot_failure_does_not_reduce_the_processed_count(tmp_path, monkeypatch)
     assert (csv_dir / "byoc__local__solo.csv").is_file()
 
 
-def test_figure_creation_failure_escapes_the_functions_own_handler(tmp_path):
-    """Finding N4, characterized rather than fixed.
-
-    `fig, ax = plt.subplots(...)` executes BEFORE the function's try/except, so
-    a failure there is the one plotting error that does not get the friendly
-    "Failed to generate scatter plot" treatment every other failure gets, it
-    propagates raw. Not a leak (no figure exists yet to leak), but an
-    inconsistent boundary: this path relies entirely on `run_pipeline`'s
-    per-dataset guard rather than on the function's own handling.
-
-    Pinned as it behaves NOW. Moving `plt.subplots` inside the `try` makes this
-    fail, which is the prompt to replace it with an assertion that the call
-    returns False like every other failure.
-    """
+def test_figure_creation_failure_returns_false_like_every_other_failure(tmp_path):
+    """Finding N4, closed in 0.6.9. Regression pin."""
     frame = pd.DataFrame({"x": [1, 2, 3], "y": [1, 2, 3], "hue": [0, 1, 0]})
     with mock.patch("clmsynth.visualization.plt.subplots",
-                    side_effect=RuntimeError("simulated figure-creation failure")),          pytest.raises(RuntimeError):
-        plot_feature_scatter(frame, "x", "y", hue_col="hue",
-                             output_path=str(tmp_path / "x.png"), title="t")
+                    side_effect=RuntimeError("simulated figure-creation failure")):
+        assert plot_feature_scatter(
+            frame, "x", "y", hue_col="hue",
+            output_path=str(tmp_path / "x.png"), title="t") is False
 
 
 # ---------------------------------------------------------------------------
@@ -383,6 +400,32 @@ def test_unknown_data_source_processes_nothing_without_raising(tmp_path):
         d.mkdir()
     assert run_pipeline("no_such_source", {}, csv_dir, png_dir, txt_dir) == 0
 
+
+
+@pytest.mark.parametrize("suite", [
+    {"datasets": "all", "seed": 42},
+    {"batteries": None, "datasets": "all", "seed": 42},
+    {"batteries": [], "datasets": "all", "seed": 42},
+], ids=["key-absent", "key-null", "key-empty-list"])
+def test_unset_batteries_stops_the_run_and_names_the_key(suite, tmp_path, caplog):
+    """Unset batteries stops the run. Deliberately uncoded."""
+    config = {
+        "global_settings": {"data_source": "fabricated_data", "output_dir": str(tmp_path)},
+        "fabricated_data_suite": suite,
+        "label_generation": {
+            "n_labels": 1, "source_labeling": "labels0", "noise": 0.1, "seed": 42,
+            "clm_label": {"num_classes": 4, "matching_mode": "perfect"},
+        },
+    }
+    csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
+    for d in (csv_dir, png_dir, txt_dir):
+        d.mkdir()
+
+    with caplog.at_level(logging.ERROR, logger="clmsynth"):
+        assert run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir) == 0
+
+    assert "fabricated_data_suite.batteries" in caplog.text, caplog.text
+    assert not list(csv_dir.glob("*.csv")), "the run did work despite an unset key"
 
 @pytest.mark.parametrize("clm_label,expected_exit", [
     ({"num_classes": 2, "matching_mode": "perfect"}, 0),
@@ -648,6 +691,19 @@ def test_context_refuses_a_misaligned_generated_label():
         with pytest.raises(ValueError, match="misaligned"):
             context.add_generated_label("Label_0", pd.Series(range(bad_length)))
 
+
+
+def test_a_missing_clm_label_is_refused_not_silently_filled():
+    """A config without clm_label is refused."""
+    features = pd.DataFrame({"f1": range(10), "f2": range(10)})
+    context = DatasetContext("src", "battery", features,
+                             ground_truths={"labels0": pd.Series([0] * 5 + [1] * 5)})
+
+    with pytest.raises(KeyError) as excinfo:
+        generate_additional_labels(context, n_labels=1, clm_config=None)
+
+    assert "'clm_label' is required" in str(excinfo.value)
+    assert not context.generated_labels, "a label was attached despite the refusal"
 
 def test_context_accepts_an_aligned_label_and_ignores_its_index():
     """The other half: correct length is accepted, and a foreign index is reset.

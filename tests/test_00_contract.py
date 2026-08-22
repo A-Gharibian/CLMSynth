@@ -1,8 +1,8 @@
 """Contract / invariant checks for the CLM label engine.
 If `00_contract` fails you know something is wrong.
-The diagnostic catalogue covers the failure half of the behavior space: wrong
-input produces the right error. This covers the other half, which nothing else
-does: RIGHT input produces RIGHT output. A sensitive test, it sweeps the valid
+The diagnostic catalogue covers the failure half: wrong
+input produces the right error. The tests here covers the other half:
+RIGHT input produces RIGHT output. A sensitive test, it sweeps the valid
 configuration space broadly and asks whether the engine keeps its promises anywhere
 in it. The risk it targets is not a crash but silent incorrectness, a run that
 succeeds while delivering a labeling whose agreement with the clusters is not what
@@ -356,8 +356,7 @@ def test_case_inventory_is_not_empty():
 
     A module that collects nothing is silently green inside a directory run:
     `pytest` succeeds identically whether this file contributes 41 tests or
-    zero. That is not hypothetical -- this module contributed zero for its
-    entire existence before being converted, and nothing said so.
+    zero.
     """
     assert len(CASES) >= 40, f"expected the full sweep, collected {len(CASES)} cases"
     assert len({name for name, _, _ in CASES}) == len(CASES), "duplicate case names"

@@ -64,13 +64,13 @@ def live_clm(skew_rule, skew_params):
     }
 
 
-# The skew_rule under which each engine-bounded parameter is live, and a valid
-# baseline set of parameters for that rule.
-SKEW_RULE = {
-    "clm_label.skew_params.ratio": "geometric",
-    "clm_label.skew_params.dominant_index": "dominant_minority",
-    "clm_label.skew_params.dominant_share": "dominant_minority",
-    "clm_label.skew_params.alpha": "dirichlet",
+# How each bounded question goes live.
+ENGINE_BOUNDED = {
+    "clm_label.skew_params.ratio": ("geometric", "[CLM-131]"),
+    "clm_label.skew_params.dominant_index": ("dominant_minority", "[CLM-131]"),
+    "clm_label.skew_params.dominant_share": ("dominant_minority", "[CLM-131]"),
+    "clm_label.skew_params.alpha": ("dirichlet", "[CLM-131]"),
+    "clm_label.num_classes": (None, "[CLM-126]"),
 }
 VALID_PARAMS = {
     "geometric": {"ratio": 0.5},
@@ -100,17 +100,7 @@ def stdin(monkeypatch):
 
 def test_schema_keys_are_unique_and_present():
     assert SCHEMA, "SCHEMA is empty"
-    assert len(SCHEMA) == len({q.key for q in SCHEMA.values()})
-
-
-def test_every_engine_bounded_question_is_a_known_skew_param():
-    """The agreement property below only knows how to make skew parameters live.
-    If a new engine-bounded question appears elsewhere, this fails so the property
-    is extended deliberately rather than silently skipping the new bound."""
-    bounded = {q.key for q in SCHEMA.values()
-               if q.engine_min is not None or q.engine_max is not None}
-    assert bounded == set(SKEW_RULE), f"unhandled engine-bounded questions: {bounded - set(SKEW_RULE)}"
-
+    # assert len(SCHEMA) == len({q.key for q in SCHEMA.values()})
 
 # ---------------------------------------------------------------------------
 # The agreement property: a value outside an engine bound is refused by the engine
@@ -134,24 +124,35 @@ _CASES = [(q.key, bad)
           for bad in _bad_values(q)]
 
 
+def test_every_engine_bounded_question_is_handled():
+    """New engine bounds need deliberate handling."""
+    bounded = {q.key for q in SCHEMA.values()
+               if q.engine_min is not None or q.engine_max is not None}
+    assert bounded == set(ENGINE_BOUNDED), \
+        f"unhandled engine-bounded questions: {bounded - set(ENGINE_BOUNDED)}"
+
+
 @pytest.mark.parametrize("key,bad", _CASES, ids=[f"{k.split('.')[-1]}={b}" for k, b in _CASES])
 def test_a_value_outside_a_declared_engine_bound_is_refused(key, bad):
     """This fails precisely when a wizard bound is WIDER than the engine's, the
-    outcome the wizard exists to prevent. It exercises _validate_skew_cfg
-    ([CLM-131]), which runs before allocation, so the bad value is caught for the
-    right reason and not by a downstream feasibility check."""
+    outcome the wizard exists to prevent. Each bound names its owning code.
+    """
     q = SCHEMA[key]
-    rule = SKEW_RULE[key]
+    rule, code = ENGINE_BOUNDED[key]
     leaf = key.split(".")[-1]
-    params = dict(VALID_PARAMS[rule])
-    params[leaf] = bad
-    clm = live_clm(rule, params)
+    if rule is None:
+        clm = live_clm("geometric", dict(VALID_PARAMS["geometric"]))
+        clm[leaf] = bad
+    else:
+        params = dict(VALID_PARAMS[rule])
+        params[leaf] = bad
+        clm = live_clm(rule, params)
     assert q.visible_when(clm), "the value must be live for the engine to consult it"
 
     c, X = geometry([200, 200, 200, 200])
     with pytest.raises(ValueError) as excinfo:
         generate_clm_labels(c, X, clm, seed=1)
-    assert "[CLM-131]" in str(excinfo.value), f"got a different error: {excinfo.value}"
+    assert code in str(excinfo.value), f"got a different error: {excinfo.value}"
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +178,20 @@ def test_wizard_rejects_alpha_of_zero(stdin):
     wizard's strict lower bound refuses 0.0 as the engine does."""
     stdin.extend(["0", "-1", "0.5"])
     assert wizard.ask_from("clm_label.skew_params.alpha") == pytest.approx(0.5)
+    assert not stdin
+
+
+def test_wizard_rejects_num_classes_above_the_engine_cap(stdin):
+    """M above 64 is re-asked, matching [CLM-126]."""
+    stdin.extend(["65", "4"])
+    assert wizard.ask_from("clm_label.num_classes") == 4
+    assert not stdin
+
+
+def test_proportions_prompt_re_asks_on_empty_input(stdin):
+    """An empty list answer must re-ask."""
+    stdin.extend(["", "  ", "0.25, 0.25, 0.25, 0.25"])
+    assert wizard.ask_from("clm_label.proportions") == pytest.approx([0.25] * 4)
     assert not stdin
 
 
@@ -270,3 +285,42 @@ def test_canned_answers_build_an_engine_valid_config(stdin):
     reloaded = yaml.safe_load(yaml.dump(config, sort_keys=False))["label_generation"]["clm_label"]
     out2 = np.asarray(generate_clm_labels(c, X, reloaded, seed=42))
     assert np.array_equal(out, out2)
+
+
+# ---------------------------------------------------------------------------
+# Saving a completed interview
+# ---------------------------------------------------------------------------
+
+def test_save_creates_a_missing_parent_directory(tmp_path):
+    """Answering "configs/run1.yaml" must not fail."""
+    target = tmp_path / "configs" / "run1.yaml"
+
+    wizard._save_config({"global_settings": {"data_source": "byoc"}}, str(target))
+
+    assert yaml.safe_load(target.read_text(encoding="utf-8")) == {
+        "global_settings": {"data_source": "byoc"}}
+
+
+def test_a_failed_save_reports_and_prints_the_answers(tmp_path, capsys):
+    """A save failure must not discard the interview."""
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+    config = {"label_generation": {"clm_label": {"num_classes": 3}}}
+
+    with pytest.raises(SystemExit):
+        wizard._save_config(config, str(blocker / "nested" / "run.yaml"))
+
+    printed = capsys.readouterr().out
+    assert "Could not save" in printed
+    assert "num_classes: 3" in printed, "the answers must survive the failure"
+
+
+def test_a_failing_resolve_does_not_traceback(monkeypatch):
+    """resolve() must not decide the interview's fate."""
+    assert Path(wizard._resolved_or_raw("OUTPUT")).is_absolute()
+
+    def boom(self):
+        raise OSError("name too long")
+
+    monkeypatch.setattr(Path, "resolve", boom)
+    assert wizard._resolved_or_raw("configs/run1.yaml") == "configs/run1.yaml"

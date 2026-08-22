@@ -187,25 +187,27 @@ def test_build_run_dir_reserves_what_it_returns(tmp_path):
 def test_build_run_dir_never_hands_out_the_same_name_twice(tmp_path):
     """Repeated calls in the same wall-clock second must diverge.
     All three share a `DDMMYY_Source_HHMMSS` stem, so this is the collision path,
-    not the happy one. No caller creates anything here: that is the point --
+    not the happy one. No caller creates anything here: that is the point
     reservation is now the function's own job.
+        Since 0.6.3 `build_run_dir` creates each folder as it hands it out, so the
+    caller no longer creates them here, doing so would now raise
+    FileExistsError against the folder the previous call just made. The suffix
+    behavior under test is unchanged; only who does the `mkdir` moved.
     """
     paths = [build_run_dir(tmp_path, "IsolationTest") for _ in range(3)]
-
     assert len(set(paths)) == 3, f"a name was reused: {paths}"
-    assert all(p.is_dir() for p in paths)
+    assert all(p.is_dir() for p in paths), "build_run_dir returned a path it did not create"
     assert len(list(tmp_path.iterdir())) == 3, "a folder was created that was never returned"
-
 
 # ---------------------------------------------------------------------------
 # Structural: the package is synchronous
 # ---------------------------------------------------------------------------
 
-def test_module_level_registries_survive_a_run_unchanged():
+def test_module_level_registries_survive_a_run_unchanged(tmp_path):
     """Nothing accumulates in module-level state across a pipeline run.
 
     The package keeps a dozen module-level containers, `CODES`, `FETCHERS`,
-    `SOURCE_METADATA`, `SOURCE_DATASETS`, `_METRIC_FUNCS` and friends. All are
+    `SOURCE_METADATA`, `SOURCE_DATASETS`, `_METRIC_FUNCS`. All are
     lookup tables built once at import; two `SOURCE_METADATA` writes exist but
     both run at module level during import, not inside any function.
 
@@ -232,6 +234,12 @@ def test_module_level_registries_survive_a_run_unchanged():
         "main.SOURCE_DISPLAY": main_mod.SOURCE_DISPLAY,
     }
     before = {name: _copy.deepcopy(obj) for name, obj in watched.items()}
+
+    csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
+    for d in (csv_dir, png_dir, txt_dir):
+        d.mkdir()
+    assert run_pipeline("fabricated_data", pipeline_config(tmp_path),
+                        csv_dir, png_dir, txt_dir) == 1
 
     _fabricate(42)
     from clmsynth.clm_label_engine import generate_clm_labels

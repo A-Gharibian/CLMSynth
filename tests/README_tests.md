@@ -1,7 +1,9 @@
 # Tests modules
-### version 0.6.8
 
-A record of test modules are kept here for reference.
+[![Version](https://img.shields.io/badge/version-0.6.9-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
+<!-- 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/{owner}/{repo}/badge)](https://scorecard.dev/viewer/?uri=github.com/{owner}/{repo})
+-->
 
 ## Main tests
 located on the main tests directory, refer to README for instructions.

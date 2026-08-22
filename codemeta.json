@@ -41,10 +41,10 @@
         }
     ],
     "dateCreated": "2026-07-15",
-    "dateModified": "2026-08-20",
+    "dateModified": "2026-08-23",
     "datePublished": "2026-07-31",
     "description": "A synthetic dataset generator that decouples cluster formation from class labels to evaluate cluster-label matching algorithms and measures.",
-    "downloadUrl": "https://github.com/A-Gharibian/CLMSynth/archive/refs/tags/v0.6.8.tar.gz",
+    "downloadUrl": "https://github.com/A-Gharibian/CLMSynth/archive/refs/tags/v0.6.9.tar.gz",
     "funder": {
         "type": "Organization",
         "name": "VSB - Technical University of Ostrava"
@@ -63,6 +63,6 @@
     ],
     "programmingLanguage": "Python 3",
     "schema:releaseNotes": "Full Changelog: https://github.com/A-Gharibian/CLMSynth/blob/main/CHANGELOG.md",
-    "version": "0.6.8",
+    "version": "0.6.9",
     "developmentStatus": "active"
 }

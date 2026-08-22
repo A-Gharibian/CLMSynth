@@ -18,7 +18,7 @@ global_settings:
 label_generation:
   n_labels: {n_labels}          # produces Label_0, Label_1, ...
   source_labeling: "{source_labeling}"
-  noise: {noise}                # fallback only, used if clm_label is absent
+  noise: {noise}
   seed: {label_seed}
 
   # --- CLUSTER-LABEL MATCHING (CLM) CONFIGURATION ---

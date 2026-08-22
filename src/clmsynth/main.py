@@ -188,14 +188,28 @@ def _byoc_cluster_ids(input_dir, dataset: str, cluster_column: str):
     return sorted(column.dropna().unique().tolist(), key=str)
 
 
-def precheck_byoc_matching_ids(jobs, fetch_kwargs: dict, clm_config: dict | None) -> None:
-    """Resolve [CLM-104]/[CLM-105] for every BYOC dataset before any work begins.
+def _configured_cluster_ids(clm_config: dict) -> list:
+    """Cluster ids the configuration itself names."""
+    mode = clm_config.get("matching_mode")
+    if mode == "single":
+        sm = clm_config.get("single_match") or {}
+        return [sm["cluster"]] if "cluster" in sm else []
+    if mode == "custom":
+        return [k for row in (clm_config.get("assignment_matrix") or [])
+                if isinstance(row, dict) for k in (row.get("clusters") or [])]
+    return []
 
-    Those two codes validate label and cluster ids against each dataset's *own*
-    ids, and under `byoc` every CSV brings its own. Discovering a mismatch
-    mid-loop used to abort the whole run, discarding both the datasets already
-    written and the ones that would have succeeded. Checking every CSV up front
-    means the run either starts knowing the ids line up or refuses before producing a single output file.
+
+def precheck_byoc_matching_ids(jobs, fetch_kwargs: dict, clm_config: dict | None) -> None:
+    """Resolve [CLM-105] for every BYOC dataset before any work begins.
+
+    It validates cluster ids against each dataset's *own* ids, and under `byoc`
+    every CSV brings its own. Discovering a mismatch mid-loop used to abort the
+    whole run, discarding both the datasets already written and the ones that
+    would have succeeded. Checking every CSV up front means the run either
+    starts knowing the ids line up or refuses before producing a single output file.
+
+    [CLM-104] is checked once, before the loop.
 
     Raises the first offending dataset's coded error, after logging every one of
     them, so a batch with several mismatches is fixed in one pass rather than
@@ -204,6 +218,13 @@ def precheck_byoc_matching_ids(jobs, fetch_kwargs: dict, clm_config: dict | None
     cluster_column = fetch_kwargs.get("cluster_column")
     if not clm_config or not isinstance(cluster_column, str):
         return                       # byoc_source rejects a bad cluster_column itself
+
+    # [CLM-104] bounds labels by num_classes: dataset-independent.
+    try:
+        validate_matching_ids(clm_config, _configured_cluster_ids(clm_config))
+    except ValueError as e:
+        log.critical(f"Configuration error, aborting run: {e}")
+        raise
 
     failures = []
     for battery, dataset in jobs:
@@ -220,7 +241,7 @@ def precheck_byoc_matching_ids(jobs, fetch_kwargs: dict, clm_config: dict | None
     for tag, error in failures:
         log.critical(f"{tag}: {error}")
     log.critical(
-        f"{len(failures)} of {len(jobs)} BYOC dataset(s) do not contain the cluster/label "
+        f"{len(failures)} of {len(jobs)} BYOC dataset(s) do not contain the cluster "
         "ids this configuration matches on. Aborting before any output is written; "
         "every offending dataset is listed above."
     )

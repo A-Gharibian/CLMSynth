@@ -23,6 +23,29 @@ from .questions import SCHEMA
 # is imported. Keep the value in step with visualization._MAX_PATH by hand.
 _MAX_PATH = 260
 
+
+# Duplicated, not imported: main.py pulls matplotlib.
+def _resolved_or_raw(path_value) -> str:
+    """Absolute form, or the raw value."""
+    try:
+        return str(Path(path_value).resolve())
+    except (OSError, ValueError):
+        return str(path_value)
+
+
+def _save_config(config: dict, out: str) -> str:
+    """Write the config, creating its folder."""
+    try:
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_text(yaml.dump(config, sort_keys=False, default_flow_style=False),
+                             encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        print(f"\n  Could not save to '{out}': {exc}")
+        print("  Your answers follow, so nothing is lost:\n")
+        print(yaml.dump(config, sort_keys=False, default_flow_style=False))
+        raise SystemExit(1) from None
+    return out
+
 # --------------------------------------------------------------------------- #
 # Input helpers: each explains, shows a [default], and re-asks on bad input.
 # --------------------------------------------------------------------------- #
@@ -163,9 +186,13 @@ def ask_floats(prompt, explain=None) -> list[float]:
     while True:
         raw = input(f"  {prompt} (comma-separated): ").strip()
         try:
-            return [float(x) for x in raw.split(",") if x.strip()]
+            vals = [float(x) for x in raw.split(",") if x.strip()]
         except ValueError:
             print("    (enter numbers separated by commas)")
+            continue
+        if vals:
+            return vals
+        print("    (at least one value is required)")
 
 
 def ask_strs(prompt, explain=None) -> list[str]:
@@ -557,9 +584,9 @@ def _run() -> None:
     out = ask_from("output.path")
     if not out.lower().endswith((".yaml", ".yml")):
         out += ".yaml"                       # always a .yaml file, distinct from any output folder
-    if Path(out).resolve() == Path(gs["output_dir"]).resolve():
+    if _resolved_or_raw(out) == _resolved_or_raw(gs["output_dir"]):
         out = "config_" + out                # last-ditch guard against a folder/file name clash
-    Path(out).write_text(yaml.dump(config, sort_keys=False, default_flow_style=False), encoding="utf-8")
+    _save_config(config, out)
     print(f"\n  Wrote '{out}'.")
     print(f"  Run it any time with:  python -m clmsynth.main {out}")
     if ask_from("run.now"):

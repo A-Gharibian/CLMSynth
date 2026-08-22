@@ -1,5 +1,5 @@
 # Troubleshooting and Diagnostic Catalogue
-[![Version](https://img.shields.io/badge/version-0.6.8-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
+[![Version](https://img.shields.io/badge/version-0.6.9-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
 
 A core requirement of *CLMSynth* package is to completely cover all configuration outcomes,
 which means the program either generates correct labels based on the provided configuration, 

@@ -246,7 +246,7 @@ def print_battery_info(source: str) -> None:
 
 
 # ===========================================================================
-# Source 1: clustbench
+# Source 1: clustering_benchmarks
 # ===========================================================================
 
 def _loadtxt_url(url: str, **loadtxt_kwargs) -> np.ndarray:

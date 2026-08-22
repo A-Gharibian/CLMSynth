@@ -22,7 +22,7 @@ def generate_additional_labels(
     """Attaches `n_labels` generated label columns to `context`.
 
     Each label "i" uses "seed + i", so labels differ but the run is reproducible.
-    With a `clm_config` the CLM engine is used.
+    Requires `clm_config`; the noise fallback is retired.
     """
     if source_labeling not in context.ground_truths:
         raise KeyError(f"'{source_labeling}' not found for {context.battery}/{context.dataset}; "
@@ -31,16 +31,17 @@ def generate_additional_labels(
     cluster_labels = context.ground_truths[source_labeling].to_numpy()
     coords = context.features.to_numpy()
 
+    if not clm_config:
+        raise KeyError(f"'clm_label' is required for {context.battery}/{context.dataset}; "
+                       "the noise fallback is retired.")
+
     for i in range(n_labels):
-        if clm_config:
-            series = generate_clm_labels(cluster_labels, coords, clm_config, seed=seed + i)
-        else:
-            series = _legacy_noise_flip(cluster_labels, noise=noise, seed=seed + i)
+        series = generate_clm_labels(cluster_labels, coords, clm_config, seed=seed + i)
         context.add_generated_label(context.next_generated_label_name(), series)
 
 
 def _legacy_noise_flip(base, noise, seed):
-    """Superseded by generate_clm_labels; kept only for configs without clm_label.
+    """Superseded by generate_clm_labels; no longer called.
     Excludes the point's own class from the reassignment pool, without this,
     `noise` doesn't equal the true corruption rate."""
     rng = np.random.default_rng(seed)

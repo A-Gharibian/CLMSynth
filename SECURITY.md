@@ -9,8 +9,8 @@ long-term-support branch.
 
 | Version   | Supported          |
 |-----------|--------------------|
-| `0.6.8`   | :white_check_mark: |
-| < `0.6.8` | :x:                |
+| `0.6.9`   | :white_check_mark: |
+| < `0.6.9` | :x:                |
 
 
 ## Reporting a vulnerability

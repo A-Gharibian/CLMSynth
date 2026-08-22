@@ -430,6 +430,44 @@ def test_generate_config_stays_silent_on_a_valid_payload(tmp_path, caplog):
     assert not caplog.text.strip(), f"valid payload produced warnings:\n{caplog.text}"
 
 
+def test_byoc_render_round_trips_a_windows_path(tmp_path):
+    """Rendered byoc config parses back unchanged."""
+    from clmsynth.generate_config import generate_base_config
+
+    payload = dict(MINIMAL_PAYLOAD)
+    payload.update({"data_source": "byoc", "batteries": ["clinical"],
+                    "datasets": ["cohort_a"], "input_dir": r"C:\data\in",
+                    "cluster_column": "cluster", "standardize": True})
+    out = tmp_path / "byoc.yaml"
+    generate_base_config(payload, output_path=str(out))
+
+    suite = yaml.safe_load(out.read_text(encoding="utf-8"))["byoc_suite"]
+    assert suite["input_dir"] == r"C:\data\in"
+    assert suite["cluster_column"] == "cluster"
+    assert suite["batteries"] == ["clinical"]
+    assert suite["datasets"] == ["cohort_a"]
+
+
+@pytest.mark.parametrize("key,expected", [
+    ("proportions", []),
+    ("batteries", "all"),
+    ("datasets", "all"),
+], ids=["proportions", "batteries", "datasets"])
+def test_valueless_payload_key_renders_its_default(key, expected, tmp_path):
+    """Null key renders its documented default."""
+    from clmsynth.generate_config import generate_base_config
+
+    payload = dict(MINIMAL_PAYLOAD)
+    payload[key] = None
+    out = tmp_path / "out.yaml"
+    generate_base_config(payload, output_path=str(out))
+
+    loaded = yaml.safe_load(out.read_text(encoding="utf-8"))
+    got = (loaded["fabricated_data_suite"][key] if key != "proportions"
+           else loaded["label_generation"]["clm_label"][key])
+    assert got == expected
+
+
 # ---------------------------------------------------------------------------
 # Characterisation: currently uncoded, and on the roadmap to gain a code
 # (ROADMAP item 2, "uncoded errors to give [CLM-###] diagnostics").

@@ -1,8 +1,8 @@
 # CLMSynth Roadmap
 
-[![Version](https://img.shields.io/badge/version-0.6.8-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
+[![Version](https://img.shields.io/badge/version-0.6.9-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
 
-Planned work from 0.6.9 to 1.0.0, for a description of what the software does *today*,
+Planned work from 0.7.0dev to 1.0.0, for a description of what the software does *today*,
 refer to  **`../README.md`**. For a record of past changes, refer to **`../CHANGELOG.md`.** 
 
 ## Conventions
@@ -14,7 +14,60 @@ specified; a minor release (`0.x.0`) ships a capability that did not exist befor
 one is therefore additive, and growing the registry is on its own enough to make
 a release a minor rather than a patch, except a fix.
 
-## 0.6.9
+## 0.7.0
+
+### columns that are neither features nor clusters.
+
+BYOC's premise is that a user brings the feature subset their clustering was
+computed in, plus the cluster column. In practice, they often have more: an
+outcome variable, a second labeling from another method, an identifier. The
+intention has always been that those travel with the data without entering the
+CLM machinery, as "other tags".
+
+There is no way to say so. `byoc_source` treats **every** non-cluster column as
+a feature, so such a column joins the geometry and shifts centroid placement
+without anyone noticing. That is also why 0.6.4's import requirements insist all
+non-cluster columns are numeric: with no way to declare a passenger, anything
+present must be a feature.
+
+- **A `byoc_suite.tag_columns` declaration**, listing columns carried through to
+  the output CSV untouched and excluded from the feature set. Unlike the import
+  requirements this is a *feature*, not a guard: it accepts input that is
+  currently mishandled rather than rejecting input that is wrong.
+
+  Implementation consequences:
+
+  - tag columns are exempt from the numeric requirement, since a tag is usually a
+    string, but not from the reserved-name or duplicate-name checks;
+  - a name in `tag_columns` that is absent from the file should be an error, not
+    a silent no-op, on the same reasoning as `cluster_column`;
+  - naming the cluster column as a tag is a contradiction and should say so;
+  - the manual's "Known limitation" note under the BYOC import requirements comes
+    out when this lands.
+
+### Will be fixed:
+#### `B101`, `B404`, `B603`, `B310`
+
+Recorded with their individual reasons in `[tool.bandit]` in `../pyproject.toml`:
+two `assert`s guarding internal allocation invariants that no configuration can
+reach, and the wizard's `subprocess.run`, whose argument vector is built from
+`sys.executable` and a path the wizard itself just wrote, with no shell and no
+user string reaching `argv`.
+
+#### Two contradicting policies for non-numeric columns.
+- byoc_source.py:121-127 vs 190-199: 
+  validate_import rejects the whole file for any non-numeric feature column; fetch_byoc_data then has a warn-and-drop
+  branch that can never fire. The one case where they disagree is boolean columns: is_numeric_dtype(bool) is True
+  (passes validation) but select_dtypes([np.number]) excludes bool (gets dropped).
+
+#### Null `datasets:` crashes main.py:283 with an uncaught TypeError.
+
+#### Fixes and Modifications during article review will be applied to this release.
+
+
+---
+
+## 0.8.0, 
 
 ### Reachability: the MCC ceiling
 
@@ -49,68 +102,7 @@ a release a minor rather than a patch, except a fix.
   constraint.
 
 
-### To Be Fixed 
-- label_generator.py:50
-  legacy noise mode crashes on a single-cluster ground truth.
-  rng.choice(classes[classes != base[idx]]) gets an empty array when classes has one element, 
-  the no-clm_label path (byoc_source.py:108). BYOC rejects single-cluster files, but no other source does.
-
----
-
-## 0.7.0
-
-### columns that are neither features nor clusters.
-
-BYOC's premise is that a user brings the feature subset their clustering was
-computed in, plus the cluster column. In practice, they often have more: an
-outcome variable, a second labeling from another method, an identifier. The
-intention has always been that those travel with the data without entering the
-CLM machinery, as "other tags".
-
-There is no way to say so. `byoc_source` treats **every** non-cluster column as
-a feature, so such a column joins the geometry and shifts centroid placement
-without anyone noticing. That is also why 0.6.4's import requirements insist all
-non-cluster columns are numeric: with no way to declare a passenger, anything
-present must be a feature.
-
-- **A `byoc_suite.tag_columns` declaration**, listing columns carried through to
-  the output CSV untouched and excluded from the feature set. Unlike the import
-  requirements this is a *feature*, not a guard: it accepts input that is
-  currently mishandled rather than rejecting input that is wrong.
-
-  Implementation consequences:
-
-  - tag columns are exempt from the numeric requirement, since a tag is usually a
-    string, but not from the reserved-name or duplicate-name checks;
-  - a name in `tag_columns` that is absent from the file should be an error, not
-    a silent no-op, on the same reasoning as `cluster_column`;
-  - naming the cluster column as a tag is a contradiction and should say so;
-  - the manual's "Known limitation" note under the BYOC import requirements comes
-    out when this lands.
-
-### Will be fixed:
-#### `B101`, `B404`, `B603`
-
-Recorded with their individual reasons in `[tool.bandit]` in `../pyproject.toml`:
-two `assert`s guarding internal allocation invariants that no configuration can
-reach, and the wizard's `subprocess.run`, whose argument vector is built from
-`sys.executable` and a path the wizard itself just wrote, with no shell and no
-user string reaching `argv`.
-
-#### Two contradicting policies for non-numeric columns.
-- byoc_source.py:121-127 vs 190-199: 
-  validate_import rejects the whole file for any non-numeric feature column; fetch_byoc_data then has a warn-and-drop
-  branch that can never fire. The one case where they disagree is boolean columns: is_numeric_dtype(bool) is True
-  (passes validation) but select_dtypes([np.number]) excludes bool (gets dropped).
-
-#### Fixes and Modifications during article review will be applied to this release.
-
-
----
-
-## 0.8.0, 
-
-**Parallel-safe batch execution and performance release**
+### **Parallel-safe batch execution and performance release**
 
 ### Fixed
 
@@ -287,11 +279,9 @@ Ships after Python 3.15 is released and tested, with supported Python versions *
   **conda-forge needs neither.** The feedstock verifies a `sha256` of the
   published sdist.
 
-- **The two documented non-extras stay non-extras.** `mdcgenpy` is only available
+- **The documented non-extra stays a non-extra.** `mdcgenpy` is only available
   as a git repository and PyPI rejects uploads whose metadata carries direct-URL
-  dependencies; `pyivm` pins `numpy<2.0`, which would downgrade this project's
-  numpy during resolution. Both remain README install instructions.
-  - A fork of `pyivm` working with more recent version of `numpy` can be considered here.
+  dependencies. It remains a README install instruction.
 
 - **Archival.** 0.6.0 is on Zenodo with a DOI; the 1.0 tag should get its own, and
   `CITATION.cff` updated to point at it.
@@ -310,12 +300,8 @@ Ships after Python 3.15 is released and tested, with supported Python versions *
 
 ### Resolved
 
-- **`evaluate_cluster_label_matching` decided either way.** It is exported in
-  `__all__`, documented as a "provisional, not-yet-implemented" internal-validity
-  hook, and never called by the pipeline; `pyivm` is an unlisted optional import
-  that cannot be a proper extra because its `numpy<2.0` pin would downgrade the
-  project's own numpy. This is the last tag that a decision to include it will be
-  considered.
+- **`evaluate_cluster_label_matching` decided either way.** Removed in 0.6.8, with
+  its optional `pyivm` import.
 
 ---
 

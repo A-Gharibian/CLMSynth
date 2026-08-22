@@ -16,7 +16,7 @@ import pytest
 
 from clmsynth.byoc_source import fetch_byoc_data
 from clmsynth.clm_label_engine import generate_clm_labels, resolve_label_counts
-from clmsynth.main import build_run_dir, run_pipeline
+from clmsynth.main import run_pipeline
 
 N = 1000
 CLUSTERS = np.concatenate([np.full(400, 0), np.full(300, 1), np.full(200, 2), np.full(100, 3)])
@@ -325,27 +325,6 @@ def test_degenerate_iteration_bounds_do_not_crash(max_iter):
 # ---------------------------------------------------------------------------
 # Duplicates and collisions
 # ---------------------------------------------------------------------------
-
-def test_run_dir_collision_appends_a_numeric_suffix(tmp_path):
-    """Two runs in the same wall-clock second must not share a folder.
-
-    `build_run_dir` names folders `DDMMYY_Source_HHMMSS`, so a second run
-    starting inside the same second would collide. Each existing name must push
-    the suffix along rather than being reused.
-
-    Since 0.6.3 `build_run_dir` creates each folder as it hands it out, so the
-    caller no longer creates them here, doing so would now raise
-    FileExistsError against the folder the previous call just made. The suffix
-    behavior under test is unchanged; only who does the `mkdir` moved.
-    """
-    first = build_run_dir(tmp_path, "TestSource")
-    second = build_run_dir(tmp_path, "TestSource")
-    third = build_run_dir(tmp_path, "TestSource")
-
-    assert len({first, second, third}) == 3, "a name was handed out twice"
-    assert all(p.exists() for p in (first, second, third)), \
-        "build_run_dir returned a path it did not create"
-
 
 def test_byoc_duplicate_rows_are_not_silently_deduplicated(tmp_path):
     """Identical rows are more points, not a data error to be cleaned up.

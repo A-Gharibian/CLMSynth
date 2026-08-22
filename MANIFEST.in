@@ -42,7 +42,6 @@ global-exclude .DS_Store
 prune src/clmsynth.egg-info
 prune .venv
 prune .idea
-prune .claude
 prune Inspection
 prune tests
 prune build

@@ -161,7 +161,7 @@ _QUESTIONS: list[Question] = [
                 "they split into (e.g. 3 -> values 0, 1, 2), sized to your whole dataset.\n"
                 "At least 2: one label for everything has no matching to measure, and\n"
                 "some modes/skews are undefined at M=1.",
-        default=3, lo=2),
+        default=3, lo=2, hi=64, engine_max=64),  # floor of 2 is UI-only
     Question(
         "clm_label.matching_mode", "choice", "Matching mode",
         explain="How should the new label relate to your clusters?\n"

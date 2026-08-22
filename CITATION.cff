@@ -27,8 +27,8 @@ authors:
     affiliation: "VSB - Technical University of Ostrava"
     orcid: "https://orcid.org/0000-0002-7219-1008"
 
-version: 0.6.8
-date-released: 2026-08-20
+version: 0.6.9
+date-released: 2026-08-23
 license: MIT
 repository-code: "https://github.com/A-Gharibian/CLMSynth"
 doi: 10.5281/zenodo.21751081
@@ -86,19 +86,19 @@ references:
     year: 2019
     doi: 10.1007/s00357-019-9312-3
 
-  - type: article
-    title: "Generating the ground truth: Synthetic data for soft label and label noise research"
-    authors:
-      - family-names: de Vries
-        given-names: Sjoerd
-      - family-names: Thierens
-        given-names: Dirk
-    journal: "International Journal of Data Science and Analytics"
-    volume: 20
-    start: 5603
-    end: 5615
-    year: 2025
-    doi: 10.1007/s41060-025-00786-z
+#  - type: article
+#    title: "Generating the ground truth: Synthetic data for soft label and label noise research"
+#    authors:
+#      - family-names: de Vries
+#        given-names: Sjoerd
+#      - family-names: Thierens
+#        given-names: Dirk
+#    journal: "International Journal of Data Science and Analytics"
+#    volume: 20
+#    start: 5603
+#    end: 5615
+#    year: 2025
+#    doi: 10.1007/s41060-025-00786-z
 
 # ----------------------------------------------------
 # preferred-citation:

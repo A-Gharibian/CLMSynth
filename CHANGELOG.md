@@ -6,6 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.6.9] — 2026-08-23
+
+**Config and Wizard corrections.**
+
+### Fixed
+
+- Wizard and config generator improvements:
+  - The wizard's `num_classes` upper bound matches the engine.
+  - Catalog generator refuses to delete a non-catalog target.
+  - Valueless config keys render their documented default.
+- A figure-creation failure returns `False` like every other.
+- `[CLM-104]` is reported once, not per dataset.
+
+
 ## [0.6.8] — 2026-08-20
 
 **Staging for CLMSynth-GUI.**
@@ -136,8 +150,7 @@ A patch release.
 
 - **A configuration-safety test category**, `tests/test_05_config_safety.py`.
   The stated condition for its return was that the program itself implement a
-  measure protecting the machine that runs a configuration. Two now exist, so
-  the category does. Authorization, ReDoS, uncontrolled recursion, wall-clock timing.
+  measure protecting the machine that runs a configuration.
 
 ### Fixed
 
@@ -230,16 +243,11 @@ The test suite becomes part of the repository.
 - **`ROADMAP.md` is published**, for the first time, next to the source it
   describes in `src/`. Planned work from 0.6.6 through 1.0.0.
 
-- **`SECURITY.md`**, stating the threat model and how to report a vulnerability
-  privately. CLMSynth is a local single-user CLI and library with no privilege
-  boundary between the person supplying input and the person running it, which
-  is why a path arriving from `sys.argv` or an interactive prompt is the
-  interface rather than a vulnerability. The document says where that reasoning
-  stops, a configuration file is a shareable artifact, so configuration values
-  are the one input that can come from someone else, and records the standing
-  verdict on each accepted scanner finding, including bandit's `B310`, so the
-  judgments are not re-derived on every scan.
-
+- **`SECURITY.md`**, CLMSynth is a local single-user CLI and library with no privilege
+  boundary between the person supplying input and the person running it. Configuration
+  file is shareable, and its values can come from someone else, which is the only internal
+  source of vulnerability. Security of online clustering data are not covered by this project.
+  The file also records each accepted scanner finding, including bandit's `B310`.
 
 ### Fixed
 

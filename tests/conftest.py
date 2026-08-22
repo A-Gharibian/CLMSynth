@@ -1,4 +1,5 @@
-"""Shared setup for the whole suite.
+"""
+Shared setup for the whole suite.
 """
 
 import matplotlib
@@ -6,18 +7,14 @@ import pytest
 
 # Before any test imports pyplot. matplotlib's default backend needs a GUI main
 # thread; Agg writes files and needs nothing, which is what CI has. Set once
-# here rather than in each module, since the first import wins and a module
-# that forgot would silently depend on another module's setting.
+# here rather than in each module.
 matplotlib.use("Agg")
 
-# Must follow the backend selection above, not be hoisted to the import block.
-import clmsynth.main
-
+# Must follow the backend selection above.
+import clmsynth.main  # noqa: I001
 
 @pytest.fixture
 def no_plots(monkeypatch):
-    """Stop `run_pipeline` from rendering anything,
-    Returns True, which is what `plot_feature_scatter` returns on success, so
-    `run_pipeline` takes its success path and logs no plot-failure warning.
+    """Stop `run_pipeline` from rendering anything, returns True.
     """
     monkeypatch.setattr(clmsynth.main, "plot_feature_scatter", lambda *a, **k: True)

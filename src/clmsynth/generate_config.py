@@ -32,7 +32,7 @@ def format_list_or_all(value) -> str:
     """Renders a batteries/datasets value: the literal "all" or a YAML list."""
     if value == "all":
         return '"all"'
-    return f"[{', '.join(repr(v) for v in value)}]"
+    return f"[{', '.join(_yaml_scalar(v) for v in value)}]"
 
 
 def _yaml_scalar(value) -> str:
@@ -141,15 +141,15 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
         if steepness is not None and upstream_data.get("centroid_profile") == "exponential" else []
     )
 
-    proportions_str = f"[{', '.join(map(str, upstream_data.get('proportions', [])))}]"
+    proportions_str = f"[{', '.join(map(str, upstream_data.get('proportions') or []))}]"
     single_match_yaml = format_yaml_snippet(upstream_data.get("single_match", {"cluster": None, "label": None}))
     assignment_matrix_yaml = format_yaml_snippet(upstream_data.get("assignment_matrix", []))
     centroid_enabled = "true" if upstream_data.get("centroid_enabled", True) else "false"
 
     if data_source == "byoc":
         byoc_extra = (
-            f"\n  input_dir: {upstream_data.get('input_dir', 'INPUT')!r}"
-            f"\n  cluster_column: {upstream_data.get('cluster_column', 'cluster')!r}"
+            f"\n  input_dir: {_yaml_scalar(upstream_data.get('input_dir', 'INPUT'))}"
+            f"\n  cluster_column: {_yaml_scalar(upstream_data.get('cluster_column', 'cluster'))}"
             f"\n  standardize: {'true' if upstream_data.get('standardize', False) else 'false'}"
         )
     else:
@@ -160,8 +160,8 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
         output_dir=_yaml_scalar(str(upstream_data.get("output_dir", "OUTPUT"))),
         byoc_extra=byoc_extra,
         data_source_suite_key=f"{data_source}_suite",
-        batteries=format_list_or_all(upstream_data.get("batteries", "all")),
-        datasets=format_list_or_all(upstream_data.get("datasets", "all")),
+        batteries=format_list_or_all(upstream_data.get("batteries") or "all"),
+        datasets=format_list_or_all(upstream_data.get("datasets") or "all"),
         source_seed=upstream_data.get("source_seed", 42),
 
         n_labels=upstream_data.get("n_labels", 1),

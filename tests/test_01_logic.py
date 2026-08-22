@@ -20,6 +20,7 @@ import pytest
 from clmsynth.byoc_source import fetch_byoc_data
 from clmsynth.clm_label_engine import (
     InfeasibleAllocationError,
+    build_rules,
     generate_clm_labels,
     resolve_label_counts,
 )
@@ -75,7 +76,7 @@ def assert_contingency_invariant(out, M):
 def test_f1_null_target_metric_under_random_is_a_noop():
     """`target_metric:` left empty in YAML parses to None, meaning "unset".
 
-    Truthiness, not presence, decides whether a target is requested. Testing
+    Verifies whether a target is requested. Testing
     the key's presence instead made an empty block a [CLM-114] rejection under
     `random`, which is a config that asks for nothing.
     """
@@ -152,14 +153,22 @@ def test_labels_only_config_tolerates_missing_coords():
     assert_contingency_invariant(out.to_numpy(), 4)
 
 
+def test_perfect_mode_cardinality_is_refused_at_the_entry_point():
+    """M != K under `perfect` is refused early."""
+    with pytest.raises(ValueError) as excinfo:
+        generate_clm_labels(CLUSTERS, COORDS, {"num_classes": 10, "matching_mode": "perfect"}, seed=1)
+    assert "[CLM-102]" in str(excinfo.value)
+
+
 def test_perfect_mode_cardinality_guard_precedes_indexing():
     """`perfect` pairs cluster i with label i, so M must equal K.
 
     The guard has to fire before `cluster_ids[i]` runs off the end of a K-long
     list, or M>K is an IndexError instead of an explained mismatch.
+    Driven through build_rules; the entry point masks it.
     """
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, {"num_classes": 10, "matching_mode": "perfect"}, seed=1)
+        build_rules({"num_classes": 10, "matching_mode": "perfect"}, [0, 1, 2, 3])
     assert "[CLM-102]" in str(excinfo.value)
 
 

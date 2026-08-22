@@ -36,7 +36,9 @@ See SECURITY.md for the threat model these measures serve, and for the standing
 verdicts on the scanner findings that are accepted rather than fixed.
 """
 
+import importlib.util
 import logging
+import sys
 from pathlib import Path
 
 import pytest
@@ -119,3 +121,74 @@ def test_a_configured_path_is_reported_as_an_absolute_path(tmp_path, monkeypatch
 
     assert Path(reported).is_absolute(), f"not resolved to an absolute path: {reported}"
     assert Path(reported) == (tmp_path / "OUTPUT").resolve()
+
+
+# ---------------------------------------------------------------------------
+# Destructive tooling
+# ---------------------------------------------------------------------------
+
+def _catalog_gen(monkeypatch, out_dir):
+    """Import the tool with OUT_DIR as its argv."""
+    monkeypatch.setattr(sys, "argv", ["CLM_catalog_gen.py", str(out_dir)])
+    path = Path(__file__).resolve().parents[1] / "tools" / "CLM_catalog_gen.py"
+    spec = importlib.util.spec_from_file_location("clm_catalog_gen_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_catalog_generator_refuses_a_non_catalog_target(tmp_path, monkeypatch):
+    """`CLM_catalog_gen.py .` must not erase a working tree.
+
+    The tool's own docstring invites a custom OUT_DIR, and its first act is a
+    recursive delete of it.
+    """
+    victim = tmp_path / "worktree"
+    victim.mkdir()
+    (victim / "precious.txt").write_text("keep me", encoding="utf-8")
+    gen = _catalog_gen(monkeypatch, victim)
+
+    with pytest.raises(SystemExit) as excinfo:
+        gen._checked_rmtree(gen.OUT, ignore_errors=True)
+
+    assert "refusing to delete" in str(excinfo.value)
+    assert (victim / "precious.txt").read_text(encoding="utf-8") == "keep me"
+
+
+def test_catalog_generator_accepts_an_empty_or_absent_target(tmp_path, monkeypatch):
+    """A new candidate catalog is still allowed."""
+    empty = tmp_path / "candidate"
+    empty.mkdir()
+    gen = _catalog_gen(monkeypatch, empty)
+
+    gen._checked_rmtree(gen.OUT, ignore_errors=True)
+    gen._checked_rmtree(tmp_path / "never_created")
+
+    assert not empty.exists()
+
+
+def test_catalog_generator_replaces_a_real_catalog(tmp_path, monkeypatch):
+    """A folder holding a table folder is a catalog."""
+    catalog = tmp_path / "troubleshooting_catalog"
+    (catalog / "ValueError_1xx").mkdir(parents=True)
+    (catalog / "stale.log").write_text("old", encoding="utf-8")
+    gen = _catalog_gen(monkeypatch, catalog)
+
+    gen._checked_rmtree(gen.OUT, ignore_errors=True)
+
+    assert not catalog.exists()
+
+
+def test_catalog_generator_refuses_to_delete_outside_its_target(tmp_path, monkeypatch):
+    """Scratch deletes stay inside OUT_DIR."""
+    catalog = tmp_path / "troubleshooting_catalog"
+    (catalog / "ValueError_1xx").mkdir(parents=True)
+    outsider = tmp_path / "elsewhere"
+    outsider.mkdir()
+    gen = _catalog_gen(monkeypatch, catalog)
+
+    with pytest.raises(SystemExit) as excinfo:
+        gen._checked_rmtree(outsider)
+
+    assert "outside" in str(excinfo.value)
+    assert outsider.exists()
