@@ -1,13 +1,8 @@
 name: CI
 
-# Least privilege, declared explicitly. Without this block the workflow inherits
-# the repository's default token scope, which can include write access it never
-# uses. These jobs check out the repository and install Python: `contents: read`
-# is the whole requirement. Deliberately NOT the `pull-requests: write` from the
-# generic example.
 permissions:
   contents: read
-
+# NOT the `pull-requests: write` from the generic example.
 on:
   push:
     branches: [main]
@@ -28,14 +23,11 @@ jobs:
     name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
-      # Report every interpreter's result. A failure on 3.14 alone is a
-      # different diagnosis from a failure everywhere, and fail-fast would hide
-      # which of the two happened.
+      # Report every interpreter's result.
       fail-fast: false
       matrix:
         # Must track requires-python (">=3.11,<3.15") in pyproject.toml.
         python-version: ["3.11", "3.12", "3.13", "3.14"]
-
     steps:
       - uses: actions/checkout@v7
 
@@ -53,7 +45,7 @@ jobs:
       - name: Package imports and reports its version
         run: python -c "import clmsynth; print('clmsynth', clmsynth.__version__)"
 
-      # No path argument: [tool.pytest.ini_options] testpaths points at tests/.
+      # No path argument: [tool.pytest.ini_options] test paths points at tests/.
       # Passing one here would mean the config and CI could disagree about what
       # the suite is.
       - name: Run the test suite
@@ -72,17 +64,13 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          # The version the tools' own findings were traced against. Pinned
-          # rather than floating so a new interpreter release cannot change the
-          # verdict on unchanged code.
+          # The version the tools' own findings were traced against. Pinned.
           python-version: "3.13"
           cache: pip
 
       - name: Install the package and the dev toolchain
         run: pip install -e ".[dev]"
 
-      # Each of the three is gating as of 0.6.5, and each was brought to zero
-      # findings before it was turned on.
       # `continue-on-error` is deliberately NOT set: these are gates.
       - name: Lint (ruff)
         run: ruff check src/ tests/

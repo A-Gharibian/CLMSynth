@@ -111,6 +111,6 @@ cython_debug/
 .spyproject
 .ropeproject
 tempCodeRunnerFile.py
-/docs/Error_Warning_Codes.md
+/ignore/Error_Warning_Codes.md
 # PyPI configuration file
 .pypirc
