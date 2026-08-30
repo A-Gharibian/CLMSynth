@@ -100,6 +100,10 @@ Identical to rc1 apart from the version strings and the release date.
 
 ### Will be Fixed
 
+- **The search grid cannot see inside a narrow feasible band.** Candidate recalls
+  come from 11 grid points, so the interval between the last feasible one and the
+  true boundary is never explored. The bracket needs widening.
+
 - **`--no-viz`, and the import that has to move with it.** The 0.7.0b1 extraction
   makes skipping the render a one-line guard, but the saving is only partial while
   `main.py` imports `plot_feature_scatter` at module scope. The viz stack costs about
@@ -116,7 +120,7 @@ Identical to rc1 apart from the version strings and the release date.
   `plot_feature_scatter` calls `sns.set_theme()` and uses the pyplot
   current-figure stack, both process-global. From six concurrent threads it
   produced 5 of 6 PNGs; one failed inside the function's own handler with "main
-  thread is not in main loop", the default TkAgg backend requiring
+  thread is not in main loop", the TkAgg backend then in use requiring
   `plt.subplots()` on the main thread. Interpreter shutdown then logged
   `Tcl_AsyncDelete: async handler deleted by the wrong thread`, Tcl/Tk state
   corruption at the C level, not merely a caught warning.
@@ -195,7 +199,7 @@ anything here produces `c(x)` and `X` *before* the engine.
 
 ### Fixed
 
-- **dataset_sources.py:37-59 vs 77-110** 
+- **dataset_sources.py:38-76 vs 78-112** 
   the `clustbench` registry disagreement.
 
   SOURCE_METADATA["clustbench"] documents 5 batteries; CLUSTBENCH_DATASETS defines 9. 

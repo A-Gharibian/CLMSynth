@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clmsynth"
-version = "0.7.0b1"
+version = "0.7.0rc1"
 description = "Synthetic label generator with configurable cluster-label matching (CLM) against ground-truth clusters"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
@@ -72,6 +72,11 @@ clmsynth-wizard = "clmsynth.config_wizard:main"
 # distribution name both remain "clmsynth", only the on-disk location changes.
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# A ready-to-run offline config, so a wheel carries something runnable without
+# a network fetch. It lives only here; there is no second copy to drift from.
+[tool.setuptools.package-data]
+clmsynth = ["test_data_config_offline.yaml"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"

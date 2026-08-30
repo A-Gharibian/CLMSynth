@@ -209,6 +209,7 @@ def test_shipped_documents_declare_the_current_version(kind):
     )
 
 
+
 def _fixtures():
     for band in sorted(BANDS):
         band_dir = CATALOG / band

@@ -14,8 +14,8 @@ include SECURITY.md
 include requirements.txt
 include environment.yml
 
-# Example configs referenced by the README quick-start
-include test_data_config_offline.yaml
+# Example configs referenced by the README quick-start. The offline one moved
+# into the package, so `recursive-include src/clmsynth *.yaml` below carries it.
 include upstream_payload.yaml
 
 # User manual and the coded-diagnostics reference catalogue.
@@ -26,14 +26,15 @@ recursive-include docs *.log
 recursive-include docs *.csv
 recursive-include docs *.pdf
 
-# Planning and design notes that sit beside the source they describe.
-include src/engine_internals.md
+# Planning and design notes.
+include docs/troubleshooting_catalog/engine_internals.md
 include docs/ROADMAP.md
 
 # Package source (normally auto-included via packages.find for a pure-Python
 # package; listed explicitly here for sdist robustness regardless of build
 # backend behavior).
 recursive-include src/clmsynth *.py
+recursive-include src/clmsynth *.yaml
 
 # Never ship build/tooling
 global-exclude __pycache__
@@ -44,5 +45,6 @@ prune .venv
 prune .idea
 prune Inspection
 prune tests
+prune ignore
 prune build
 prune dist

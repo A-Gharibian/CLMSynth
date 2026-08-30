@@ -257,7 +257,7 @@ def load_config(config_path: str) -> dict:
     path = Path(config_path)
     if not path.is_file():
         log.critical(f"Configuration file not found at '{config_path}'. "
-                     f"Run generate_config.py or config_wizard.py first.")
+                     f"Run clmsynth-wizard or clmsynth-config first.")
         sys.exit(1)
     with open(path, encoding="utf-8") as file:
         config = yaml.safe_load(file)

@@ -70,7 +70,7 @@
     "datePublished": "2026-07-31",
     "description": "A synthetic dataset generator that decouples cluster formation from class labels to evaluate cluster-label matching algorithms and measures.",
     "developmentStatus": "https://www.repostatus.org/#active",
-    "downloadUrl": "https://github.com/A-Gharibian/CLMSynth/archive/refs/tags/v0.7.0b1.tar.gz",
+    "downloadUrl": "https://github.com/A-Gharibian/CLMSynth/archive/refs/tags/v0.7.0rc1.tar.gz",
     "funder": {
         "type": "Organization",
         "name": "VSB - Technical University of Ostrava"
@@ -98,9 +98,7 @@
     "name": "CLMSynth",
     "operatingSystem": [
         "Windows",
-        "Linux",
-        "Mac",
-        "BSD"
+        "Linux"
     ],
     "programmingLanguage": "Python 3",
     "readme": "https://github.com/A-Gharibian/CLMSynth/blob/main/README.md",
@@ -238,6 +236,6 @@
             "description": "Optional. Needed only for data_source 'mdcgen'. Distributed as a git repository rather than on PyPI, so it cannot be a declared extra."
         }
     ],
-    "softwareVersion": "0.7.0b1",
-    "version": "0.7.0b1"
+    "softwareVersion": "0.7.0rc1",
+    "version": "0.7.0rc1"
 }

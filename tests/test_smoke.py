@@ -3,8 +3,8 @@
 Scope is deliberately narrow, and everything outside it belongs to another
 suite:
 
-Runs on every supported interpreter (3.11-3.14); nothing here uses syntax or
-stdlib newer than 3.11.
+Runs on every supported interpreter (3.12-3.14); nothing here uses syntax or
+stdlib newer than 3.12.
 
     python -m pytest tests/test_smoke.py -v
 """

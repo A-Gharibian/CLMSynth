@@ -233,8 +233,9 @@ def main() -> None:
         with open(payload_path, encoding="utf-8") as file:
             payload = yaml.safe_load(file)
     except FileNotFoundError:
-        log.critical(f"Payload file '{payload_path}' not found. "
-                     f"Copy or edit upstream_payload.yaml, or pass a payload path.")
+        log.critical(f"Payload file '{payload_path}' not found. It ships with the "
+                     f"repository and the sdist, not the wheel. Pass a payload path, "
+                     f"or run clmsynth-wizard instead.")
         sys.exit(1)
 
     if not isinstance(payload, dict):

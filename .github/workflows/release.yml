@@ -7,13 +7,6 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      index:
-        description: "Where to publish"
-        required: true
-        default: testpypi
-        type: choice
-        options: [testpypi, pypi]
 
 permissions:
   contents: read
@@ -31,7 +24,6 @@ jobs:
     name: Build and verify
     runs-on: ubuntu-latest
     outputs:
-      index: ${{ steps.route.outputs.index }}
       version: ${{ steps.route.outputs.version }}
     steps:
       - uses: actions/checkout@v7
@@ -53,25 +45,13 @@ jobs:
             python tools/check_release_metadata.py
           fi
 
-      # a/b prereleases rehearse on TestPyPI; rc and final go to PyPI. A manual
-      # run says where it is going instead.
-      - name: Route the release
+      # TestPyPI is the only index this workflow can reach.
+      - name: Read the version
         id: route
-        env:
-          EVENT: ${{ github.event_name }}
-          CHOICE: ${{ inputs.index }}
         run: |
           VERSION=$(python -c "import pathlib, tomllib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            INDEX="$CHOICE"
-          elif printf '%s' "$VERSION" | grep -qE '(a|b)[0-9]+$'; then
-            INDEX=testpypi
-          else
-            INDEX=pypi
-          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "index=$INDEX" >> "$GITHUB_OUTPUT"
-          echo "publishing $VERSION to $INDEX"
+          echo "publishing $VERSION to TestPyPI"
 
       - name: Install the build tools
         run: pip install build twine
@@ -108,7 +88,6 @@ jobs:
   testpypi:
     name: Publish to TestPyPI
     needs: build
-    if: needs.build.outputs.index == 'testpypi'
     runs-on: ubuntu-latest
     environment:
       name: testpypi
@@ -123,20 +102,3 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
-
-  pypi:
-    name: Publish to PyPI
-    needs: build
-    if: needs.build.outputs.index == 'pypi'
-    runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/clmsynth
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
