@@ -134,7 +134,7 @@ jobs:
               "pyproject.toml",
               "src/clmsynth/__init__.py",
               "docs/ROADMAP.md",
-              "src/engine_internals.md",
+              "docs/troubleshooting_catalog/engine_internals.md",
               "docs/manual/CLMSynth_manual.tex",
               "docs/troubleshooting_catalog/_data/k65_clusters.csv",
           ]
