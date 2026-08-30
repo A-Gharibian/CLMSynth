@@ -16,6 +16,7 @@ import pytest
 
 from clmsynth.byoc_source import fetch_byoc_data
 from clmsynth.clm_label_engine import generate_clm_labels, resolve_label_counts
+from clmsynth.label_context import build_context
 from clmsynth.main import run_pipeline
 
 N = 1000
@@ -413,6 +414,72 @@ def test_byoc_import_requirements_are_enforced(tmp_path, caplog, frame, expect):
         result = write_byoc_csv(tmp_path, "bad_import", frame)
     assert result is None, f"expected rejection for: {expect}"
     assert expect in caplog.text, f"rejection did not mention {expect!r}:\n{caplog.text}"
+
+
+@pytest.mark.parametrize("tags,expect", [
+    (["typo"], "not in the file"),
+    (["cluster"], "cannot be both"),
+], ids=["absent-tag", "cluster-as-tag"])
+def test_byoc_tag_columns_are_refused_when_they_make_no_sense(tmp_path, caplog, tags, expect):
+    """A tag that is not there is a typo, and the cluster column cannot be one."""
+    frame = pd.DataFrame({"f1": np.linspace(0, 1, 6), "site": list("aabbcc"),
+                          "cluster": ["A"] * 3 + ["B"] * 3})
+    frame.to_csv(tmp_path / "tagged.csv", index=False)
+    with caplog.at_level(logging.ERROR, logger="clmsynth"):
+        result = fetch_byoc_data(dataset_name="tagged", input_dir=str(tmp_path),
+                                 cluster_column="cluster", tag_columns=tags)
+    assert result is None
+    assert expect in caplog.text
+
+
+def test_byoc_tag_columns_ride_along_outside_the_geometry(tmp_path):
+    """A declared tag leaves the feature set and reaches the CSV unchanged."""
+    site = ["north", "north", "north", "south", "south", "south"]
+    frame = pd.DataFrame({"f1": np.linspace(0, 1, 6), "f2": np.linspace(1, 0, 6),
+                          "site": site, "cluster": ["A"] * 3 + ["B"] * 3})
+    frame.to_csv(tmp_path / "tagged.csv", index=False)
+
+    # Undeclared, the same string column refuses the whole file.
+    assert fetch_byoc_data(dataset_name="tagged", input_dir=str(tmp_path),
+                           cluster_column="cluster") is None
+
+    result = fetch_byoc_data(dataset_name="tagged", input_dir=str(tmp_path),
+                             cluster_column="cluster", tag_columns=["site"])
+    assert result is not None
+    ctx = build_context("byoc", "local", "tagged", result)
+    assert list(ctx.features.columns) == ["f1", "f2"], "a tag entered the geometry"
+    out = build_context("byoc", "local", "tagged", result).to_dataframe()
+    assert out["site"].tolist() == site, "the carried column was not left alone"
+
+
+def test_byoc_standardize_leaves_a_tag_alone(tmp_path):
+    """Min-max rescaling is a feature operation; a passenger is not rescaled."""
+    outcome = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
+    frame = pd.DataFrame({"f1": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], "outcome": outcome,
+                          "cluster": ["A"] * 3 + ["B"] * 3})
+    frame.to_csv(tmp_path / "scaled.csv", index=False)
+    result = fetch_byoc_data(dataset_name="scaled", input_dir=str(tmp_path),
+                             cluster_column="cluster", tag_columns=["outcome"],
+                             standardize=True)
+    out = build_context("byoc", "local", "scaled", result).to_dataframe()
+    assert out["f1"].min() == 0.0 and out["f1"].max() == 1.0
+    assert out["outcome"].tolist() == outcome
+
+
+def test_byoc_boolean_column_is_a_feature_not_a_dropped_column(tmp_path):
+    """bool passes the numeric requirement, so it must also survive as geometry.
+
+    validate_import and the feature split used to disagree on exactly this dtype.
+    """
+    frame = pd.DataFrame({"f1": np.linspace(0, 1, 6),
+                          "flagged": [True, False, True, False, True, False],
+                          "cluster": ["A"] * 3 + ["B"] * 3})
+    frame.to_csv(tmp_path / "boolean.csv", index=False)
+    result = fetch_byoc_data(dataset_name="boolean", input_dir=str(tmp_path),
+                             cluster_column="cluster")
+    assert result is not None
+    assert "flagged" in result.columns, "a validated column was dropped anyway"
+    assert result["flagged"].tolist() == [1, 0, 1, 0, 1, 0]
 
 
 def test_byoc_import_reports_every_problem_at_once(tmp_path, caplog):

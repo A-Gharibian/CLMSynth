@@ -19,10 +19,58 @@ def generate_additional_labels(
         noise: float = 0.1,
         seed: int = 42,
 ) -> None:
-    """Attaches `n_labels` generated label columns to `context`.
+    """Attaches ``n_labels`` generated label columns to ``context``.
 
-    Each label "i" uses "seed + i", so labels differ but the run is reproducible.
-    Requires `clm_config`; the noise fallback is retired.
+    This is the object-level entry point: it reads one ground-truth labelling out
+    of ``context``, calls the engine once per requested label, and attaches each
+    result back as ``Label_0``, ``Label_1``, ... No file is read or written.
+
+    Parameters
+    ----------
+    context : DatasetContext
+        Container holding the features and at least one ground-truth labelling.
+        Mutated in place.
+    n_labels : int, default 1
+        How many label columns to generate.
+    source_labeling : str, default "labels0"
+        Key into ``context.ground_truths`` naming the clustering to match against.
+    clm_config : dict, optional
+        The ``clm_label`` block: ``num_classes``, ``matching_mode`` and whatever
+        that mode requires. Required despite the default; passing ``None`` raises.
+    noise : float, default 0.1
+        Accepted for call-signature compatibility and unused; the noise fallback
+        was retired in favour of the engine.
+    seed : int, default 42
+        Label ``i`` uses ``seed + i``, so the columns differ from one another
+        while the run as a whole stays reproducible.
+
+    Returns
+    -------
+    None
+        ``context`` is modified in place; read the result from
+        ``context.generated_labels`` or ``context.to_dataframe()``.
+
+    Raises
+    ------
+    KeyError
+        If ``source_labeling`` is not in ``context.ground_truths``, or if
+        ``clm_config`` is missing or empty.
+    InfeasibleAllocationError
+        If the configuration is valid but the requested counts cannot fit the
+        cluster capacities.
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> from clmsynth import build_context, generate_additional_labels
+    >>> df = pd.DataFrame({"f1": [0.0, 1.0, 2.0, 3.0],
+    ...                    "f2": [0.0, 1.0, 2.0, 3.0],
+    ...                    "GroundTruth_labels0": [0, 0, 1, 1]})
+    >>> ctx = build_context("byoc", "local", "demo", df)
+    >>> cfg = {"num_classes": 2, "matching_mode": "perfect"}
+    >>> generate_additional_labels(ctx, n_labels=1, clm_config=cfg, seed=0)
+    >>> list(ctx.generated_labels)
+    ['Label_0']
     """
     if source_labeling not in context.ground_truths:
         raise KeyError(f"'{source_labeling}' not found for {context.battery}/{context.dataset}; "

@@ -10,9 +10,11 @@ import itertools
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from numbers import Real
 
 import numpy as np
 import pandas as pd
+from scipy.optimize import brentq, minimize_scalar
 
 from .clm_errors import (
     InfeasibleAllocationError,
@@ -149,7 +151,9 @@ def build_rules(cfg: dict, cluster_ids: list[int],
             raise clm_error(111, mode="perfect")
         if M != K:
             raise clm_error(102, M=M, K=K)
-        clm_warn(log, 302)
+        # Only warn about keys the caller actually set.
+        if any(k in cfg for k in ("proportions", "balance", "skew_rule")):
+            clm_warn(log, 302)
         return [Rule(label=i, clusters=[cluster_ids[i]], recall_target=1.0) for i in range(K)]
 
     if mode == "single":
@@ -316,7 +320,7 @@ def _validate_spillover_cfg(cfg: dict) -> None:
 def _is_real(value) -> bool:
     """True for a real number, excluding bool (which is an int subclass and would
     otherwise sail through every range check as 0/1)."""
-    return isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(value, bool)
+    return isinstance(value, Real) and not isinstance(value, bool)
 
 
 def _validate_skew_cfg(cfg: dict) -> None:
@@ -733,6 +737,15 @@ def _run_allocation_pipeline(cluster_labels, coords, cfg, rules, cluster_ids,
 _METRIC_FUNCS = {"mcc": clustering_mcc, "ari": clustering_ari}
 
 
+class _ProbeStop(Exception):
+    """Ends the root-find early; metric None means infeasible."""
+
+    def __init__(self, alpha: float, metric: float | None):
+        super().__init__(alpha, metric)
+        self.alpha = alpha
+        self.metric = metric
+
+
 def _generate_for_alpha(cluster_labels, coords, cfg, alpha, rng,
                          cluster_ids, cluster_sizes, m_counts) -> np.ndarray | None:
     """One probe evaluation. Returns None if this alpha is infeasible."""
@@ -755,7 +768,9 @@ def solve_alpha_for_target_metric(cluster_labels, coords, cfg, cluster_ids,
     No closed form: the achieved global metric depends on every rule's
     outcome jointly (unlike the single-pair solve of scope='pair', which
     inverts exactly in _pair_label_counts). This runs a
-    coarse grid scan first, then bisects within the bracket.
+    coarse grid scan first, then a Brent root-find within the bracket it
+    finds, or a bounded minimisation of the distance when the grid shows
+    the target is not straddled at all.
     All probe evaluations share a fixed seed (common random numbers) so
     differences across candidates come from alpha, not randomization noise.
 
@@ -779,14 +794,20 @@ def solve_alpha_for_target_metric(cluster_labels, coords, cfg, cluster_ids,
     # probe_seed different from the run seed re-introduces it, deliberately.
     probe_seed = tm.get("probe_seed", seed)
 
+    # A probe is a full allocation run, so never pay for one alpha twice.
+    probed: dict[float, float | None] = {}
+
     def achieved(alpha: float) -> float | None:
-        rng = np.random.default_rng(probe_seed)
-        labels = _generate_for_alpha(cluster_labels, coords, cfg, alpha, rng,
-                                      cluster_ids, cluster_sizes, m_counts)
-        return None if labels is None else metric_fn(cluster_labels, labels)
+        alpha = float(alpha)
+        if alpha not in probed:
+            rng = np.random.default_rng(probe_seed)
+            labels = _generate_for_alpha(cluster_labels, coords, cfg, alpha, rng,
+                                          cluster_ids, cluster_sizes, m_counts)
+            probed[alpha] = None if labels is None else metric_fn(cluster_labels, labels)
+        return probed[alpha]
 
     grid = np.linspace(0.0, 1.0, 11)
-    scored = [(a, achieved(a)) for a in grid]
+    scored = [(float(a), achieved(a)) for a in grid]
     feasible = sorted((a, m) for a, m in scored if m is not None)
 
     if not feasible:
@@ -797,36 +818,48 @@ def solve_alpha_for_target_metric(cluster_labels, coords, cfg, cluster_ids,
         log.info("target_metric: grid search hit tolerance directly "
                  f"(alpha={best_alpha:.3f}, achieved={best_metric:.3f}, target={target:.3f}).")
         return best_alpha
-    # Only the LOW end's metric is carried: the bisection decides which side to
-    # keep by comparing mid against `lo_m`, so the other end needs its alpha and
-    # nothing else.
-    lo, lo_m = feasible[0]
-    hi = feasible[-1][0]
+
+    # brentq needs the target straddled; the grid is what finds that.
+    bracket = None
     for (a1, m1), (a2, m2) in itertools.pairwise(feasible):
         if (m1 - target) * (m2 - target) <= 0:
-            lo, lo_m, hi = a1, m1, a2
+            bracket = (a1, a2)
             break
 
-    for i in range(max_iter):
-        mid = (lo + hi) / 2
-        mid_m = achieved(mid)
-        if mid_m is None:
-            # infeasible mid-bracket, infeasibility only tracks upward with
-            # alpha (see docstring), so shrink from the top.
-            hi = mid
-            continue
+    if max_iter > 0:
+        best = [best_alpha, best_metric]
 
-        if abs(mid_m - target) < abs(best_metric - target):
-            best_alpha, best_metric = mid, mid_m
-        if abs(mid_m - target) <= tol:
-            log.info(f"target_metric: converged in {i + 1} iteration(s) "
-                     f"(alpha={mid:.4f}, achieved={mid_m:.4f}, target={target:.3f}).")
-            return mid
+        def residual(alpha: float) -> float:
+            """Signed distance to the target, stopping once inside tolerance."""
+            m = achieved(alpha)
+            if m is None:
+                # Unreachable: feasibility only tracks upward with alpha.
+                raise _ProbeStop(float(alpha), None)
+            if abs(m - target) < abs(best[1] - target):
+                best[0], best[1] = float(alpha), m
+            if abs(m - target) <= tol:
+                raise _ProbeStop(float(alpha), m)
+            return m - target
 
-        if (mid_m - target) * (lo_m - target) <= 0:
-            hi = mid
-        else:
-            lo, lo_m = mid, mid_m
+        try:
+            if bracket is not None:
+                brentq(residual, bracket[0], bracket[1], xtol=1e-12, maxiter=max_iter)
+            else:
+                # No sign change, so no root: minimise the distance instead.
+                minimize_scalar(lambda a: abs(residual(a)), method="bounded",
+                                bounds=(feasible[0][0], feasible[-1][0]),
+                                options={"xatol": 1e-6, "maxiter": max_iter})
+        except _ProbeStop as stop:
+            if stop.metric is not None:
+                log.info(f"target_metric: converged in {len(probed) - len(grid)} probe(s) "
+                         f"(alpha={stop.alpha:.4f}, achieved={stop.metric:.4f}, "
+                         f"target={target:.3f}).")
+                return stop.alpha
+        except (RuntimeError, ValueError):
+            # Budget spent, or a bracket the solver would not accept. Either way
+            # the grid's best still stands and [CLM-306] below reports it.
+            pass
+        best_alpha, best_metric = best
 
     clm_warn(log, 306, max_iter=max_iter, best_alpha=best_alpha,
              best_metric=best_metric, target=target, tol=tol)
@@ -840,11 +873,57 @@ def solve_alpha_for_target_metric(cluster_labels, coords, cfg, cluster_ids,
 def generate_clm_labels(cluster_labels: np.ndarray, coords: np.ndarray, cfg: dict, seed: int = 42) -> pd.Series:
     """Generates one synthetic label column for an existing clustering.
 
-    The entry point of the engine
+    The entry point of the engine.
 
-    `coords` may be None/empty only for labels-only configs; any spatial
-    placement (centroid_dependence, or competing_noise favoring
-    core/boundary) requires real feature vectors and raises [CLM-125].
+    Parameters
+    ----------
+    cluster_labels : numpy.ndarray of shape (n_samples,)
+        The existing clustering to match against. Ids may be integers or strings
+        and need not be contiguous; ``K`` is their number of distinct values.
+    coords : numpy.ndarray of shape (n_samples, n_features)
+        Feature vectors, used to derive cluster centroids for spatial placement.
+        May be ``None`` or empty only for labels-only configs; any spatial
+        placement (``centroid_dependence``, or ``competing_noise`` favouring
+        core/boundary) requires real vectors and raises ``[CLM-125]`` without them.
+    cfg : dict
+        The ``clm_label`` block. ``num_classes`` and ``matching_mode`` are always
+        required; each mode then requires its own keys, and ``target_metric``
+        turns the requested recall into a solved-for quantity.
+    seed : int, default 42
+        Seeds one generator used by both the target-metric search and the final
+        generation, so a solved value is the value delivered.
+
+    Returns
+    -------
+    pandas.Series
+        Named ``clm_label``, one entry per input point, values in
+        ``0..num_classes - 1``.
+
+    Raises
+    ------
+    ValueError
+        Carrying a ``[CLM-1xx]`` code for an invalid or incompatible configuration.
+    MissingConfigKey
+        Carrying a ``[CLM-2xx]`` code when a required key is absent.
+    InfeasibleAllocationError
+        Carrying a ``[CLM-15x]`` code when the configuration is valid but the
+        requested counts do not fit the cluster capacities.
+
+    Notes
+    -----
+    ``num_classes`` and the number of clusters are both capped at
+    ``MAX_CARDINALITY``. Diagnostic codes are a public contract: they are never
+    renumbered or reused, and the full catalogue is in the troubleshooting manual.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from clmsynth import generate_clm_labels
+    >>> clusters = np.repeat([0, 1], 50)
+    >>> coords = np.zeros((100, 2))
+    >>> cfg = {"num_classes": 2, "matching_mode": "perfect"}
+    >>> generate_clm_labels(clusters, coords, cfg, seed=0).value_counts().to_dict()
+    {0: 50, 1: 50}
     """
     rng = np.random.default_rng(seed)
     N = len(cluster_labels)
@@ -878,7 +957,7 @@ def generate_clm_labels(cluster_labels: np.ndarray, coords: np.ndarray, cfg: dic
         m_counts = np.array([cluster_sizes[cluster_ids[i]] for i in range(cfg["num_classes"])])
 
     if cfg["matching_mode"] == "random":
-        # Truthiness (not membership): a null/empty target_metric is "not set"
+        # Validity (not membership): a null/empty target_metric is "not set"
         if cfg.get("target_metric"):
             raise clm_error(114)
         if cfg.get("competing_noise"):
@@ -893,7 +972,7 @@ def generate_clm_labels(cluster_labels: np.ndarray, coords: np.ndarray, cfg: dic
     _validate_centroid_cfg(cfg)
     _validate_target_metric_cfg(cfg, cluster_ids)
 
-    # Resolve once and gate every branch on truthiness. `"target_metric" in cfg`
+    # Resolve once and gate every branch on validity. `"target_metric" in cfg`
     # would be True for a null/empty value (`target_metric:` in YAML), then crash
     # at `.get(...)` on None; validation above already treats that as unset.
     tm = cfg.get("target_metric")

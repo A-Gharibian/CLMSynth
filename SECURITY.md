@@ -7,10 +7,10 @@
 Security fixes land on the latest release of the current series. There is no
 long-term-support branch.
 
-| Version   | Supported          |
-|-----------|--------------------|
-| `0.6.9`   | :white_check_mark: |
-| < `0.6.9` | :x:                |
+| Version    | Supported          |
+|------------|--------------------|
+| `0.7.x`    | :white_check_mark: |
+| < `0.7.0`  | :x:                |
 
 
 ## Reporting a vulnerability

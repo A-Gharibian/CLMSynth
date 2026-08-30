@@ -6,6 +6,63 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.7.0b1] — 2026-08-30
+
+**In response to reviewer comments.**
+
+### Added
+
+- **BYOC `tag_columns`.** Columns listed are carried to the output CSV, so an outcome variable, a
+  second labeling or an identifier can travel with the data.
+- **`MissingConfigKey` is exported at the package root.**
+- Tests for the shown-figure and catalog file-target fixes.
+
+### Changed
+
+- **`clustering_mcc` aligns to maximise R_K, not accuracy.** The Hungarian step
+  now runs on `n*C - outer(t, p)`, which is the same single assignment call and
+  returns `max` over matchings rather than R_K read off the accuracy-optimal one.
+  Balanced runs with `M <= K` are bit-identical; imbalanced and surplus-label
+  configurations move, and the value can no longer come out negative.
+- **The recall solver uses SciPy.** It is now
+  `brentq`, with a bounded minimization when the grid shows the target is not settled.
+- **`_loadtxt_url` refuses any scheme but http(s).** `base_url` comes from a
+  config, and a config is a shareable artifact.
+- **Plotting and `run_pipeline` now separate.** Behavior is
+  unchanged;  `_render_dataset_plots` can be skipped now.
+
+### Removed
+
+- **Python 3.11.** `requires-python` is now `>=3.12`. numpy and scipy both moved
+  to `>=3.12` under SPEC 0, so `requirements.txt` could not be installed on 3.11.
+
+### Fixed
+
+- **`[CLM-302]` fired even when nothing was ignored.** `matching_mode: perfect`
+  warned that `proportions`, `balance` and `skew_rule` were being ignored on every
+  run, including configs that set none of them. It now warns only when at least
+  one is present. Labels are unchanged; the code and its message are unchanged.
+
+- Config generator, one root cause across five sites:
+  - A valueless `assignment_matrix:` renders `[]`, so `[CLM-206]` fires.
+  - A valueless `centroid_enabled:` keeps the documented default of true.
+  - Scalar keys render their default instead of the literal `None`.
+  - A bare `batteries: "g2mg"` is one name, not four characters.
+  - `target_metric` renders every key, so a typo stays visible.
+- `[CLM-104]` is checked before any dataset-dependent guard.
+- A malformed config value aborts cleanly instead of escaping as a traceback.
+- A valueless `datasets:` no longer crashes the run.
+- Wizard corrections:
+  - Perfect mode respects the label-count cap it bypassed.
+  - `concentrated_labels` is capped like every sibling label question.
+  - The name-clash guard renames the file, not its parent folder.
+  - A bound message no longer prints `None` for an absent bound.
+  - The registry seed prompt goes through the question schema.
+- Non-numeric BYOC columns have one policy, not two disagreeing ones.
+- An interactively shown figure is no longer closed immediately.
+- The catalog generator refuses a file target with a clear message.
+
+
 ## [0.6.9] — 2026-08-23
 
 **Config and Wizard corrections.**

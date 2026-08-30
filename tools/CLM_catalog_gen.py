@@ -70,6 +70,8 @@ def _checked_rmtree(target: Path, **kwargs) -> None:
         return
     if target != OUT and OUT not in target.parents:
         raise SystemExit(f"refusing to delete '{target}': it is outside '{OUT}'")
+    if not target.is_dir():
+        raise SystemExit(f"refusing to delete '{target}': it is not a directory")
     if (target == OUT and any(OUT.iterdir())
             and not any((OUT / name).is_dir() for name in TABLES.values())):
         raise SystemExit(

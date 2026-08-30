@@ -32,6 +32,8 @@ def format_list_or_all(value) -> str:
     """Renders a batteries/datasets value: the literal "all" or a YAML list."""
     if value == "all":
         return '"all"'
+    if isinstance(value, str):
+        value = [value]
     return f"[{', '.join(_yaml_scalar(v) for v in value)}]"
 
 
@@ -58,14 +60,19 @@ def _optional_block(lines: list[str]) -> str:
 def generate_base_config(upstream_data: dict, output_path: str = "test_data_config.yaml"):
     """Generates the YAML configuration using upstream dynamic data."""
 
-    data_source = upstream_data.get("data_source", "clustbench")
+    def pick(key, default):
+        """Payload value, or the default when absent or null."""
+        value = upstream_data.get(key)
+        return default if value is None else value
+
+    data_source = pick("data_source", "clustbench")
     if data_source not in VALID_SOURCES:
         log.warning(f"data_source '{data_source}' is not one of {VALID_SOURCES}; "
                     "main.py's FETCHERS dict will reject this at runtime.")
 
-    balance = upstream_data.get("balance", "unbalanced")
-    skew_rule = upstream_data.get("skew_rule", "geometric")
-    has_proportions = bool(upstream_data.get("proportions"))
+    balance = pick("balance", "unbalanced")
+    skew_rule = pick("skew_rule", "geometric")
+    has_proportions = bool(pick("proportions", []))
 
     if balance == "balanced" and has_proportions:
         log.warning(
@@ -79,9 +86,9 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
 
     # --- optional clm_label blocks ------------------------------------------
 
-    mode = upstream_data.get("matching_mode", "custom")
-    target_metric = upstream_data.get("target_metric") or {}
-    competing_noise = upstream_data.get("competing_noise") or []
+    mode = pick("matching_mode", "custom")
+    target_metric = pick("target_metric", {})
+    competing_noise = pick("competing_noise", [])
 
     if target_metric and mode not in ("single", "custom"):
         log.warning(f"target_metric is set but matching_mode is '{mode}': the engine rejects "
@@ -94,13 +101,13 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
         log.warning("competing_noise is set with matching_mode 'random': the engine rejects this "
                     "([CLM-115]). Use 'single' or 'custom'.")
 
-    skew_params = upstream_data.get("skew_params") or {}
+    skew_params = pick("skew_params", {})
     skew_params_block = _optional_block(
         ["    skew_params:"] + [f"      {k}: {_yaml_scalar(v)}" for k, v in skew_params.items()]
         if skew_params else []
     )
 
-    concentrated = upstream_data.get("concentrated_labels") or []
+    concentrated = pick("concentrated_labels", [])
     concentrated_block = _optional_block(
         [(f"    concentrated_labels: [{', '.join(str(x) for x in concentrated)}]"
           "  # spillover_rule 'concentrated' only")] if concentrated else []
@@ -129,58 +136,64 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
             "    # max_iter is global-only (the pair scope never iterates).",
             "    target_metric:",
         ]
-        for key in ("type", "value", "scope", "tolerance", "max_iter", "probe_seed"):
-            # Null would render as the word None.
-            if target_metric.get(key) is not None:
-                target_lines.append(f"      {key}: {_yaml_scalar(target_metric[key])}")
+        # Rendered generically: an unrecognised key stays visible.
+        for key, value in target_metric.items():
+            if value is not None:
+                target_lines.append(f"      {key}: {_yaml_scalar(value)}")
     target_block = _optional_block(target_lines)
 
-    steepness = upstream_data.get("centroid_steepness")
+    steepness = pick("centroid_steepness", None)
     steepness_block = _optional_block(
         [f"      steepness: {steepness}  # exponential profile only"]
-        if steepness is not None and upstream_data.get("centroid_profile") == "exponential" else []
+        if steepness is not None and pick("centroid_profile", "exponential") == "exponential" else []
     )
 
-    proportions_str = f"[{', '.join(map(str, upstream_data.get('proportions') or []))}]"
-    single_match_yaml = format_yaml_snippet(upstream_data.get("single_match", {"cluster": None, "label": None}))
-    assignment_matrix_yaml = format_yaml_snippet(upstream_data.get("assignment_matrix", []))
-    centroid_enabled = "true" if upstream_data.get("centroid_enabled", True) else "false"
+    proportions_str = f"[{', '.join(map(str, pick('proportions', [])))}]"
+    single_match_yaml = format_yaml_snippet(pick("single_match", {"cluster": None, "label": None}))
+    assignment_matrix_yaml = format_yaml_snippet(pick("assignment_matrix", []))
+    centroid_enabled = "true" if pick("centroid_enabled", True) else "false"
 
     if data_source == "byoc":
+        tags = pick("tag_columns", [])
+        if isinstance(tags, str):
+            tags = [tags]
+        tag_line = (f"\n  tag_columns: "
+                    f"[{', '.join(_yaml_scalar(t) for t in tags)}]") if tags else ""
         byoc_extra = (
-            f"\n  input_dir: {_yaml_scalar(upstream_data.get('input_dir', 'INPUT'))}"
-            f"\n  cluster_column: {_yaml_scalar(upstream_data.get('cluster_column', 'cluster'))}"
-            f"\n  standardize: {'true' if upstream_data.get('standardize', False) else 'false'}"
+            f"\n  input_dir: {_yaml_scalar(pick('input_dir', 'INPUT'))}"
+            f"\n  cluster_column: {_yaml_scalar(pick('cluster_column', 'cluster'))}"
+            + tag_line +
+            f"\n  standardize: {'true' if pick('standardize', False) else 'false'}"
         )
     else:
         byoc_extra = ""
 
     rendered_yaml = YAML_TEMPLATE.format(
         data_source=data_source,
-        output_dir=_yaml_scalar(str(upstream_data.get("output_dir", "OUTPUT"))),
+        output_dir=_yaml_scalar(str(pick("output_dir", "OUTPUT"))),
         byoc_extra=byoc_extra,
         data_source_suite_key=f"{data_source}_suite",
-        batteries=format_list_or_all(upstream_data.get("batteries") or "all"),
-        datasets=format_list_or_all(upstream_data.get("datasets") or "all"),
-        source_seed=upstream_data.get("source_seed", 42),
+        batteries=format_list_or_all(pick("batteries", "all")),
+        datasets=format_list_or_all(pick("datasets", "all")),
+        source_seed=pick("source_seed", 42),
 
-        n_labels=upstream_data.get("n_labels", 1),
-        source_labeling=upstream_data.get("source_labeling", "labels0"),
-        noise=upstream_data.get("noise", 0.1),
-        label_seed=upstream_data.get("label_seed", 42),
+        n_labels=pick("n_labels", 1),
+        source_labeling=pick("source_labeling", "labels0"),
+        noise=pick("noise", 0.1),
+        label_seed=pick("label_seed", 42),
 
-        num_classes=upstream_data.get("num_classes", 4),
+        num_classes=pick("num_classes", 4),
         proportions=proportions_str,
         balance=balance,
         skew_rule=skew_rule,
         matching_mode=mode,
         single_match=single_match_yaml,
         assignment_matrix=assignment_matrix_yaml,
-        split_rule=upstream_data.get("split_rule", "proportional_to_size"),
-        spillover_rule=upstream_data.get("spillover_rule", "proportional_to_marginal"),
+        split_rule=pick("split_rule", "proportional_to_size"),
+        spillover_rule=pick("spillover_rule", "proportional_to_marginal"),
         centroid_enabled=centroid_enabled,
-        centroid_profile=upstream_data.get("centroid_profile", "exponential"),
-        centroid_favors=upstream_data.get("centroid_favors", "core"),
+        centroid_profile=pick("centroid_profile", "exponential"),
+        centroid_favors=pick("centroid_favors", "core"),
 
         # Optional blocks: '' unless the payload asked for them.
         skew_params=skew_params_block,

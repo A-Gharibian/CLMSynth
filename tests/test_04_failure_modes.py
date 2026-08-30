@@ -18,6 +18,7 @@ What is checked:
   error boundary       a failure inside `plt.subplots()` returns False like
                        every other plotting failure (finding N4, closed in
                        0.6.9)
+  interactive branch   omitting `output_path` shows and keeps the figure
   exit codes           a missing or malformed config exits 1, distinct from
                        exit 2 for a coded config error and 0 for success
   network timeout      `CLUSTBENCH_TIMEOUT` is passed to `urlopen`
@@ -29,6 +30,7 @@ import sys
 from pathlib import Path
 from unittest import mock
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
@@ -368,6 +370,30 @@ def test_figure_creation_failure_returns_false_like_every_other_failure(tmp_path
         assert plot_feature_scatter(
             frame, "x", "y", hue_col="hue",
             output_path=str(tmp_path / "x.png"), title="t") is False
+
+
+# ---------------------------------------------------------------------------
+# The interactive branch: a shown figure belongs to the viewer
+# ---------------------------------------------------------------------------
+
+def test_interactive_plot_shows_and_keeps_the_figure_open(monkeypatch):
+    """Omitting output_path shows and keeps the figure open."""
+    show = mock.MagicMock()
+    monkeypatch.setattr("clmsynth.visualization.plt.show", show)
+    frame = pd.DataFrame({"x": [1.0, 2.0, 3.0, 4.0], "y": [1.0, 4.0, 2.0, 3.0],
+                          "hue": [0, 1, 0, 1]})
+
+    before = set(plt.get_fignums())
+    result = plot_feature_scatter(frame, "x", "y", hue_col="hue", title="interactive")
+    opened = set(plt.get_fignums()) - before
+
+    try:
+        assert result is True, "the interactive branch did not report success"
+        assert show.call_count == 1, "a pathless render did not call plt.show()"
+        assert opened, "the shown figure was closed under the viewer"
+    finally:
+        for num in opened:
+            plt.close(num)
 
 
 # ---------------------------------------------------------------------------
@@ -749,6 +775,15 @@ def test_clustbench_timeout_is_passed_to_urlopen():
     assert captured["timeout"] == dataset_sources.CLUSTBENCH_TIMEOUT
     assert captured["timeout"] is not None, "fetch would inherit the OS default timeout"
 
+
+
+@pytest.mark.parametrize("url", ["file:///etc/passwd", "data:text/plain,x", "/tmp/local.gz"],
+                         ids=["file", "data", "no-scheme"])
+def test_clustbench_refuses_a_non_http_base_url(url):
+    """`base_url` comes from a shareable config, so only http(s) is opened."""
+    with pytest.raises(ValueError) as excinfo:
+        dataset_sources._loadtxt_url(url)
+    assert "only http(s) is fetched" in str(excinfo.value)
 
 def test_clustbench_fetch_returns_none_when_the_source_is_unreachable():
     """A failed fetch is a skipped dataset, not an exception out of the batch.

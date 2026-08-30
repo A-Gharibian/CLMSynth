@@ -67,6 +67,7 @@ def plot_feature_scatter(
     log.info(f"Generating scatter plot for {x_col} vs {y_col}...")
 
     fig = None
+    shown = False
     try:
         sns.set_theme(style="whitegrid", palette="muted")
         fig, ax = plt.subplots(figsize=(9, 6))
@@ -127,6 +128,7 @@ def plot_feature_scatter(
             log.info(f"Plot saved successfully to: '{path}'")
         else:
             plt.show()
+            shown = True               # the viewer owns a shown figure
         return True
 
     except Exception as e:
@@ -135,5 +137,5 @@ def plot_feature_scatter(
         log.error(f"[PLOT-FAIL] Failed to generate scatter plot: {e}{_max_path_hint(output_path)}")
         return False
     finally:
-        if fig is not None:
+        if fig is not None and not shown:
             plt.close(fig)

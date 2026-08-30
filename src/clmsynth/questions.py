@@ -115,13 +115,22 @@ _QUESTIONS: list[Question] = [
     Question(
         "byoc_suite.cluster_column", "str", "Name of the single cluster-id column",
         explain="Exactly ONE column holds the cluster id of each row.\n"
-                "Every other numeric column is treated as a feature.",
+                "Every other column is a feature unless you list it below.",
         default="cluster"),
+    Question(
+        "byoc_suite.tag_columns._enabled", "bool",
+        "Carry any column through without it becoming a feature?",
+        explain="An outcome variable, a second labelling, an identifier: columns that\ntravel with the data but must not enter the geometry. They are copied\nto the output CSV untouched and need not be numeric.",
+        default=False),
+    Question(
+        "byoc_suite.tag_columns", "str_list", "Column name(s) to carry through",
+        explain="Exact column names, as written in the CSV header. A name that is\nnot in the file is an error, and the cluster column cannot be one."),
     Question(
         "byoc_suite.standardize", "bool", "Rescale features to 0..1 on import?",
         explain="Min-max standardization puts every feature on the same 0..1 scale.\n"
                 "Use it when your features have very different units/ranges so no\n"
-                "single one dominates the geometry. It rescales the saved CSV too.",
+                "single one dominates the geometry. It rescales the saved CSV too,\n"
+                "and never touches a carried column.",
         default=False),
     Question(
         "byoc_suite.seed", "int", "Random seed",
@@ -249,11 +258,14 @@ _QUESTIONS: list[Question] = [
                 "  concentrated             : dump all leftovers into one label.",
         default="proportional_to_marginal",
         choices=("proportional_to_marginal", "uniform", "concentrated")),
+    # engine_max (each label < M) is dynamic in M, so the wizard applies it at
+    # the call site; only the static lower bound is declared here.
     Question(
         "clm_label.concentrated_labels", "int_list",
         "Which label value(s) should absorb the leftovers",
         explain="All leftover points go to these labels. Leave one value for the\n"
-                "usual case; the default without this is the single largest label."),
+                "usual case; the default without this is the single largest label.",
+        lo=0, engine_min=0),
 
     # competing noise
     Question(

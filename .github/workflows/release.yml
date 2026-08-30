@@ -1,0 +1,142 @@
+name: Release
+
+# The only workflow that runs at a tag. CI covers pushes and pull requests to
+# main and never sees a tag at all, which is why the tag/version precondition
+# lives here rather than there.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      index:
+        description: "Where to publish"
+        required: true
+        default: testpypi
+        type: choice
+        options: [testpypi, pypi]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false          # never abandon an upload half-done
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Build once. Everything downstream consumes THIS artifact, so what is checked
+  # and what is published cannot drift apart.
+  # --------------------------------------------------------------------------
+  build:
+    name: Build and verify
+    runs-on: ubuntu-latest
+    outputs:
+      index: ${{ steps.route.outputs.index }}
+      version: ${{ steps.route.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      # The precondition. Refuses to go further when the tag and the declared
+      # version disagree, or when any of the six version declarations or three
+      # dates has been left behind by the bump.
+      - name: Tag and metadata agree
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            python tools/check_release_metadata.py --tag "${GITHUB_REF_NAME}"
+          else
+            python tools/check_release_metadata.py
+          fi
+
+      # a/b prereleases rehearse on TestPyPI; rc and final go to PyPI. A manual
+      # run says where it is going instead.
+      - name: Route the release
+        id: route
+        env:
+          EVENT: ${{ github.event_name }}
+          CHOICE: ${{ inputs.index }}
+        run: |
+          VERSION=$(python -c "import pathlib, tomllib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            INDEX="$CHOICE"
+          elif printf '%s' "$VERSION" | grep -qE '(a|b)[0-9]+$'; then
+            INDEX=testpypi
+          else
+            INDEX=pypi
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "index=$INDEX" >> "$GITHUB_OUTPUT"
+          echo "publishing $VERSION to $INDEX"
+
+      - name: Install the build tools
+        run: pip install build twine
+
+      - name: Build the sdist and wheel
+        run: python -m build
+
+      - name: Check the built artifacts
+        run: twine check dist/*
+
+      # Nothing else proves the wheel is usable: the test job installs the repo
+      # with `-e`, which puts the source tree on the path and so cannot detect a
+      # module or an entry point missing from the built artifact.
+      - name: The wheel installs, imports, and brings its console scripts
+        run: |
+          python -m venv /tmp/probe
+          /tmp/probe/bin/pip install --quiet dist/*.whl
+          /tmp/probe/bin/python -c "import clmsynth; print('clmsynth', clmsynth.__version__)"
+          for script in clmsynth clmsynth-config clmsynth-wizard; do
+            test -x "/tmp/probe/bin/$script" || { echo "missing console script: $script"; exit 1; }
+            echo "  console script present: $script"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  # --------------------------------------------------------------------------
+  # Publish. No token anywhere: Trusted Publishing (OIDC) exchanges the
+  # workflow's identity for a short-lived credential, and PyPI generates PEP 740
+  # attestations from it. The environment carries the approval gate.
+  # --------------------------------------------------------------------------
+  testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    if: needs.build.outputs.index == 'testpypi'
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/clmsynth
+    permissions:
+      id-token: write                # the OIDC token; nothing else is needed
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  pypi:
+    name: Publish to PyPI
+    needs: build
+    if: needs.build.outputs.index == 'pypi'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/clmsynth
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

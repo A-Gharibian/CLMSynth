@@ -17,6 +17,7 @@ those dicts.
 import gzip
 import io
 import logging
+import urllib.parse
 import urllib.request
 from typing import Any
 
@@ -246,14 +247,23 @@ def print_battery_info(source: str) -> None:
 
 
 # ===========================================================================
-# Source 1: clustering_benchmarks
+# Source 1: clustbench
 # ===========================================================================
 
 def _loadtxt_url(url: str, **loadtxt_kwargs) -> np.ndarray:
     """
     Fetches a gzipped text array over HTTP(S) with a timeout, then parses it.
+
+    `base_url` reaches here from the config, and a config is a shareable
+    artifact (see SECURITY.md), so a `file://` or `data:` URL would turn a
+    dataset fetch into a local read. Only http(s) is opened.
     """
-    with urllib.request.urlopen(url, timeout=CLUSTBENCH_TIMEOUT) as resp:
+    scheme = urllib.parse.urlparse(url).scheme
+    if scheme not in ("http", "https"):
+        raise ValueError(
+            f"clustbench: refusing to fetch {url!r}: only http(s) is fetched, "
+            f"not {scheme!r}. Check clustbench_suite.base_url.")
+    with urllib.request.urlopen(url, timeout=CLUSTBENCH_TIMEOUT) as resp:  # nosec B310
         raw = resp.read()
     with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:
         return np.loadtxt(stream, **loadtxt_kwargs)

@@ -28,7 +28,7 @@ from .dataset_sources import (
     print_battery_info,
     resolve_selection,
 )
-from .label_context import build_context
+from .label_context import DatasetContext, build_context
 from .label_generator import generate_additional_labels
 from .metrics import clustering_ari, clustering_mcc
 from .visualization import plot_feature_scatter
@@ -215,16 +215,20 @@ def precheck_byoc_matching_ids(jobs, fetch_kwargs: dict, clm_config: dict | None
     them, so a batch with several mismatches is fixed in one pass rather than
     one run at a time.
     """
-    cluster_column = fetch_kwargs.get("cluster_column")
-    if not clm_config or not isinstance(cluster_column, str):
-        return                       # byoc_source rejects a bad cluster_column itself
+    if not clm_config:
+        return
 
-    # [CLM-104] bounds labels by num_classes: dataset-independent.
+    # [CLM-104] bounds labels by num_classes: dataset-independent, so it is
+    # checked before anything that depends on a dataset.
     try:
         validate_matching_ids(clm_config, _configured_cluster_ids(clm_config))
-    except ValueError as e:
+    except (ValueError, TypeError) as e:
         log.critical(f"Configuration error, aborting run: {e}")
         raise
+
+    cluster_column = fetch_kwargs.get("cluster_column")
+    if not isinstance(cluster_column, str):
+        return                       # byoc_source rejects a bad cluster_column itself
 
     failures = []
     for battery, dataset in jobs:
@@ -263,6 +267,48 @@ def load_config(config_path: str) -> dict:
         sys.exit(1)
     return config
 
+def _render_dataset_plots(final_df: pd.DataFrame, context: DatasetContext,
+                          png_dir: Path, stem: str, gt_col: str | None,
+                          source_labeling: str, plot_title: str,
+                          label_results: list[dict[str, Any]],
+                          clm_config: dict | None) -> None:
+    """Best-effort PNGs for one dataset."""
+    feature_cols = list(context.features.columns)
+    if len(feature_cols) < 2:
+        log.warning(f"'{stem}' has fewer than 2 features; skipping plots.")
+        return
+    x_col, y_col = feature_cols[0], feature_cols[1]
+
+    if gt_col is not None and gt_col in final_df.columns:
+        if not plot_feature_scatter(
+            final_df, x_col=x_col, y_col=y_col,
+            hue_col=gt_col,
+            output_path=str(png_dir / f"{stem}__{gt_col}.png"),
+            title=plot_title,
+            subtitle=f"ground-truth clusters ({gt_col})",
+        ):
+            log.warning(f"'{stem}': ground-truth plot failed; CSV/labels are unaffected.")
+    else:
+        log.warning(f"ground-truth for '{source_labeling}' not found for '{stem}'; skipping plot.")
+
+    # Subtitle metrics compare each generated label against the SAME ground-truth
+    # labeling the CLM engine keyed off (source_labeling), reusing label_results.
+    clm_info = _clm_info_text(clm_config) if clm_config else None
+    for r in label_results:
+        subtitle = None
+        if r["mcc"] is not None:
+            subtitle = f"MCC {r['mcc']:.3f}  ·  ARI {r['ari']:.3f}   (vs {gt_col})"
+        if not plot_feature_scatter(
+            final_df, x_col=x_col, y_col=y_col,
+            hue_col=r["name"],
+            output_path=str(png_dir / f"{stem}__{r['name']}.png"),
+            title=plot_title,
+            subtitle=subtitle,
+            info_text=clm_info,
+        ):
+            log.warning(f"'{stem}': plot for '{r['name']}' failed; CSV/labels are unaffected.")
+
+
 def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_dir: Path) -> int:
     """Runs every configured dataset through fetch, label generation, and
     output writing. Returns the number of datasets processed without error."""
@@ -280,7 +326,7 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
         log.error(f"'{source}_suite.batteries' not set in config. Specify 'all' or an explicit list.")
         return 0
     batteries = resolve_selection(source, batteries_cfg)
-    datasets_cfg = source_config.pop("datasets", "all")
+    datasets_cfg = source_config.pop("datasets", None) or "all"
     fetch_seed = source_config.pop("seed", 42)
 
     # Whatever's left after popping the three known keys is forwarded
@@ -366,45 +412,11 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
             _write_summary_txt(txt_dir / f"{stem}.txt", friendly, source, battery, dataset,
                                source_labeling, gt_col, len(final_df), clm_config, label_results)
 
-            feature_cols = list(context.features.columns)
-            if len(feature_cols) < 2:
-                log.warning(f"'{stem}' has fewer than 2 features; skipping plots.")
-                n_ok += 1
-                continue
-            x_col, y_col = feature_cols[0], feature_cols[1]
+            _render_dataset_plots(final_df, context, png_dir, stem, gt_col,
+                                  source_labeling, plot_title, label_results,
+                                  clm_config)
 
-            if gt_col is not None and gt_col in final_df.columns:
-                if not plot_feature_scatter(
-                    final_df, x_col=x_col, y_col=y_col,
-                    hue_col=gt_col,
-                    output_path=str(png_dir / f"{stem}__{gt_col}.png"),
-                    title=plot_title,
-                    subtitle=f"ground-truth clusters ({gt_col})",
-                ):
-                    log.warning(f"'{stem}': ground-truth plot failed; CSV/labels are unaffected.")
-            else:
-                log.warning(f"ground-truth for '{source_labeling}' not found for '{stem}'; skipping plot.")
-
-            # Subtitle metrics compare each generated label against the SAME ground-truth
-            # labeling the CLM engine keyed off (source_labeling), reusing label_results.
-            clm_info = _clm_info_text(clm_config) if clm_config else None
-            for r in label_results:
-                subtitle = None
-                if r["mcc"] is not None:
-                    subtitle = f"MCC {r['mcc']:.3f}  ·  ARI {r['ari']:.3f}   (vs {gt_col})"
-                if not plot_feature_scatter(
-                    final_df, x_col=x_col, y_col=y_col,
-                    hue_col=r["name"],
-                    output_path=str(png_dir / f"{stem}__{r['name']}.png"),
-                    title=plot_title,
-                    subtitle=subtitle,
-                    info_text=clm_info,
-                ):
-                    log.warning(f"'{stem}': plot for '{r['name']}' failed; CSV/labels are unaffected.")
-
-            # Plotting is best-effort (see above); the dataset's real deliverable
-            # is the CSV/labels written earlier, so a plot failure alone does not
-            # make this dataset a failed run.
+            # Plots are best-effort; the deliverable is the CSV written above.
             n_ok += 1
         except ValueError as e:
             code = getattr(e, "code", None)
@@ -526,8 +538,9 @@ def main() -> None:
 
     try:
         n_ok = run_pipeline(data_source, config, csv_dir, png_dir, txt_dir)
-    except ValueError:
-        # Coded [CLM-1xx] configuration error re-raised by run_pipeline, which has
+    except (ValueError, TypeError):
+        # Coded [CLM-1xx] configuration error re-raised by run_pipeline, or a
+        # malformed config value that reached an operator, which has
         # already logged it at CRITICAL. Nothing was written, so nothing is kept:
         # this is the path `precheck_byoc_matching_ids` describes as aborting
         # before any output is written, and the run folder is the last thing

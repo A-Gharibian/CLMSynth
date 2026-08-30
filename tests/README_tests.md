@@ -63,3 +63,36 @@ rule it exempts, in `[tool.ruff.lint]` and `[tool.bandit]` in `pyproject.toml`.
 CI runs the suite on Python 3.11–3.14, the static analysis above, and a
 packaging job that builds the distributions and checks that the version agrees
 across `pyproject.toml`, `__init__.py`, `CITATION.cff` and the shipped manuals.
+
+
+## Testing policy
+
+**Ship criterion.** A testing script ships as pytest only if it is deterministic (no
+wall-clock timing races, no unbounded network), fast (sub-second to a few
+seconds), and asserts a standing invariant or regression rather than documenting a
+one-time investigation.
+
+**`06_diagnostics` is the safety net, not the owner.** Registry coverage is a
+**union** property across the whole suite: a code asserted in `01_logic` or
+`02_edge_cases` is covered and does not need repeating, and overlap is fine. 06
+exists so no code falls through, every code that needs testing and has
+no home elsewhere gets one there. Coded assertions are not to be stripped out of
+the other modules to centralize them.
+
+**Characterisation tests are a feature.** Several tests assert current *broken*
+behavior on purpose, so that fixing the defect turns them red and the red is the
+prompt to invert the assertion. They are listed under the release that closes
+each one.
+
+**What CI deliberately does not run.** Two bodies of work stay out of the gate
+and out of the repository:
+
+- **Regression against the manual's Test Data table and the article's results
+  tables.** Article and manual material, deferred to CLMSynth-GUI, where a
+  front end for research use is being introduced. 1.0 pins the published numbers
+  at seed 42, which is the release that promises they will not move.
+- **Property and fuzz tests over the config surface.** Valuable for *finding*
+  new uncoded paths, which is what 0.7.0 uses them for, but a search that
+  discovers something new on run 300 is not a gate.
+- The research tests are deliberately not published, and will be published
+with the accompanying paper.

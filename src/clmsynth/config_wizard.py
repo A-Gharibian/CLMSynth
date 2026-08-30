@@ -104,9 +104,19 @@ def ask_float(prompt, default=None, lo=None, hi=None, explain=None, lo_strict=Fa
             continue
         below = lo is not None and (f <= lo if lo_strict else f < lo)
         if below or (hi is not None and f > hi):
-            print(f"    (must be between {lo} and {hi})")
+            print(f"    (must be {_bound_text(lo, hi, lo_strict)})")
             continue
         return f
+
+
+def _bound_text(lo, hi, lo_strict=False) -> str:
+    """Wording for whichever bounds are actually declared."""
+    over = "greater than" if lo_strict else "at least"
+    if lo is not None and hi is not None:
+        return f"between {lo} and {hi}" if not lo_strict else f"{over} {lo} and at most {hi}"
+    if lo is not None:
+        return f"{over} {lo}"
+    return f"at most {hi}"
 
 
 def ask_bool(prompt, default=True, explain=None) -> bool:
@@ -165,7 +175,7 @@ def ask_cluster_id(prompt, explain=None):
     return ask_cluster_ids(prompt, explain)[0]
 
 
-def ask_ints(prompt, explain=None) -> list[int]:
+def ask_ints(prompt, explain=None, minv=None, maxv=None) -> list[int]:
     """Asks for a comma-separated list of whole numbers (e.g. label ids)."""
     _explain(explain)
     while True:
@@ -175,9 +185,14 @@ def ask_ints(prompt, explain=None) -> list[int]:
         except ValueError:
             print("    (enter whole numbers separated by commas)")
             continue
-        if vals:
-            return vals
-        print("    (at least one value is required)")
+        if not vals:
+            print("    (at least one value is required)")
+            continue
+        if any((minv is not None and v < minv) or (maxv is not None and v > maxv)
+               for v in vals):
+            print(f"    (each value must be {_bound_text(minv, maxv)})")
+            continue
+        return vals
 
 
 def ask_floats(prompt, explain=None) -> list[float]:
@@ -257,7 +272,8 @@ def ask_from(key, **override):
     if q.kind == "choice":
         return ask_choice(prompt, q.choices, default, explain=explain)
     if q.kind == "int_list":
-        return ask_ints(prompt, explain=explain)
+        return ask_ints(prompt, explain=explain, minv=override.get("minv", q.lo),
+                        maxv=override.get("maxv", q.hi))
     if q.kind == "float_list":
         return ask_floats(prompt, explain=explain)
     if q.kind == "str_list":
@@ -350,10 +366,16 @@ def _byoc_suite():
     input_dir = ask_from("byoc_suite.input_dir")
     datasets = ask_from("byoc_suite.datasets")
     cluster_column = ask_from("byoc_suite.cluster_column")
+    tags = (ask_from("byoc_suite.tag_columns")
+            if ask_from("byoc_suite.tag_columns._enabled") else [])
     standardize = ask_from("byoc_suite.standardize")
     seed = ask_from("byoc_suite.seed")
-    return {"batteries": ["local"], "input_dir": input_dir, "datasets": datasets,
-            "cluster_column": cluster_column, "standardize": standardize, "seed": seed}
+    suite = {"batteries": ["local"], "input_dir": input_dir, "datasets": datasets,
+             "cluster_column": cluster_column, "standardize": standardize,
+             "seed": seed}
+    if tags:
+        suite["tag_columns"] = tags
+    return suite
 
 
 def _registry_suite(source):
@@ -370,7 +392,8 @@ def _registry_suite(source):
     while True:
         raw = _read("Pick a group by number/name, or 'all'", "1")
         if raw == "all":
-            return {"batteries": "all", "datasets": "all", "seed": ask_int("Random seed", 42)}
+            return {"batteries": "all", "datasets": "all",
+                    "seed": ask_from("registry_suite.seed")}
         if raw in batteries:
             battery = raw
             break
@@ -440,7 +463,12 @@ def build_clm(known_k=None) -> dict[str, Any]:
     clm: dict[str, Any] = {"num_classes": M, "matching_mode": mode}
 
     if mode == "perfect":
-        if known_k and M != known_k:
+        cap = SCHEMA["clm_label.num_classes"].hi
+        if known_k and cap is not None and known_k > cap:
+            print(f"\n  Note: your data has {known_k} clusters, past the "
+                  f"{int(cap)}-label cap, so perfect mode cannot match it.\n"
+                  f"   Leaving M = {M}.")
+        elif known_k and M != known_k:
             print(f"\n  Note: perfect mode needs M = your cluster count ({known_k}); setting M = {known_k}.")
             clm["num_classes"] = known_k
         else:
@@ -493,7 +521,8 @@ def build_clm(known_k=None) -> dict[str, Any]:
         else:
             clm["spillover_rule"] = ask_from("clm_label.spillover_rule")
             if clm["spillover_rule"] == "concentrated":
-                clm["concentrated_labels"] = ask_from("clm_label.concentrated_labels")
+                clm["concentrated_labels"] = ask_from(
+                    "clm_label.concentrated_labels", minv=0, maxv=clm["num_classes"] - 1)
 
     if mode in ("single", "custom") and ask_from("clm_label.competing_noise._enabled"):
         entries: list[dict[str, Any]] = []
@@ -585,7 +614,8 @@ def _run() -> None:
     if not out.lower().endswith((".yaml", ".yml")):
         out += ".yaml"                       # always a .yaml file, distinct from any output folder
     if _resolved_or_raw(out) == _resolved_or_raw(gs["output_dir"]):
-        out = "config_" + out                # last-ditch guard against a folder/file name clash
+        # last-ditch guard against a folder/file name clash
+        out = str(Path(out).with_name("config_" + Path(out).name))
     _save_config(config, out)
     print(f"\n  Wrote '{out}'.")
     print(f"  Run it any time with:  python -m clmsynth.main {out}")

@@ -1,6 +1,8 @@
 {
     "@context": "https://doi.org/10.5063/schema/codemeta-2.0",
     "type": "SoftwareSourceCode",
+    "applicationCategory": "Scientific/Engineering :: Artificial Intelligence",
+    "applicationSubCategory": "Synthetic data generation for cluster-label matching",
     "author": [
         {
             "id": "https://orcid.org/0000-0001-7819-0842",
@@ -20,7 +22,18 @@
             "schema:startDate": "2026-07-01"
         }
     ],
+    "buildInstructions": "https://github.com/A-Gharibian/CLMSynth/blob/main/README.md#install",
+    "citation": [
+        {
+            "type": "Dataset",
+            "identifier": "10.5281/zenodo.21751080",
+            "name": "CLM Benchmark Data Synthesizer: validation data",
+            "url": "https://doi.org/10.5281/zenodo.21751080",
+            "description": "Concept DOI resolving to the latest version. Embargoed. Produced with CLMSynth for the article's validation."
+        }
+    ],
     "codeRepository": "https://github.com/A-Gharibian/CLMSynth",
+    "contIntegration": "https://github.com/A-Gharibian/CLMSynth/actions/workflows/ci.yml",
     "contributor": [
         {
             "id": "https://orcid.org/0000-0002-7219-1008",
@@ -40,20 +53,48 @@
             "schema:startDate": "2026-01-01"
         }
     ],
+    "copyrightHolder": {
+        "id": "https://orcid.org/0000-0001-7819-0842",
+        "type": "Person",
+        "affiliation": {
+            "type": "Organization",
+            "name": "VSB - Technical University of Ostrava"
+        },
+        "email": "arootin.gharibian@vsb.cz",
+        "familyName": "Gharibian",
+        "givenName": "Arootin"
+    },
+    "copyrightYear": 2026,
     "dateCreated": "2026-07-15",
-    "dateModified": "2026-08-23",
+    "dateModified": "2026-08-30",
     "datePublished": "2026-07-31",
     "description": "A synthetic dataset generator that decouples cluster formation from class labels to evaluate cluster-label matching algorithms and measures.",
-    "downloadUrl": "https://github.com/A-Gharibian/CLMSynth/archive/refs/tags/v0.6.9.tar.gz",
+    "developmentStatus": "https://www.repostatus.org/#active",
+    "downloadUrl": "https://github.com/A-Gharibian/CLMSynth/archive/refs/tags/v0.7.0b1.tar.gz",
     "funder": {
         "type": "Organization",
         "name": "VSB - Technical University of Ostrava"
     },
+    "identifier": "10.5281/zenodo.21759538",
+    "installUrl": "https://pypi.org/project/clmsynth/",
+    "isAccessibleForFree": true,
+    "issueTracker": "https://github.com/A-Gharibian/CLMSynth/issues",
     "keywords": [
         "cluster-labels",
         "synthetic benchmark"
     ],
     "license": "https://spdx.org/licenses/MIT",
+    "maintainer": {
+        "id": "https://orcid.org/0000-0001-7819-0842",
+        "type": "Person",
+        "affiliation": {
+            "type": "Organization",
+            "name": "VSB - Technical University of Ostrava"
+        },
+        "email": "arootin.gharibian@vsb.cz",
+        "familyName": "Gharibian",
+        "givenName": "Arootin"
+    },
     "name": "CLMSynth",
     "operatingSystem": [
         "Windows",
@@ -62,7 +103,141 @@
         "BSD"
     ],
     "programmingLanguage": "Python 3",
-    "schema:releaseNotes": "Full Changelog: https://github.com/A-Gharibian/CLMSynth/blob/main/CHANGELOG.md",
-    "version": "0.6.9",
-    "developmentStatus": "active"
+    "readme": "https://github.com/A-Gharibian/CLMSynth/blob/main/README.md",
+    "referencePublication": {
+        "type": "ScholarlyArticle",
+        "identifier": "10.2139/ssrn.7268626",
+        "name": "A Synthetic Data Generator for Cluster and Label Matching Evaluation",
+        "url": "https://dx.doi.org/10.2139/ssrn.7268626",
+        "description": "Preprint on SSRN; to be replaced by the journal DOI once assigned."
+    },
+    "releaseNotes": "Full Changelog: https://github.com/A-Gharibian/CLMSynth/blob/main/CHANGELOG.md",
+    "runtimePlatform": [
+        "Python 3.12",
+        "Python 3.13",
+        "Python 3.14"
+    ],
+    "sameAs": "https://doi.org/10.5281/zenodo.21759538",
+    "softwareHelp": "https://github.com/A-Gharibian/CLMSynth/tree/main/docs/manual",
+    "softwareRequirements": [
+        {
+            "type": "SoftwareApplication",
+            "identifier": "numpy",
+            "name": "numpy",
+            "provider": {
+                "type": "Organization",
+                "name": "PyPI",
+                "url": "https://pypi.org"
+            },
+            "runtimePlatform": "Python 3",
+            "sameAs": "https://pypi.org/project/numpy/",
+            "version": ">=2.0"
+        },
+        {
+            "type": "SoftwareApplication",
+            "identifier": "pandas",
+            "name": "pandas",
+            "provider": {
+                "type": "Organization",
+                "name": "PyPI",
+                "url": "https://pypi.org"
+            },
+            "runtimePlatform": "Python 3",
+            "sameAs": "https://pypi.org/project/pandas/",
+            "version": ">=2.2"
+        },
+        {
+            "type": "SoftwareApplication",
+            "identifier": "PyYAML",
+            "name": "PyYAML",
+            "provider": {
+                "type": "Organization",
+                "name": "PyPI",
+                "url": "https://pypi.org"
+            },
+            "runtimePlatform": "Python 3",
+            "sameAs": "https://pypi.org/project/PyYAML/",
+            "version": ">=6.0"
+        },
+        {
+            "type": "SoftwareApplication",
+            "identifier": "scipy",
+            "name": "scipy",
+            "provider": {
+                "type": "Organization",
+                "name": "PyPI",
+                "url": "https://pypi.org"
+            },
+            "runtimePlatform": "Python 3",
+            "sameAs": "https://pypi.org/project/scipy/",
+            "version": ">=1.11"
+        },
+        {
+            "type": "SoftwareApplication",
+            "identifier": "scikit-learn",
+            "name": "scikit-learn",
+            "provider": {
+                "type": "Organization",
+                "name": "PyPI",
+                "url": "https://pypi.org"
+            },
+            "runtimePlatform": "Python 3",
+            "sameAs": "https://pypi.org/project/scikit-learn/",
+            "version": ">=1.4"
+        },
+        {
+            "type": "SoftwareApplication",
+            "identifier": "matplotlib",
+            "name": "matplotlib",
+            "provider": {
+                "type": "Organization",
+                "name": "PyPI",
+                "url": "https://pypi.org"
+            },
+            "runtimePlatform": "Python 3",
+            "sameAs": "https://pypi.org/project/matplotlib/",
+            "version": ">=3.8"
+        },
+        {
+            "type": "SoftwareApplication",
+            "identifier": "seaborn",
+            "name": "seaborn",
+            "provider": {
+                "type": "Organization",
+                "name": "PyPI",
+                "url": "https://pypi.org"
+            },
+            "runtimePlatform": "Python 3",
+            "sameAs": "https://pypi.org/project/seaborn/",
+            "version": ">=0.13"
+        },
+        {
+            "type": "SoftwareApplication",
+            "identifier": "faker",
+            "name": "faker",
+            "provider": {
+                "type": "Organization",
+                "name": "PyPI",
+                "url": "https://pypi.org"
+            },
+            "runtimePlatform": "Python 3",
+            "sameAs": "https://pypi.org/project/faker/",
+            "description": "Optional. Used only by the fabricated_data source; it falls back to numpy."
+        },
+        {
+            "type": "SoftwareApplication",
+            "identifier": "mdcgenpy",
+            "name": "mdcgenpy",
+            "provider": {
+                "type": "Organization",
+                "name": "PyPI",
+                "url": "https://pypi.org"
+            },
+            "runtimePlatform": "Python 3",
+            "sameAs": "https://github.com/CN-TU/mdcgenpy",
+            "description": "Optional. Needed only for data_source 'mdcgen'. Distributed as a git repository rather than on PyPI, so it cannot be a declared extra."
+        }
+    ],
+    "softwareVersion": "0.7.0b1",
+    "version": "0.7.0b1"
 }

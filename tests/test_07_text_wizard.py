@@ -20,6 +20,7 @@ keep and safe to throw away:
     python -m pytest tests/test_07_text_wizard.py -v
 """
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -71,6 +72,11 @@ ENGINE_BOUNDED = {
     "clm_label.skew_params.dominant_share": ("dominant_minority", "[CLM-131]"),
     "clm_label.skew_params.alpha": ("dirichlet", "[CLM-131]"),
     "clm_label.num_classes": (None, "[CLM-126]"),
+    "clm_label.concentrated_labels": (None, "[CLM-128]"),
+}
+# Extra clm keys a bounded value needs before the engine consults it.
+LIVE_EXTRAS = {
+    "clm_label.concentrated_labels": {"spillover_rule": "concentrated"},
 }
 VALID_PARAMS = {
     "geometric": {"ratio": 0.5},
@@ -98,9 +104,12 @@ def stdin(monkeypatch):
 # Schema integrity
 # ---------------------------------------------------------------------------
 
-def test_schema_keys_are_unique_and_present():
-    assert SCHEMA, "SCHEMA is empty"
-    # assert len(SCHEMA) == len({q.key for q in SCHEMA.values()})
+def test_schema_keys_and_prompts_agree():
+        assert SCHEMA, "SCHEMA is empty"
+        src = Path(wizard.__file__).read_text(encoding="utf-8")
+        asked = set(re.findall(r'ask_from\(\s*["\']([^"\']+)["\']', src))
+        assert not asked - set(SCHEMA), f"prompts with no schema entry: {sorted(asked - set(SCHEMA))}"
+        assert not set(SCHEMA) - asked, f"schema entries no prompt asks: {sorted(set(SCHEMA) - asked)}"
 
 # ---------------------------------------------------------------------------
 # The agreement property: a value outside an engine bound is refused by the engine
@@ -108,14 +117,15 @@ def test_schema_keys_are_unique_and_present():
 
 def _bad_values(q):
     """Values just outside q's engine bound(s), which the engine must reject."""
+    integral = q.kind in ("int", "int_list")
     vals = []
     if q.engine_min is not None:
-        vals.append(int(q.engine_min) - 1 if q.kind == "int" else q.engine_min - 0.5)
+        vals.append(int(q.engine_min) - 1 if integral else q.engine_min - 0.5)
         if q.engine_min_strict:
             vals.append(float(q.engine_min))          # the strict boundary itself
     if q.engine_max is not None:
-        vals.append(int(q.engine_max) + 1 if q.kind == "int" else q.engine_max + 0.5)
-    return vals
+        vals.append(int(q.engine_max) + 1 if integral else q.engine_max + 0.5)
+    return [[v] for v in vals] if q.kind == "int_list" else vals
 
 
 _CASES = [(q.key, bad)
@@ -147,6 +157,7 @@ def test_a_value_outside_a_declared_engine_bound_is_refused(key, bad):
         params = dict(VALID_PARAMS[rule])
         params[leaf] = bad
         clm = live_clm(rule, params)
+    clm.update(LIVE_EXTRAS.get(key, {}))
     assert q.visible_when(clm), "the value must be live for the engine to consult it"
 
     c, X = geometry([200, 200, 200, 200])
@@ -246,6 +257,7 @@ def test_canned_answers_build_an_engine_valid_config(stdin):
         "",               # input_dir -> INPUT
         "my_clusters",    # CSV file name(s)
         "",               # cluster_column -> cluster
+        "",               # carry any column through? -> no
         "",               # standardize -> no
         "",               # seed -> 42
         # build_label_generation

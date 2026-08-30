@@ -192,3 +192,16 @@ def test_catalog_generator_refuses_to_delete_outside_its_target(tmp_path, monkey
 
     assert "outside" in str(excinfo.value)
     assert outsider.exists()
+
+
+def test_catalog_generator_refuses_a_file_target(tmp_path, monkeypatch):
+    """A file target is refused, not deleted."""
+    victim = tmp_path / "notes.txt"
+    victim.write_text("keep me", encoding="utf-8")
+    gen = _catalog_gen(monkeypatch, victim)
+
+    with pytest.raises(SystemExit) as excinfo:
+        gen._checked_rmtree(gen.OUT, ignore_errors=True)
+
+    assert "not a directory" in str(excinfo.value)
+    assert victim.read_text(encoding="utf-8") == "keep me"

@@ -1,5 +1,5 @@
 % !CLMSynth-doc = configuration-troubleshooting
-% !CLMSynth-version = 0.6.9
+% !CLMSynth-version = 0.7.0b1
 
 \documentclass[a4paper,11pt]{article}
 \usepackage[T1]{fontenc}
@@ -45,14 +45,14 @@
 \setlength{\tabcolsep}{5pt}
 
 \title{\textbf{Configuration Troubleshooting Reference}}
-\author{CLMSynth v0.6.9}
+\author{CLMSynth v0.7.0}
 \date{\today}
 
 \begin{document}
 \maketitle
 \vspace{0.2em}
 
-\noindent This reference documents every configuration condition that is either an incompatibility or an ignored setting, as well as the diagnostic message of the CLMSynth label engine. It is intended to help users \emph{plan} a valid configuration and \emph{interpret} what the engine does with a specific configuration.
+\noindent This reference documents every configuration condition that is either an incompatibility or an ignored setting, as well as the diagnostic message of the CLMSynth label engine. It is intended to help users \emph{plan} a valid configuration and interpret what the engine does with a specific configuration.
 
 \vspace{0.4em}
 \noindent\textbf{How the code works.} The identifiers below are a documentation index for this manual; the core label synthesizer engine raises standard Python exceptions with messages banded by type:
@@ -94,7 +94,7 @@
 \end{threeparttable}
 \end{table}
 
-\noindent Not every configuration rejection is diagnostic \vcode{CLM}. There are conditions that check whether the \emph{data} that were imported by the configuration is a usable clustering at all. They do not carry a code, and the reader should not look for one in the message.
+\noindent Not every configuration rejection is diagnostic \vcode{CLM}. There are conditions that check whether the \emph{data} that were imported by the configuration is a usable clustering at all. They do not carry a code because the solution is outside the scope of the program.
 
 \newpage
 
@@ -102,7 +102,7 @@
 \section{\texorpdfstring{\quad Requirements \& Restrictions}{Requirements \& Restrictions}}
 % ===========================================================================
 \subsection{\texorpdfstring{\quad Requirements}{Requirements} (planning)}
-The user needs to provide, through a configuration file, a required set of configuration settings (Table~2). It is necessary to plan the required configuration before executing the label synthesizer; an independent CLI wizard module (\texttt{config\_wizard}) provides step-by-step generation of the file.
+The user shall provide, through a configuration file, a required set of configuration settings (Table~2). It is necessary to plan the required configuration before executing the label synthesizer; an independent CLI wizard module (\texttt{config\_wizard}) provides step-by-step guidance for generation of the configuration file.
 
 \begin{longtable}{@{}L{4.2cm} L{12.0cm}@{}}
 \toprule
@@ -131,7 +131,7 @@ spatial placement & Per-point feature vectors (an $(N,d)$ \texttt{coords} array)
 \newpage
 
 \subsection{Incompatibilities}
-Incompatibilities are configurations in which every individual setting is valid, but the combination is not: the requested features are mutually exclusive so that no assignment can satisfy both at once.
+Incompatibilities are configurations in which every individual setting is valid but the combination is not: the requested features are mutually exclusive so that no assignment can satisfy both at once.
 \begin{longtable}{@{}L{3.4cm} L{4.6cm} L{1.2cm} L{6.4cm}@{}}
 \toprule
 \headrow \hc{Feature} & \hc{Not allowed when} & \hc{Code} & \hc{Reason \& fix} \\
@@ -302,20 +302,17 @@ per-row \texttt{recall\_target} & \texttt{target\_metric} is set & Overridden by
 \newpage
 
 % ===========================================================================
-\subsection{Uncoded Rejections (data import)}
+\section{Uncoded Rejections} (data import)
 % ===========================================================================
 
-\noindent Not every rejection is a \vcode{CLM} diagnostic. The banded codes above describe the \emph{cluster-label matching model}: what a configuration asks the engine to do, and whether that is coherent. The conditions in this section describe something prior to it, whether the \emph{data} that was handed to the engine is a usable clustering at all.
+\noindent Not every rejection is a \vcode{CLM} diagnostic. The banded codes above describe the \emph{cluster-label matching model}: what a configuration asks the engine to do, and whether that is coherent. The conditions in this section describe something prior, whether the \emph{data} that was handed to the engine is a usable clustering at all.\footnote{This section is expected to grow as more input paths gain checks, and it currently covers \texttt{data\_source:~byoc}.}
 
-\vspace{0.4em}
-\noindent This section is expected to grow as more input paths gain checks. Currently, it covers one: \textbf{Bring-Your-Own-Clusters} (\texttt{data\_source: byoc}).
-
-\subsubsection*{BYOC input requirements}
+\subsection{BYOC input requirements}
 
 \noindent BYOC is an \emph{import} path, not a generator. The premise is that the user has already clustered a subset of their features with their own algorithm (k-means, fuzzy c-means, or any other) and is bringing the result: the feature subset in which the clustering was computed, plus one column holding each point's cluster. The requirements in the following are derived from that premise rather than from the CLM engine.
 
 \vspace{0.4em}
-\noindent Every requirement is checked in a single pass, so a file with several problems reports all of them at once rather than one per attempt. Any failure rejects that dataset; under a multi-dataset configuration, the remaining datasets are unaffected.
+\noindent Every requirement is checked in a single pass, so a file with several problems reports all of them at once rather than one per attempt. Any failure rejects that dataset; under a multi-dataset configuration, the remaining datasets are unaffected and independently checked.
 
 \begin{longtable}{@{}L{4.0cm} L{5.2cm} L{6.4cm}@{}}
 \toprule
@@ -324,23 +321,23 @@ per-row \texttt{recall\_target} & \texttt{target\_metric} is set & Overridden by
 \endfirsthead
 \headrow \hc{Requirement} & \hc{Rejected when} & \hc{Why} \\ \midrule
 \endhead
-Non-empty file & No data rows, or no columns & A header alone is not a clustering. \\
+Empty file & No data rows, or no columns & A header alone is not a clustering. \\
 Distinct column names & Any name appears twice & \texttt{pandas} renames the second to \texttt{name.1}, so the column meant is ambiguous, and which of the two originals it holds depends on their order in the file. \\
-No reserved names & A column is named \texttt{Cohort\_Class}, \texttt{GroundTruth\_*}, \texttt{Cluster\_n} or \texttt{Label\_n} & The first two are consumed as ground truth and would silently disappear as features; the last two are written into the output, producing a duplicate column in the result CSV. \\
+No reserved names & A column is named \texttt{Cohort\_Class}, \texttt{GroundTruth\_*}, \texttt{Cluster\_n} or \texttt{Label\_n} & The first two are consumed as ground truth and would silently disappear as features; the last two are written into the output, producing a duplicate column in the result. \\
 Declared cluster column & \texttt{cluster\_column} missing, not a single name, or absent from the file & The ground-truth partition must be named explicitly; it is never guessed. \\
 Complete cluster column & Any missing value & Every point belongs to a cluster. A blank would become a cluster of its own and change $K$. \\
 At least two clusters & The cluster column holds one distinct value & A single partition has no structure for a label to agree or disagree with. \\
-Minimum cluster size & Any cluster holds fewer than $3$ points & A cluster of one or two points is a stray rather than a cluster. The engine's arithmetic accepts it, which is the problem: the run would proceed on a partition the user did not intend. \\
-Numeric features & Any non-cluster column is non-numeric & Every column other than the cluster column is treated as a feature, and features define the geometry the clustering was computed in. \\
+Minimum cluster size & Any cluster holds fewer than $3$ points & A cluster of one or two points is a stray rather than a cluster. \\
+Numeric features & Any non-cluster column is non-numeric & Every column other than the cluster column is treated as a feature, which define the geometry the clustering was computed from. \\
 Complete features & Any missing value in a feature column & The clustering cannot have been computed from missing values, and centroid distances would evaluate to \texttt{NaN} without complaint. \\
 \bottomrule
-\caption{BYOC import requirements. These reject a dataset before any label generation; they are not \vcode{CLM} codes, because they concern the data rather than the cluster-label matching model.}
+\caption{BYOC import requirements. These reject a dataset before any label generation; they are not \vcode{CLM} codes, because they concern the data rather than the cluster-label matching program.}
 \end{longtable}
 
 \vspace{0.4em}
-\noindent\textbf{What is \emph{not} restricted.} Cluster identifiers may be integers or strings, in any script; if \texttt{single\_match} or \texttt{assignment\_matrix} references them, the type must match. The names of the feature columns are carried verbatim to the output CSV and the plot axes. Repeated identical rows are kept, since they are additional points rather than a data error, and removing them would change the cluster sizes on which the matching arithmetic is built.
+\noindent\textbf{\emph{Not} restricted.} Cluster identifiers may be integers or strings, in any script; if \texttt{single\_match} or \texttt{assignment\_matrix} references them, the type must match. The names of the feature columns are carried verbatim to the output CSV and plot axes. Repeated identical rows are kept, since they are additional points rather than a data error, and removing them would change the cluster sizes on which the matching arithmetic is built.
 
-\vspace{0.4em}
-\noindent\textbf{Known limitation.} There is currently no way to carry a column that is neither a feature nor the cluster, an additional label or ``other tag'' that should travel with the data without entering the geometry. Every non-cluster column is a feature, which is why all of them must be numeric. A declaration for such columns is planned.
+% \vspace{0.4em}
+% \noindent\textbf{Carrying a column that is neither a feature nor a cluster.} \texttt{byoc\_suite.tag\_columns} lists columns that travel with the data without entering the geometry: an outcome variable, a second labeling from another method, an identifier. They are copied to the output CSV unchanged, are excluded from the feature set and from \texttt{standardize}, and are exempt from the numeric requirement above, though not from the reserved-name or duplicate-name checks. A name that is not in the file is refused rather than ignored, on the same reasoning as \texttt{cluster\_column}, and the name of the cluster column as a tag is refused as a contradiction. Undeclared, a non-numeric column still rejects the file, and the rejection names this declaration as the way to keep it.
 
 \end{document}

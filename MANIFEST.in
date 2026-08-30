@@ -8,23 +8,23 @@
 include README.md
 include CHANGELOG.md
 include CITATION.cff
+include codemeta.json
 include LICENSE.txt
 include SECURITY.md
 include requirements.txt
 include environment.yml
 
-# Example / starter configs referenced by the README quick-start
+# Example configs referenced by the README quick-start
 include test_data_config_offline.yaml
 include upstream_payload.yaml
 
 # User manual and the coded-diagnostics reference catalogue.
-# The .csv is not incidental: docs/troubleshooting_catalog/_data/ holds the
-# input file the byoc fixtures point at, so without it those catalog entries
-# cannot be reproduced from an sdist at all.
+# The .csv is for docs/troubleshooting_catalog/_data
 recursive-include docs *.tex
 recursive-include docs *.yaml
 recursive-include docs *.log
 recursive-include docs *.csv
+recursive-include docs *.pdf
 
 # Planning and design notes that sit beside the source they describe.
 include src/engine_internals.md
