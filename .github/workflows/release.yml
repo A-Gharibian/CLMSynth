@@ -35,8 +35,8 @@ jobs:
           cache: pip
 
       # The precondition. Refuses to go further when the tag and the declared
-      # version disagree, or when any of the six version declarations or three
-      # dates has been left behind by the bump.
+      # version disagree, or when any version declaration or release date has
+      # been left behind by the bump. The script's docstring counts them.
       - name: Tag and metadata agree
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then

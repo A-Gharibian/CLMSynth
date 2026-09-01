@@ -10,8 +10,8 @@ Consolidated cluster/dataset generation module. Four sources:
                                                  byoc_source.py)
 
 The registry shape (SOURCE_METADATA / SOURCE_DATASETS / HEAVY_BATTERIES, keyed by
-source name) is what makes a source pluggable; more are expected, so add entries to
-those dicts.
+source name) is what makes a source pluggable; more are planned (i.e. repliclust).
+This also keeps the engine pure MIT without inheriting the liscences from upstream.
 """
 
 import gzip
@@ -29,7 +29,6 @@ log = logging.getLogger(__name__)
 # Timeout (seconds) for each clustbench network fetch, so a hung GitHub endpoint
 # can't stall the pipeline forever (no circuit breaker otherwise).
 CLUSTBENCH_TIMEOUT = 30
-
 
 # ===========================================================================
 # Shared registry, one dict per concern, keyed by source name.
@@ -159,14 +158,12 @@ FABRICATED_CONFIGS: dict[str, dict[str, Any]] = {
             },
         },
     },
-    # Cluster ids and no feature space at all. The CLM engine has always accepted
+    # Cluster ids and no feature space at all. The CLM engine accepts
     # this (recall targets, proportions, allocation and spillover are pure
     # counting, and generate_clm_labels documents coords as optional), but no
     # config could express it, because every other preset and source emits
-    # features. Spatial placement is the one thing that genuinely needs geometry,
-    # so combining this preset with centroid_dependence raises [CLM-125] -- which
-    # makes it the only configuration that reaches that guard. The generator logs
-    # a warning saying so; see fabricated_generator's labels_only branch.
+    # features. Spatial placement is the one thing that needs geometry,
+    # so combining this preset with centroid_dependence raises [CLM-125].
     "labels_only_4class": {
         "n_samples": 800,
         "config_dict": {
@@ -340,9 +337,8 @@ def fetch_mdcgen_data(
     from the registered preset, seeded; None if unavailable or failing."""
     # Import the SUBMODULE, not just the package: `import mdcgenpy` alone leaves
     # `mdcgenpy.clusters` unbound (mdcgenpy/__init__.py does not import it), so
-    # `mdcgenpy.clusters.ClusterGenerator` raised AttributeError on every run --
-    # caught by the generic handler below and reported as a generation failure
-    # rather than an import problem.
+    # `mdcgenpy.clusters.ClusterGenerator` raised AttributeError on every run.
+    # The generic handler below report it as a generation failure.
     try:
         from mdcgenpy.clusters import ClusterGenerator
     except ImportError as e:

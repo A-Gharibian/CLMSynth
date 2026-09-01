@@ -1,5 +1,5 @@
 % !CLMSynth-doc = configuration-troubleshooting
-% !CLMSynth-version = 0.7.0rc1
+% !CLMSynth-version = 0.7.0rc2
 
 \documentclass[a4paper,11pt]{article}
 \usepackage[T1]{fontenc}
@@ -45,6 +45,7 @@
 \setlength{\tabcolsep}{5pt}
 
 \title{\textbf{Configuration Troubleshooting Reference}}
+% Names the release documented, not the candidate. Banner above tracks the build.
 \author{CLMSynth v0.7.0}
 \date{\today}
 
@@ -293,11 +294,14 @@ per-row \texttt{recall\_target} & \texttt{target\_metric} is set & Overridden by
 \wcode{306} & \texttt{target\_metric} did not converge within tolerance & The target likely exceeds the structural ceiling (e.g.\ $M\ll K$). The closest feasible value is returned; lower the target, raise \texttt{max\_iter}/\texttt{tolerance}, or change \texttt{proportions}/clusters. \\
 \wcode{307} & \texttt{scope: pair} target outside the pair's reachable range & The request is clamped to the nearest reachable value; the message reports the range. Choose a target within it, or change the pair. \\
 \wcode{308} & \texttt{scope: pair} resizes the target label & Expected: the label is sized as a subset of its cluster so the pair MCC meets the target exactly; an explicit proportion for that label is overridden. \\
-\wcode{309} & the CLM achieved \texttt{target\_metric} is outside tolerance & The search scores candidates on a fixed probe stream. At the same time, the output is generated on the run's own stream, so a solve that converged internally can still land outside tolerance (most often at small $N$, where spillover placement dominates the outcome). \textbf{The achieved value in the message is authoritative, not the requested one.} To close the gap: raise \texttt{tolerance}, use a larger dataset, or use \texttt{scope: pair} (closed form, no search). \\
-\wcode{310} & \texttt{scope: pair}: the delivered pair MCC is outside the request & Backstop for the closed form, the counterpart of \wcode{309} for the global solver. The combinations known to break the construction are rejected up front (\vcode{130}), so this firing means something else moved $\ell^*$ out of $k^*$; the message reports how many of its points did. \textbf{The achieved value is authoritative, not the requested one.} \\
+% 0.7.0rc2: cause rewritten. The old text blamed a probe/run stream divergence,
+% which 0.6.4 removed by defaulting probe_seed to the run seed.
+\wcode{309} & the CLM achieved \texttt{target\_metric} is outside tolerance & Usually the search could not reach the target,to close the gap: raise \texttt{tolerance}, use a larger dataset, or use \texttt{scope: pair} (closed form, no search). \\
+\wcode{310} & \texttt{scope: pair}: the delivered pair MCC is outside the request & Backstop for the closed form, the counterpart of \wcode{309} for the global solver. The combinations known to break the construction are rejected up front (\vcode{130}). \\
 \bottomrule
 \caption{Warning codes, which indicate scenarios of successfully executed configuration, but with a different outcome than the user would expect.}
 \end{longtable}
+\noindent \textbf{Note:} CLM-~\wcode{306} above reports a mismatch in the requested and delivered target; at small $N$ the reachable values form a coarse ladder and a tight tolerance can fall between intervals. Since 0.6.4 the search and the final generation share one random stream, so the scored labeling and the written one can differ only under an explicit \texttt{target\_metric.probe\_seed}. \textbf{The achieved value in the message is correct, not the requested one.}
 
 \newpage
 

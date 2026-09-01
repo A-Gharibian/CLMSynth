@@ -52,10 +52,7 @@ SOURCE_DISPLAY = {
 
 
 def _clm_info_text(clm_config: dict) -> str:
-    """Right-margin annotation: the CLM knobs that shaped this generated label.
-    Deliberately kept narrow, the variable-length fields (proportions, and the
-    centrality favors/profile) wrap onto extra indented lines so the box grows in
-    HEIGHT, never in width, and can't bleed off the fixed-width figure."""
+    """Right-margin annotation: the CLM knobs that shaped this generated label."""
     props = clm_config.get("proportions") or []
     cd = clm_config.get("centroid_dependence", {}) or {}
     tm = clm_config.get("target_metric")
@@ -82,9 +79,8 @@ def _clm_info_text(clm_config: dict) -> str:
 
 def _write_summary_txt(path: Path, friendly: str, source: str, battery: str, dataset: str,
                        source_labeling: str, gt_col, n_rows: int, clm_config, label_results) -> None:
-    """One human-readable txt per dataset: the configuration used plus the exact
-    MCC/ARI shown on the plots (both come from `label_results`, so the txt and the
-    plot subtitles can never disagree)."""
+    """One txt per dataset: the configuration used plus the
+    MCC/ARI shown on the plots."""
     gt_disp = gt_col if gt_col else "(none)"
     out = [
         f"Source : {friendly} ({source})",
@@ -113,16 +109,6 @@ def _write_summary_txt(path: Path, friendly: str, source: str, battery: str, dat
 
 def resolved_for_report(path_value) -> str:
     """The absolute form of a configured path, for logging. Never raises.
-
-    Relative paths are the interesting case: `output_dir: OUTPUT` means
-    something different depending on the working directory a job started in,
-    which is exactly the thing that is hard to reconstruct afterward from a
-    cluster's captured stdout.
-
-    `resolve()` does not require the path to exist, but it can still fail on a
-    malformed one, embedded nulls, an over-long Windows path, a dead network
-    mount. Falling back to the raw value keeps this a report: a line that
-    describes where a run will write must never be the reason it does not.
     """
     try:
         return str(Path(path_value).resolve())
@@ -137,14 +123,7 @@ def _is_plain_name(name) -> bool:
     `input_dir/<dataset>.csv`) and to WRITE (`csv/<source>__<battery>__<dataset>.csv`),
     so a separator or a `..` in one reaches outside the folders the configuration
     declared. The registry sources filter their names against a known list and are
-    safe by construction; byoc trusts the config's list verbatim, which is the
-    only place this can bite.
-
-    This enforces a contract the README already states, byoc datasets are file
-    *stems*, not paths, rather than adding a new restriction. It matters because
-    a config is a shareable artifact here: reproducing someone's results means
-    running a YAML you did not write.
-
+    safe by construction.
     No `[CLM-###]` code: those describe the cluster-label matching model, and a
     dataset name being path-shaped is a property of the file layout, not of the
     labeling.
@@ -176,9 +155,8 @@ def _drop_path_shaped_names(jobs):
 
 
 def _byoc_cluster_ids(input_dir, dataset: str, cluster_column: str):
-    """The cheapest possible peek at one BYOC dataset: a single column of one CSV.
-
-    Returns the distinct cluster ids, or None when the file cannot be read at
+    """
+    Returns the cluster ids, or None when the file cannot be read it.
     """
     path = (Path(input_dir) / f"{dataset}.csv") if input_dir else Path(f"{dataset}.csv")
     try:
@@ -202,15 +180,7 @@ def _configured_cluster_ids(clm_config: dict) -> list:
 
 def precheck_byoc_matching_ids(jobs, fetch_kwargs: dict, clm_config: dict | None) -> None:
     """Resolve [CLM-105] for every BYOC dataset before any work begins.
-
-    It validates cluster ids against each dataset's *own* ids, and under `byoc`
-    every CSV brings its own. Discovering a mismatch mid-loop used to abort the
-    whole run, discarding both the datasets already written and the ones that
-    would have succeeded. Checking every CSV up front means the run either
-    starts knowing the ids line up or refuses before producing a single output file.
-
     [CLM-104] is checked once, before the loop.
-
     Raises the first offending dataset's coded error, after logging every one of
     them, so a batch with several mismatches is fixed in one pass rather than
     one run at a time.
@@ -446,14 +416,7 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
 
 def build_run_dir(base_dir: Path, friendly_source: str) -> Path:
     """One self-packaging folder per run: DDMMYY_Source_HHMMSS/
-
-    Creates the folder it returns, and returns only a folder it created. The
-    name used to be chosen with `while unique.exists()` and created by the
-    caller one call later, leaving it unclaimed in between: two runs starting in
-    the same second against one `output_dir` were handed the same path and
-    interleaved their csv/png/txt and config copy. `exist_ok=False` plus a retry
-    makes check-and-create a single atomic step, so the loser of the race gets
-    the next suffix instead of a duplicate.
+    Creates the folder it returns, and returns only a folder it created.
     """
     now = datetime.now()
     stem = f"{now:%d%m%y}_{friendly_source}_{now:%H%M%S}"
@@ -468,20 +431,7 @@ def build_run_dir(base_dir: Path, friendly_source: str) -> Path:
 
 
 def discard_run_dir_if_barren(run_dir: Path, config_copy: Path) -> bool:
-    """Remove a run folder that a failed run left holding nothing but scaffolding.
-
-    The folder, its csv/png/txt subfolders and the config copy are all created
-    before `run_pipeline` is called, because the run needs somewhere to write
-    the moment the first dataset succeeds. When none of them does, that
-    scaffolding is all there is, and it is worse than nothing: `OUTPUT` fills
-    with timestamped folders asserting that runs happened, and anything globbing
-    `OUTPUT/*/csv/*.csv` walks over runs that produced no data.
-
-    Barren is defined narrowly and checked, never assumed: exactly the three
-    known subfolders, all empty, plus the config copy and nothing else. Any
-    other entry, a written CSV, a plot, a file someone dropped in, means the
-    folder is not ours to remove and it stays untouched. Returns whether it was
-    removed.
+    """Remove a run folder that a failed run left.
     """
     if not run_dir.is_dir():
         return False

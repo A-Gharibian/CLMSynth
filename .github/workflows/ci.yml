@@ -168,8 +168,8 @@ jobs:
             echo "  console script present: $script"
           done
 
-      # Six declarations carry the version (one of them twice, in codemeta's
-      # downloadUrl tag) and three carry the release date. Shared with the
-      # release workflow, which runs the same script with --tag.
+      # Six fixed declarations carry the version (codemeta three times over),
+      # plus every docs/**/*.tex with a `% !CLMSynth-version` banner. Three
+      # carry the release date. Shared with release.yml, which adds --tag.
       - name: Version and date agree across every declaration
         run: python tools/check_release_metadata.py

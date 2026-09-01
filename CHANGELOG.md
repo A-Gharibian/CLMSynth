@@ -4,14 +4,34 @@ All notable changes to CLMSynth are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+---
+
+## [0.7.0rc2] — 2026-09-01
+
+Documentation corrections.
+
+### Fixed
+
+- **`[CLM-309]`'s documented cause.** The troubleshooting reference from 0.6.4.
+
+- **The spatial-placement sentence in the manual.** A substitution had split
+  `competing_noise` across two `\texttt` groups.
+
+- **Two `README.md` Known-limitations bullets were truncated mid-sentence**, and
+  the `scope: pair` description overstated the delivered value. The solve is
+  exact; the delivered pair MCC is measured afterward and reported as achieved.
+
+- **`environment.yml` pinned a different scipy from `requirements.txt`**, which it
+  states it mirrors.
+
+
+- Additions **In response to reviewer comments.**
 
 ## [0.7.0rc1] — 2026-08-30
 
 Testing release on `test.pypi.org`.
 
 ## [0.7.0b1] — 2026-08-30
-
-**In response to reviewer comments.**
 
 ### Added
 

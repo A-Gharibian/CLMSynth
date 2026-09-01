@@ -16,11 +16,7 @@ import yaml
 from .dataset_sources import SOURCE_DATASETS, SOURCE_METADATA, is_heavy
 from .questions import SCHEMA
 
-# Windows' MAX_PATH. Duplicated here on purpose rather than imported from
-# visualization.py: that module pulls matplotlib and seaborn, and importing the
-# constant would drag both into this module's import graph, and therefore into
-# any help command built on the same schema. test_07_text_wizard asserts neither
-# is imported. Keep the value in step with visualization._MAX_PATH by hand.
+# Windows' MAX_PATH.
 _MAX_PATH = 260
 
 
@@ -249,11 +245,7 @@ def ask_selection(prompt, options, default=None, explain=None):
 
 def ask_from(key, **override):
     """Drives the schema question named `key` through the matching prompt helper.
-
-    Prompt, explain text, default, bounds and choices come from `questions.SCHEMA`;
-    the wizard keeps the control flow. `override` supplies the runtime-dependent
-    bits a static schema cannot carry, a formatted `prompt`, a `default` computed
-    from the data, or a `maxv`/`hi` that depends on M.
+    Prompt, explain text, default, bounds and choices come from `questions.SCHEMA`.
     """
     q = SCHEMA[key]
     prompt = override.get("prompt", q.prompt)
@@ -292,9 +284,7 @@ def _worst_case_path_len(gs, source, suite) -> int:
 
         <output_dir>/DDMMYY_<source>_HHMMSS/png/<source>__<battery>__<dataset>__Label_<n>.png
 
-    Plot names are the longest and so cross Windows' MAX_PATH first. Pure string
-    arithmetic on values already in hand, no fetch and no run, which is what keeps
-    the check inside the wizard's rule-based remit."""
+    Plot names are the longest and so cross Windows' MAX_PATH."""
     base = len(str(Path(gs["output_dir"]).resolve()))
     run_stem = f"DDMMYY_{source}_HHMMSS"
     batteries = suite.get("batteries")

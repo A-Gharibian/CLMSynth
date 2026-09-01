@@ -1,8 +1,8 @@
 # CLMSynth Roadmap
 
-[![Version](https://img.shields.io/badge/version-0.7.0b1-blue)](https://github.com/A-Gharibian/CLMSynth/releases)
+[![Version](https://img.shields.io/badge/version-0.7.0rc2-blue)](https://github.com/A-Gharibian/CLMSynth/releases)
 
-Planned work from 0.7.0b1 to 1.0.0, for a description of what the software does *today*,
+Planned work from 0.7.0 to 0.8.0, for a description of what the software does *today*,
 refer to  **`../README.md`**. For a record of past changes, refer to **`../CHANGELOG.md`.** 
 
 ## Conventions
@@ -14,61 +14,112 @@ specified; a minor release (`0.x.0`) ships a capability that did not exist befor
 one is therefore additive, and growing the registry is on its own enough to make
 a release a minor rather than a patch, except a fix.
 
-## Article review
-
-Reviewer comments on the accepted article are implemented **between 0.7.0b1 and
-0.7.0rc1**. That is the whole of the window: anything arriving after rc1 is cut
-goes to 0.7.1 or later, because rc1 is a freeze.
-
----
-
-## 0.7.0rc1
-
-**The PyPI release candidate.**
-
-### Required before the freeze
-
-- **The README carries the direct API call.** A short section showing the
-  direct path, without the YAML or the wizard. The README is the documentation
-  to *run* the program; the LaTeX manual in `./docs` is the authoritative manual.
-
----
-
 ## 0.7.0, article published version
 
-Identical to rc1 apart from the version strings and the release date.
+Submitted to PyPI.
 
 ### Distribution
 
-**The first published PyPI release**
-
-- **Release workflow**, `.github/workflows/release.yml`, triggered by a `v*` tag:
-  build the sdist and wheel with `python -m build`, check with `twine check`,
-  install the built wheel into a clean environment.
+- **Release workflow**, `.github/workflows/release.yml`.
 
 - **Release preconditions.** The workflow refuses to publish when the tag and the
   declared version disagree. `tools/check_release_metadata.py` runs it in CI.
 
 - **The documented non-extra stays a non-extra.** `mdcgenpy` is only available as
-  a git repository and PyPI rejects uploads whose metadata carries direct-URL
-  dependencies. This is now a standing packaging constraint, not a to-do.
+  a git repository.
 
 - **Signed tags are not adopted here.** 0.7.0 through 0.9.0 publish with PEP 740
   attestations.
 
-### Open, carried past this release
+## Article review
 
-- **`tests/` is pruned from the sdist** (`MANIFEST.in`), so a downloaded sdist
-  cannot run the suite that `pyproject.toml` points `testpaths` at.
-- **The `main.py` split is half-done.** `plot_dataset(...)` exists at 0.7.0b1 as
-  `_render_dataset_plots`; the other half of the 0.7.0a note, a `generate_dataset(...)`
-  that yields the CSV data and metrics, still does not, and still carries no defect or
-  trigger. It stays a shape until the batch wrapper needs it, at which point that
-  wrapper's requirements specify it rather than this note.
+Reviewer comments on the accompanying article are implemented **between 0.7.0b1 and
+0.7.0rc2**.
 
 ---
 
-## 0.8.0
+## 0.7.1 and 0.7.2
+
+**Correctness and diagnostics.** Nothing here is a new capability, so the series
+stays patch-numbered even where a fix adds a `[CLM-###]` code.
+
+### Will be Fixed, engine
+
+- **Integer label counts must sum to `N`.** `_largest_remainder_counts` assumes its
+  remainder is non-negative, while `[CLM-106]` accepts a `proportions` sum within
+  `1e-6` of 1. Once `N` times that slack reaches 1 the remainder goes negative and
+  the slice that distributes it runs backwards. It first bites at `N = 1000000`;
+  the suite runs at `N = 1000` and the largest benchmark used is 6500, which is why
+  no test sees it. A dataset of a million rows then receives a label column longer
+  than itself.
+
+- **Negative `proportions` are rejected.** A vector such as `[1.5, -0.25, -0.25]`
+  sums to 1, passes `[CLM-106]` and `[CLM-121]`, and delivers a labeling in which
+  the negative labels never appear. `[CLM-131]` already gates exactly this for
+  `skew_params`; explicit `proportions` need the same gate, either as a new code or
+  by widening `[CLM-131]`. Taken together with the `[CLM-121]` placement below,
+  since both turn on where `proportions` are validated relative to the `perfect`
+  override, and under `perfect` a negative vector currently delivers a correct
+  bijection. `random` also fails here uncoded, which the same change closes.
+
+- **Label ids must be integers.** `2.0` and `True` satisfy `label == int(label)`,
+  pass `[CLM-104]` and `[CLM-118]`, and then reach a numpy index. YAML writes
+  `label: 2.0` as a float, so a config file can produce an uncoded `IndexError`.
+  `concentrated_labels` already rejects both.
+
+- **Duplicate `competing_noise` entries.** Two entries naming one `(cluster, label)`
+  sum their counts but keep only the last entry's `favors`, so half the request is
+  placed at the wrong end of the cluster. Either merge them, reject the duplicate,
+  or warn.
+
+### Will be Fixed, diagnostics
+
+The labeling is correct in every case below; only the message is wrong or absent.
+
+- **A missing `label` key escapes uncoded.** `single_match` without `cluster` raises
+  `[CLM-205]` and an `assignment_matrix` row without `clusters` raises `[CLM-207]`,
+  but either without `label` raises a bare `KeyError`. The troubleshooting reference
+  documents both sub-keys as covered.
+
+- **`matching_mode: random` returns before three validators**, so `[CLM-128]` and
+  `[CLM-129]` never fire there while `[CLM-125]` still does, in a mode that does no
+  placement at all.
+
+- **A valueless `assignment_matrix:` with a `target_metric`** raises `TypeError`
+  rather than `[CLM-206]`, because the membership test above the solver uses a
+  `.get` default that a present-but-null key does not trigger.
+
+- **`[CLM-111]` pre-empts `[CLM-101]`**, so a misspelled `matching_mode` combined
+  with a `target_metric` is reported as a target-metric incompatibility.
+
+- **`[CLM-121]` fires under `perfect`**, where `[CLM-302]` states that
+  `proportions` are ignored. The two codes give contradictory accounts.
+
+### Will be Fixed, pipeline
+
+Not the CLM engine, and no `[CLM-###]` codes: these describe file layout and
+orchestration, which the registry does not cover.
+
+- **A top-level config key present with no value.** `global_settings:`,
+  `<source>_suite:` and `label_generation:` each parse to `None`, escape `main()`'s
+  handler as an `AttributeError`, and leave behind the empty run folder that
+  `discard_run_dir_if_barren` exists to remove.
+
+- **The closing summary can report more unlabelled datasets than processed ones**,
+  because the unlabelled counter is incremented before the processed one.
+
+- **`fetch_clustbench_data` can raise `KeyError('labels0')`** when its own length
+  filter drops `labels0` while a later labeling survives.
+
+### Verification
+
+- **A development build after the fixes land**, to confirm the suite, the metric
+  health checks and the 2000-config fuzz sweep still pass before the series is
+  tagged. A regression gate, not new coverage.
+
+---
+
+## 0.7.3 and 0.7.4
 
 ### Reachability: the MCC ceiling
 
@@ -163,9 +214,13 @@ This is the pipeline layer (`main.py`, `visualization.py`), not the CLM engine.
 Python release 3.15 may address lazy loading inherently, the fixes here mostly
 concern Python releases `3.15`.
 
+## 0.7.5 Release version
+
+Will be released to PyPI.
+
 ---
 
-## 0.9.0
+## 0.7.6 and 0.7.7
 
 **Source and generator extensions.**
 
@@ -190,12 +245,12 @@ anything here produces `c(x)` and `X` *before* the engine.
     datasets, characterizing a dataset by more than one structural criterion at
     once.
 
-- **SYNLABEL** SYNLABEL derives a noiseless functional
+- **SYNLABEL** derives a noiseless functional
   labeling from a feature space and injects measured noise by resampling features.
   Useful here because `fabricated_generator.py`'s current ground truth is a single
   rule, either a percentile split on `Feature_1` or a distribution, and a SYNLABEL-derived labeling
   would be a principled synthetic ground truth for the offline source. 
-  - **Clustering benchmark** has a noise addition function, which also can possibly utilised.
+- **Repliclust** is a package that can generate clusters based on prompts.
 
 ### Fixed
 
@@ -207,14 +262,21 @@ anything here produces `c(x)` and `X` *before* the engine.
   while print_battery_info lists only 5, and fetch_clustbench_data:291 logs "not in the recommended list" for four
   batteries.
 
+
+## 0.7.8 and 0.7.9
+
+**Python 3.15 support**
+
+### Added
+
+- `requires-python` changed to `>=3.12,<3.16`, classifier
+  added, CI matrix extended to four interpreters.
+Ships after Python 3.15 is released and tested, with supported Python versions **3.12 – 3.15**.
+
 ---
 
-# 1.0.0
-## 14 October 2026
-
-**Python 3.15 and release for conda.**
-
-Ships after Python 3.15 is released and tested, with supported Python versions **3.12 – 3.15**.
+# 0.8.0
+## 22 November 2026
 
 ### Distribution
 
@@ -223,15 +285,7 @@ Ships after Python 3.15 is released and tested, with supported Python versions *
 - **conda-forge**, All seven runtime dependencies are
   already there, one `noarch: python` build covering every platform and interpreter.
 
-- **Signed tags, from the 1.0 tag onward.** OIDC has PyPI verify
-  that an artifact came from this repository's workflow, and publishing that way
-  generates PEP 740 attestations automatically. **conda-forge needs neither.**
-  The feedstock verifies a `sha256` of the published sdist.
-
-### Added
-
-- **Python 3.15 support.** `requires-python` changed to `>=3.12,<3.16`, classifier
-  added, CI matrix extended to four interpreters.
+- **Signed tags, from the 0.8.0 tag onward.**
 
 ### Changed
 
@@ -243,3 +297,10 @@ Ships after Python 3.15 is released and tested, with supported Python versions *
 
 - **`evaluate_cluster_label_matching` decided either way.** Removed in 0.6.8, with
   its optional `pyivm` import.
+---
+
+# 0.9.0 series
+
+Tracking and implementing upon community feedback/issues and cross-device/OS compatibility.
+Pipeline integration improvements and CLMSynth-GUI development is planned for this release.
+

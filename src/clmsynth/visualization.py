@@ -20,9 +20,6 @@ _MAX_PATH = 260
 
 def _max_path_hint(output_path: str | None) -> str:
     """Name MAX_PATH when a plot failure is most likely really a path-length one.
-
-    Windows reports it as `[Errno 2] No such file or directory` naming a path
-    whose folder plainly exists, which points at entirely the wrong cause.
     """
     if not output_path or os.name != "nt":
         return ""
@@ -50,12 +47,6 @@ def plot_feature_scatter(
 ) -> bool:
     """Renders a scatter of two features, optionally colored by `hue_col`, to
     `output_path` (or shows it interactively when the path is omitted).
-
-    `subtitle` is the smaller gray line under the title (the MCC/ARI scores);
-    `info_text` is the monospace CLM-config box in the right margin. Returns True
-    on success and False on any failure: plotting is best-effort, since the
-    CSV/labels are the pipeline's real deliverable, so callers log a plot failure
-    rather than treating it as a dataset failure.
     """
     if df is None or df.empty:
         log.warning("Empty DataFrame provided. Skipping plot generation.")

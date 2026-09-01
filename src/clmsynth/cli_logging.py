@@ -4,9 +4,6 @@
 
 import logging
 
-# One format for every console script. `generate_config` previously took
-# basicConfig's default while `main` set its own, so the same run could produce
-# two different line shapes depending on which command emitted them.
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
 
 

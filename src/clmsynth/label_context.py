@@ -102,7 +102,7 @@ def build_context(source: str, battery: str, dataset: str, df: pd.DataFrame) -> 
     """Splits a fetched DataFrame from any of the fetchers into a DatasetContext.
 
     Column roles are carried in the frame by prefix, so every fetcher can return
-    a single flat DataFrame and have it unpacked identically here.
+    a single flat DataFrame and have it unpacked identically.
 
     Parameters
     ----------

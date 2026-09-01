@@ -1,5 +1,5 @@
 % !CLMSynth-doc = manual
-% !CLMSynth-version = 0.7.0rc1
+% !CLMSynth-version = 0.7.0rc2
 % These two lines are a machine-readable marker, so the
 % file can be renamed freely, and checks the version above against the
 % package version so documentation cannot silently fall behind a release.
@@ -49,6 +49,7 @@
 }
 \lstset{style=mystyle}
 
+% Names the release documented, not the candidate. Banner above tracks the build.
 \title{CLMSynth v0.7.0}
 \author{Arootin Gharibian}
 \date{\today}
@@ -70,7 +71,7 @@ CLMSynth Documentation is licensed under \href{https://creativecommons.org/licen
 Existing synthetic datasets for clustering performance measurement assume equivalence between latent cluster structure and assigned class labels. The CLM dataset synthesizer addresses the natural occurrence of classes within latent clusters by treating cluster generation and class assignment as independent, configurable, and target-matched for a specific cluster-label matching. This design supports multiple benchmarks, including non-clusterable data with strong class separability, well-defined clusters with randomly assigned classes, and both balanced and imbalanced clusters. For each configuration, the output is a dataset of labels attached to the cluster membership, along with summary diagnostics characterizing cluster-label matching (CLM) measures. By generating and systematically comparing reproducible CLM scenarios, this resource complements existing clustering benchmarks and supports the evaluation of methods that study the relationships between the clustering structure and class labels.
 
 \subsection{Scientific Objectives}
-Cluster-label matching (CLM) is measured as the feature subset's effectiveness in predicting ground-truth class labels, the degree to which a feature subset supports known classes or labels regardless of clustering performance. The performance and quality outcomes associated with a selected subset of features, evaluated in terms of its ability to detect structures (clusters) and its alignment with class labels, are independent. Different algorithms and measures can optimize the selection of a given subset of features and assess how it performs in clustering, classification, and cluster-label matching. The objective of this program is to create datasets that give a user granular control over labels and match specific cluster-label matching targets, independent of the clustering, so that an algorithm or measure can reproduce specific CLM targets.
+Cluster-label matching (CLM) is measured as the feature subset's effectiveness in predicting ground-truth class labels, the degree to which a feature subset supports known classes or labels regardless of clustering performance. The performance and quality outcomes associated with a selected subset of features, evaluated in terms of its ability to detect structures (clusters) and its alignment with class labels, are independent. Different algorithms and measures can optimize the selection of a given subset of features and assess how it performs in clustering, classification, and cluster-label matching. The objective of this program is to create datasets that give a user granular control over labels and match specific cluster-label matching targets, independent of the clustering, so that an algorithm or measure can reproduce specific CLM targets. CLMSynth replaces a single test with a set of data with known answers.
 
 \subsection{Implementation}
 The implementation in Python, together with the pipeline scripts, configuration templates, and working examples, is maintained in the \href{https://github.com/A-Gharibian/CLMSynth}{project repository}. The source code is the authoritative description of the implementation; this manual is intended for software users and includes the definition of the configuration schema and the troubleshooting reference.
@@ -162,7 +163,8 @@ clm_label:
     steepness: 3.0                 # exponential only
 \end{lstlisting}
 
-\noindent Spatial placement (\texttt{centroid\_dependence} or a \texttt{competing} entry \_noise \texttt{that favors the core}/\texttt{boundary}) requires vectors of characteristic per-point. The complete catalog of coded errors and warnings is the reference for troubleshooting.
+% 0.7.0rc2: sentence repaired; a bad substitution had split competing_noise.
+\noindent Spatial placement (\texttt{centroid\_dependence}, or a \texttt{competing\_noise} entry that favors the core or the boundary) requires per-point feature vectors. The complete catalog of coded errors and warnings is the reference for troubleshooting.
 
 \newpage
 \section{Usage}
@@ -248,6 +250,9 @@ D1 & single (cluster 1, $M{=}2$) & fills cluster exactly; MCC $\approx 1$ & MCC 
   \vhEntry{0.6.8}{2026-08-20}{AG}{Patch without release, preparation for CLMSynth-GUI}
   \vhEntry{0.6.9}{2026-08-23}{AG}{Patch release, staging for release 0.7.0}
   \vhEntry{0.7.0b1}{2026-08-30}{AG}{Article-review release: maximize the multiclass \texttt{R\_K} rather than accuracy; Brent's method for the recall solver ; \texttt{byoc\_suite.tag\_columns} carries non-feature columns through an import; support for Python 3.11 dropped.}
+  \vhEntry{0.7.0rc1}{2026-08-30}{AG}{Release candidate, rehearsed on TestPyPI.}
+  \vhEntry{0.7.0rc2}{2026-09-01}{AG}{Documentation corrections: \texttt{[CLM-309]}' and \texttt{scope: pair} description.}
+  \vhEntry{0.7.0}{2026-09-01}{AG}{Release on PyPI. SoftwareX Article Version.}
 \end{versionhistory}
 \newpage
 % \section*{License}
@@ -280,5 +285,5 @@ Python is distributed under the Python Software Foundation License V.2. This pro
 
 
 \includepdf[pages=-]{CLMSynth_configuration_troubleshooting.pdf}
-\includepdf[pages=-]{engine_decision_map_v068.pdf}
+\includepdf[pages=-]{engine_decision_map_v070.pdf}
 \end{document}

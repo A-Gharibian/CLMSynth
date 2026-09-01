@@ -329,9 +329,7 @@ def _validate_skew_cfg(cfg: dict) -> None:
     Called from generate_clm_labels *before* resolve_label_counts, because that
     is where the parameters are consumed, a guard placed alongside the other
     validators would run after the counts it protects had already been computed.
-
     Only the parameters that will actually be read are checked.
-
     Unknown skew_rule values stay [CLM-107], raised by _skewed_proportions itself.
     """
     if cfg.get("balance", "balanced") == "balanced" or cfg.get("proportions"):
@@ -461,7 +459,6 @@ def _split_row_allocation(tp_row: int, clusters: list[int], sizes: dict[int, int
 
 def allocate(cfg: dict, rules: list[Rule], m_counts: np.ndarray, cluster_sizes: dict[int, int]):
     """Turns rules into integer per-(cluster, label) point demands.
-
     Checks each rule's budget against its clusters' capacity ([CLM-150]), each
     label against the joint claims on it ([CLM-153]), and each cluster against
     the joint claims on it ([CLM-151]). Returns the demand mapping and the
@@ -639,7 +636,7 @@ def _competing_demand(cfg: dict, remaining_capacity: dict[int, int], M: int):
     """
     OPTIONAL feature, active only when the config carries a 'competing_noise'
     list; with the key absent this function is never called and the engine
-    behaves exactly as before it existed (to disable the feature entirely,
+    behaves the same (to disable the feature entirely,
     remove its single call site in _run_allocation_pipeline).
 
     Each entry converts `share` of ONE cluster's UNCLAIMED points (leftover
@@ -736,7 +733,6 @@ def _run_allocation_pipeline(cluster_labels, coords, cfg, rules, cluster_ids,
 
 _METRIC_FUNCS = {"mcc": clustering_mcc, "ari": clustering_ari}
 
-
 class _ProbeStop(Exception):
     """Ends the root-find early; metric None means infeasible."""
 
@@ -767,11 +763,9 @@ def solve_alpha_for_target_metric(cluster_labels, coords, cfg, cluster_ids,
 
     No closed form: the achieved global metric depends on every rule's
     outcome jointly (unlike the single-pair solve of scope='pair', which
-    inverts exactly in _pair_label_counts). This runs a
+    inverts exactly in _pair_label_counts). The solution runs a
     coarse grid scan first, then a Brent root-find within the bracket it
-    finds, or a bounded minimisation of the distance when the grid shows
-    the target is not straddled at all.
-    All probe evaluations share a fixed seed (common random numbers) so
+    finds, all probe evaluations share a fixed seed (common random numbers) so
     differences across candidates come from alpha, not randomization noise.
 
     Feasibility is monotonic in alpha by construction: tp_row = round(alpha
@@ -873,8 +867,6 @@ def solve_alpha_for_target_metric(cluster_labels, coords, cfg, cluster_ids,
 def generate_clm_labels(cluster_labels: np.ndarray, coords: np.ndarray, cfg: dict, seed: int = 42) -> pd.Series:
     """Generates one synthetic label column for an existing clustering.
 
-    The entry point of the engine.
-
     Parameters
     ----------
     cluster_labels : numpy.ndarray of shape (n_samples,)
@@ -883,7 +875,7 @@ def generate_clm_labels(cluster_labels: np.ndarray, coords: np.ndarray, cfg: dic
     coords : numpy.ndarray of shape (n_samples, n_features)
         Feature vectors, used to derive cluster centroids for spatial placement.
         May be ``None`` or empty only for labels-only configs; any spatial
-        placement (``centroid_dependence``, or ``competing_noise`` favouring
+        placement (``centroid_dependence``, or ``competing_noise`` favoring
         core/boundary) requires real vectors and raises ``[CLM-125]`` without them.
     cfg : dict
         The ``clm_label`` block. ``num_classes`` and ``matching_mode`` are always

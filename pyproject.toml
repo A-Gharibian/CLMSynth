@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clmsynth"
-version = "0.7.0rc1"
+version = "0.7.0rc2"
 description = "Synthetic label generator with configurable cluster-label matching (CLM) against ground-truth clusters"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
@@ -133,11 +133,8 @@ ignore = [
 ]
 
 [tool.mypy]
-# Python 3.11 was dropped at 0.7.0, ahead of the 1.0 plan: numpy and scipy now
-# require >=3.12 (SPEC 0), so requirements.txt could not be installed on 3.11 at
-# all and a 3.11 user silently resolved an older, unverified stack. That also
-# removes the reason this section used to give for itself: numpy's stubs use
-# `type` statements, which are 3.12+ syntax, and checking stopped there.
+# Python 3.11 was dropped at 0.7.0: numpy and scipy now
+# require >=3.12 (SPEC 0).
 ignore_missing_imports = true
 files = ["src/clmsynth"]
 
@@ -145,7 +142,7 @@ files = ["src/clmsynth"]
 # Read with `bandit -c pyproject.toml -r src/clmsynth`. Recorded here for the
 # same reason as the ruff exemptions above: these five findings were traced by
 # hand and judged. The threat model throughout is a local single-user CLI and
-# library, no auth boundary, and no untrusted caller (see security.md). Every
+# library, no auth boundary, and no untrusted caller (see SECURITY.md). Every
 # input below is supplied by the user.
 #
 #   B101  Two asserts in clm_label_engine guard internal allocation invariants

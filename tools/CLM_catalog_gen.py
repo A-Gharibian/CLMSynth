@@ -10,30 +10,20 @@ actually appears. Output is grouped one folder per main table:
         KeyError_2xx/              201..209   per-dataset skip (exit 0)
         Warnings_3xx/              301..310   non-fatal, run succeeds (exit 0)
 
-One code in the 1xx band is an exception to "fatal, aborts the run": since 0.6.3
-[CLM-105] judges the DATASET's cluster ids rather than the config, so for
-non-byoc sources it is logged per dataset and the run continues at exit 1.
-[CLM-104] is config-scoped and aborts at exit 2. The catalog still files them
-under ValueError_1xx, because that is what the engine raises; only the
-pipeline's handling of them differs.
-
-Everything the catalog writes is RELATIVE to the catalog folder, and every case
-is run with that folder as the working directory. So a shipped fixture is
-reproducible verbatim:
+A shipped item is a reproducible case of the troubleshooting manual:
 
     cd docs/troubleshooting_catalog
     python -m clmsynth.main ValueError_1xx/CLM-150.yaml
 
-Captured logs are normalized -- timestamps, run-folder names and path separators
-removed -- so that regenerating produces a byte-identical log whenever the
-behavior is unchanged, and a diff shows only what actually moved.
+Captured logs are without timestamps to regenerate a byte-identical log whenever the
+behavior is unchanged, and a diff shows only what actually changed.
 
 Usage (project interpreter, any working directory):
 
     python tools/CLM_catalog_gen.py [OUT_DIR]
 
 OUT_DIR defaults to docs/troubleshooting_catalog. Pass a different one to
-generate a candidate catalog for comparison before replacing the shipped one.
+generate a candidate catalog for comparison before filing an issue.
 """
 
 import csv
@@ -170,8 +160,8 @@ def single(**patch):
 def labels_only(**patch):
     """Base config over the zero-feature preset: cluster ids, no geometry.
 
-    The only dataset in the project with no feature columns, and therefore the
-    only way a configuration can reach the [CLM-125] placement guard.
+    A dataset in with no feature columns, so the
+    config can reach the [CLM-125] placement guard.
     """
     cfg = c(**patch)
     cfg["fabricated_data_suite"]["datasets"] = ["labels_only_4class"]
@@ -231,8 +221,7 @@ CASES = [
     # competing_noise entries then over-claim it regardless of the recall level,
     # which is what makes every probed alpha infeasible. (Putting the noise on a
     # rule-claimed cluster does not work: at alpha=1 the rule fills it, leaving
-    # nothing to claim, so the entries degrade to a [CLM-305] no-op and that
-    # alpha stays feasible.)
+    # nothing to claim, so the entries degrade to a [CLM-305] and that alpha stays feasible.)
     ("1xx", 120, "target_metric: no feasible alpha at any recall level",
      lambda: c(target_metric={"type": "mcc", "value": 0.5},
                assignment_matrix=[{"clusters": [i], "label": i, "recall_target": 0.8}
@@ -243,7 +232,7 @@ CASES = [
                ])),
     # Guarded since 0.6.0. This case previously expected NumPy's "could not be
     # broadcast" from the spillover pool, which is what the length mismatch used
-    # to surface as -- and only under the default spillover rule; uniform and
+    # to surface as only under the default spillover rule; uniform and
     # concentrated wrote the undeclared labels straight into the dataset instead.
     ("1xx", 121, "proportions length != num_classes",
      lambda: c(proportions=[0.4, 0.3, 0.3],
@@ -275,9 +264,7 @@ CASES = [
      lambda: single(spillover_rule="uniform",
                     target_metric={"type": "mcc", "value": 0.6, "scope": "pair"})),
     # alpha exactly 0 is the break point: every dirichlet draw is 0 and the
-    # engine's own normalization divides by their sum. Chosen over the negative
-    # ratio / share cases because those did not raise at all before 0.6.3 -- they
-    # returned negative label counts that still summed to N.
+    # engine's own normalization divides by their sum.
     ("1xx", 131, "skew_params out of range for the chosen skew_rule",
      lambda: c(proportions=None, skew_rule="dirichlet", skew_params={"alpha": 0.0})),
 
@@ -357,12 +344,6 @@ _RUN_DIR = re.compile(r"\d{6}_[A-Za-z]+_\d{6}(?:_\d+)?")
 
 def normalise(log: str) -> str:
     """Strip everything that changes between two runs of identical behavior.
-
-    Without this the catalog cannot be diffed: wall-clock timestamps and the
-    clock-derived run-folder name differ on every regeneration, so all 51 logs
-    would show as modified even when nothing about the diagnostics moved. What
-    remains is the log level, the message, and the shape of the run -- which is
-    the part a reader is comparing their own output against.
     """
     log = _TIMESTAMP.sub("", log)
     log = _RUN_DIR.sub("{run}", log)
@@ -411,13 +392,6 @@ def check_builder_coverage():
 
     Returns the codes with no builder, and the builders with no code.
 
-    The counterpart of the shipped test asserting every code has a *fixture*.
-    Both are needed, and neither implies the other: regenerating in 0.6.3 found
-    four fixtures in the catalog (`CLM-128`, `129`, `130`, `153`) with no builder
-    in this file, so a regeneration would have silently deleted them, and two
-    builders still encoding pre-0.6.0 behavior. Nothing compared the two, which
-    is why both drifts survived.
-
     Checked before anything is written, so a missing builder stops the run rather
     than producing a catalog that is quietly short of a code.
     """
@@ -444,8 +418,7 @@ def main():
 
 
     # ignore_errors: on Windows the folder can be held open by a shell sitting in
-    # it, and failing the whole run over that is not worth it -- every fixture is
-    # rewritten below anyway.
+    # it, and failing the whole run over that is not worth it.
     _checked_rmtree(OUT, ignore_errors=True)
     OUT.mkdir(parents=True, exist_ok=True)
     results = []

@@ -24,11 +24,7 @@ def clustering_ari(labels_true, labels_pred) -> float:
     -------
     float
         In ``[-1, 1]``. ``1.0`` is identical partitions; ``0.0`` is the value
-        expected of an independent random labelling.
-
-    See Also
-    --------
-    clustering_mcc : Gorodkin's R_K, which does need a matching step.
+        expected of an independent random labeling.
 
     Examples
     --------
@@ -78,12 +74,12 @@ def clustering_mcc_pair(labels_true, labels_pred, cluster, label) -> float:
 
 def clustering_mcc(labels_true, labels_pred):
     """
-    Gorodkin's (2004) K-category correlation coefficient (R_K), the
+    Gorodkin's K-category correlation coefficient (R_K), the
     confusion-matrix generalization of MCC, adapted for comparing two
     clusterings.
 
     scikit-learn's `matthews_corrcoef` already implements R_K for the
-    multiclass case (see its docstring: Gorodkin 2004; Jurman et al. 2012),
+    multiclass case,
     but it assumes label i in y_true and label i in y_pred refer to the
     same category. That holds in classification but not in clustering,
     where cluster IDs are arbitrary and the number of clusters can differ
@@ -104,13 +100,8 @@ def clustering_mcc(labels_true, labels_pred):
     Returns
     -------
     float
-        In ``[-1, 1]``, maximised over cluster-label matchings. ``1.0`` is a
-        perfect correspondence under some relabelling.
-
-    See Also
-    --------
-    clustering_ari : Matching-free alternative.
-    clustering_mcc_pair : The 2x2 building block used by ``scope='pair'``.
+        In ``[-1, 1]``, maximized over cluster-label matchings. ``1.0`` is a
+        perfect correspondence under some relabeling.
 
     Notes
     -----

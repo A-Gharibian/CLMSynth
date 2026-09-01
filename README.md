@@ -168,8 +168,6 @@ OUTPUT/{DDMMYY}_{Source}_{HHMMSS}/
   labels become `Label_0`, `Label_1`, … (0-indexed, one per `n_labels`).
 - The MCC/ARI printed in each plot subtitle and in the `.txt` summary are
   computed from the output CSV.
-- If a run fails (no data provided, wrong shape of data, etc.), only the config is retained
-  and the rest of the folders are removed.
 
 ### Data sources
 
@@ -252,7 +250,8 @@ applied after it.
 - **`scope: "pair"` (`type: mcc`, `single` mode only)**, targets the `2×2` MCC
   of the `single_match` cluster/label pair (that cluster vs. the rest against
   that label vs. the rest). This inverts in **closed form**, so it is an
-  exact solve and the MCC equals the requested value (refer to the article for more information).
+  exact solve, and the delivered pair MCC is measured afterward and reported as achieved
+  (refer to the article for more information).
   The whole-partition `R_K` and ARI reported on the plots then serve as
   independent views of the same labeling.
 
@@ -278,10 +277,9 @@ applied after it.
   `target_metric` it raises `InfeasibleAllocationError` whenever `|k*| < m_{l*}`,
   e.g. pointing `single_match` at the *smallest* cluster with a large budget.
 - **Target metric can be unreachable (structural ceiling)**, but the engine does not yet
-  compute or report the ceiling value. *(planned for 0.8.0)*
+  compute or report the ceiling value. *(planned for 0.7.5)*
 - **Proportions are only possible with `spillover_rule: proportional_to_marginal`.**
-  `uniform`/`concentrated` deliberately do not preserve the target label counts:
-  when either rule leaves the delivered counts off their target.
+  `uniform`/`concentrated` deliberately do not preserve the target label counts.
   - **`competing_noise` also breaks proportions**, Each entry converts
     leftover points of one cluster into one specific competing label,
     so achieved label counts are no longer held to `proportions`,
@@ -289,14 +287,14 @@ applied after it.
   - **`balance: balanced` also ignores `proportions`** (enforces uniform 1/M) and warns.
 - **Reachable `scope: pair` values are a coarse ladder near the bottom of the
   range.** The target label is sized to an integer number of points, so only a
-  discrete set of pair-MCC values is reachable.
-  *outside* `[phi_min, 1]`; it says nothing about one falling between rungs inside
-  that range. Inherent to the closed form, not a defect.
+  discrete set of pair-MCC values is reachable. `[CLM-307]` warns only when a request falls
+  *outside* `[phi_min, 1]`; it says nothing about one falling between intervals inside
+  that range, which `[CLM-310]` reports instead.
 - **The target-metric search grid cannot see inside a narrow feasible band.**
   Candidate recalls are bracketed on 11 grid points (step 0.1); only feasible
   ones are usable, so the interval between the last feasible grid point and the
-  true feasibility boundary is never explored. *(planned for 0.8.0)*
-- **`plot_feature_scatter` is not thread-safe.** *(planned for 0.8.0)*
+  true feasibility boundary is never explored. *(planned for 0.7.5)*
+- **`plot_feature_scatter` is not thread-safe.** *(planned for 0.7.5)*
 
 ## References
 

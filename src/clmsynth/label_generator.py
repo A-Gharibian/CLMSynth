@@ -1,5 +1,5 @@
 # label_generator.py
-"""Dispatch layer between the pipeline and the CLM engine: generates
+"""Dispatch between the pipeline and the CLM engine: generates
 `n_labels` synthetic label columns for one DatasetContext."""
 
 from typing import Any
@@ -21,7 +21,7 @@ def generate_additional_labels(
 ) -> None:
     """Attaches ``n_labels`` generated label columns to ``context``.
 
-    This is the object-level entry point: it reads one ground-truth labelling out
+    Object-level entry point, reads one ground-truth labeling out
     of ``context``, calls the engine once per requested label, and attaches each
     result back as ``Label_0``, ``Label_1``, ... No file is read or written.
 
@@ -89,7 +89,7 @@ def generate_additional_labels(
 
 
 def _legacy_noise_flip(base, noise, seed):
-    """Superseded by generate_clm_labels; no longer called.
+    """Superseded by generate_clm_labels. M.G. also has a similar idea in clustbench.
     Excludes the point's own class from the reassignment pool, without this,
     `noise` doesn't equal the true corruption rate."""
     rng = np.random.default_rng(seed)

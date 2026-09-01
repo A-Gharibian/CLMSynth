@@ -181,7 +181,7 @@ global solver; the message reports how many `l*` points ended up outside `k*`).
 For `scope: global` (default; `mcc` or `ari`, `single`/`custom`), one global
 recall level `alpha` is substituted into every rule and solved numerically, there
 is no closed form for the global multiclass metric. A coarse grid scan brackets
-the target (guarding against non-monotonicity of the achieved metric) and bisection
+the target (guarding against non-monotonicity of the achieved metric) and `brentq`
 refines it; all probes share a fixed seed (common random numbers), so differences
 reflect `alpha`, not noise. Feasibility is monotone in `alpha` by construction. If
 the request exceeds the geometry's **structural ceiling**, the solver returns its
@@ -189,12 +189,12 @@ closest feasible value with a `[CLM-306]` non-convergence warning rather than
 crashing or fabricating a hit (`[CLM-120]` if *no* `alpha` is feasible at all). For
 `K` equal clusters the ceiling of a balanced `M`-coarsening is
 `sqrt(M(M-1)/(K(K-1)))`; in general it is the MCC the rule set achieves at
-`alpha = 1`. Because the probe stream (`default_rng(probe_seed)`) differs from the
-output stream (`default_rng(seed)`), a solution that converged internally can still
-deliver a labeling outside tolerance; the engine re-measures the labeling it
-actually writes and warns `[CLM-309]` when it does, the achieved value being
-authoritative rather than the request (most visible at small `N`, where spillover
-placement is a large share of the outcome).
+`alpha = 1`. Because the probe stream (`default_rng(probe_seed)`, defaulting to
+`seed`) can differ from the output stream (`default_rng(seed)`), a solution that
+converged internally can still deliver a labeling outside tolerance; the engine
+re-measures the labeling it actually writes and warns `[CLM-309]` when it does,
+the achieved value being authoritative rather than the request (most visible at
+small `N`, where spillover placement is a large share of the outcome).
 
 
 ## Config schema
@@ -287,7 +287,7 @@ label_generation:
 | `../../src/clmsynth/label_generator.py`      | Orchestrates label generation: calls the CLM engine per `n_labels`, or falls back to simple noise-flipping if no `clm_label` config is given.                                                                |
 | `../../src/clmsynth/clm_label_engine.py`     | The CLM label-assignment: proportions/skew, matching modes, recall targets, allocation, spillover, competing noise, spatial placement, and the global target-metric solver.                                  |
 | `../../src/clmsynth/clm_errors.py`           | Diagnostics: message templates keyed by a `[CLM-###]` code (1xx `ValueError`, 15x `InfeasibleAllocationError`, 3xx warnings) plus helpers.                                                                   |
-| `../../src/clmsynth/metrics.py`              | Three standalone measures: `clustering_mcc` (Hungarian-matched multiclass MCC / Gorodkin R_K), `clustering_mcc_pair` (the quantity `target_metric.scope: pair`), and `clustering_ari` (adjusted Rand index). |
+| `../../src/clmsynth/metrics.py`              | Three standalone measures: `clustering_mcc` (multiclass MCC / Gorodkin R_K, Hungarian-matched to maximise R_K), `clustering_mcc_pair` (the quantity `target_metric.scope: pair`), and `clustering_ari` (adjusted Rand index). |
 | `../../src/clmsynth/visualization.py`        | Scatter-plot, annotated with measured MCC/ARI and the generating config.                                                                                                                                     |
 | `../../src/clmsynth/config_template.py`      | The YAML template string used to render a config.                                                                                                                                                            |
 | `../../src/clmsynth/generate_config.py`      | Renders `config_template.py` into a runnable config YAML from an upstream payload file (default `../../upstream_payload.yaml`).                                                                                    |
@@ -298,7 +298,7 @@ label_generation:
 
 - The global solver builds rules, runs allocation **and assignment**, then
   measures the candidate labeling on every probe. It is shown as a loop-shaped
-  subgraph rather than every grid and bisection iteration.
+  subgraph rather than every grid and `brentq` iteration.
 - Spillover is an application stage after allocation (and, when configured,
   competing-noise reservation). The early `concentrated_labels` check is only a
   narrow configuration guard; it is not spillover itself.
@@ -374,8 +374,7 @@ Every raise/warning above carries a stable `[CLM-###]` code from a single
 registry: `1xx` config `ValueError`, `15x` `InfeasibleAllocationError` (a
 `ValueError` subclass, caught by the solver as "try another alpha" and by
 `main.py` to skip a dataset), `3xx` warnings. Missing required config keys
-surface as raw Python `KeyError`s `2xx` in
-`troubleshooting.tex`).
+surface as `2xx` `MissingConfigKey`, a `KeyError` subclass.
 
 ## What it does *not* do
 

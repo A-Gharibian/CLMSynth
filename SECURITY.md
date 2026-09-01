@@ -23,24 +23,17 @@ address is the one published in `CITATION.cff` and `pyproject.toml`.
 ## Threat model
 
 This document exists because the static analysis of CLMSynth raises findings that are
-*real data flows* but not vulnerabilities here, and the reasoning that
-distinguishes the two should be written down once rather than rediscovered every
-time an audit of the code is run.
+*real data flows* but not vulnerabilities here.
 
 **CLMSynth is a local, single-user command-line program and library.** It has no
 authentication, no authorization, no network service, and no
-persistent state shared between users. It reads files the invoking user can
-already read, and writes files that user can already write, with that user's own
-privileges.
+persistent state shared between users.
 
 The consequence: **there is no privilege boundary between the person supplying
-input and the person running the program.** Someone who can pass a path on the
-command line can already open that path with any other tool on the machine.
-However, **A configuration file is a shareable artifact.** 
-Reproducing published results means running a YAML config on another computer,
-so a config is the one input that can plausibly come from someone else.
+input and the person running the program.** 
+However, **A configuration file is a shareable artifact.**
 Guards therefore apply to configuration
-values, not to command-line arguments or interactive prompts.
+values.
 
 A secondary trajectory of shareable data is through the downloaded or provided files as
 source of clustering data, guards here apply to the values of the data since an infected 
@@ -102,12 +95,8 @@ This alert therefore stays **dismissed** rather than becoming closeable.
 ### `B310` — `urlopen` with a configurable base URL
 
 bandit flags `dataset_sources.py`'s `urlopen`, because `base_url` comes from the
-configuration and a `file://` scheme would read a local file rather than fetch
-over HTTP.
+configuration and a `file://` scheme would read a local file.
 
-**Accepted under the model above**, on the same reasoning: the result is written to their own
-output folder. Restricting the accepted URL schemes is noted as optional
-hardening.
 
 ## What would change this document
 

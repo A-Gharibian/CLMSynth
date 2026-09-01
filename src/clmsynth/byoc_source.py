@@ -2,11 +2,8 @@
 """
 Bring-Your-Own-Clusters (BYOC) data source.
 
-Lets a user feed their own CSV, feature columns plus exactly one cluster-id
-column, into the pipeline as a 4th source, on equal footing with clustbench /
-mdcgen / fabricated_data. The user brings *clusters* (a partition they already have),
-not raw data to be clustered; the CLM engine then synthesizes labels against that
-partition so they can study how their labels relate to their own clusters.
+Lets a user feed their own CSV, feature columns plus one cluster-id
+column, into the pipeline.
 
 Contract (mirrors the other fetchers, returns the standard frame or None):
     * the CSV path comes from the config (byoc_suite.datasets), never a prompt;
@@ -32,12 +29,7 @@ log = logging.getLogger(__name__)
 #
 # BYOC is an IMPORT path, not a generator: the user has already clustered a
 # feature subset with their own algorithm and is bringing the result. These
-# checks encode what that implies about the file. They are deliberately NOT
-# [CLM-###] diagnostics -- those describe the cluster-label matching model,
-# while these describe whether a file is a usable clustering at all.
-#
-# Expected to grow. The manual carries the same list under "BYOC input
-# requirements"; keep the two in step.
+# checks encode what that implies about the file.
 # --------------------------------------------------------------------------- #
 
 # Names the pipeline itself writes. A user column sharing one is silently
@@ -179,10 +171,6 @@ def fetch_byoc_data(
     one cluster-id column (`cluster_column`), optionally min-max standardized.
     Columns named in `tag_columns` ride along untouched, out of the geometry.
     Returns the standard fetcher frame, or None on any rejected input."""
-    # --- resolve the CSV path from the config ---
-    # `datasets` entries are file STEMS (no extension); '.csv' is appended and the
-    # folder comes from `input_dir`. Stems (not full paths) keep the run-folder /
-    # output filenames predictable, since main.py builds them from the dataset name.
     if not dataset_name:
         log.error("byoc: no CSV given, list your file stem(s) under byoc_suite.datasets.")
         return None

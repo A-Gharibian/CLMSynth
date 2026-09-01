@@ -26,7 +26,6 @@ class InfeasibleAllocationError(ValueError):
 
 class MissingConfigKey(KeyError):
     """A required config key is absent.
-
     A KeyError subclass so main.py keeps skipping the dataset rather than
     aborting the run; only the message gains a code.
     """

@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 """Every declaration of the version and the release date has to agree.
 
-Seven declarations carry the version (codemeta carries it three times over, in
-`version`, `softwareVersion` and the downloadUrl tag) and three carry the date.
+Six fixed declarations carry the version (codemeta three times over, in
+`version`, `softwareVersion` and the downloadUrl tag), plus every
+docs/**/*.tex carrying a `% !CLMSynth-version` banner. Three carry the date.
 The date is the half that survives a version bump untouched, so nothing else
 would catch it. codemeta's declared requirements are checked against
 pyproject's dependencies for the same reason: two copies of one fact.
