@@ -14,7 +14,7 @@ from .metrics import (
     clustering_mcc_pair,
 )
 
-__version__ = "0.7.0rc2"
+__version__ = "0.7.0"
 
 __all__ = [
     "DatasetContext",

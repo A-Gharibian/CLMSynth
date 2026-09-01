@@ -1,8 +1,8 @@
 # CLMSynth Roadmap
 
-[![Version](https://img.shields.io/badge/version-0.7.0rc2-blue)](https://github.com/A-Gharibian/CLMSynth/releases)
+[![Version](https://img.shields.io/badge/version-0.7.0-blue)](https://github.com/A-Gharibian/CLMSynth/releases)
 
-Planned work from 0.7.0 to 0.8.0, for a description of what the software does *today*,
+Planned work from 0.7.0 to 0.9.0, for a description of what the software does *today*,
 refer to  **`../README.md`**. For a record of past changes, refer to **`../CHANGELOG.md`.** 
 
 ## Conventions
@@ -13,23 +13,6 @@ specified; a minor release (`0.x.0`) ships a capability that did not exist befor
 `[CLM-###]` codes are a public contract: never renumbered, never reused. Adding
 one is therefore additive, and growing the registry is on its own enough to make
 a release a minor rather than a patch, except a fix.
-
-## 0.7.0, article published version
-
-Submitted to PyPI.
-
-### Distribution
-
-- **Release workflow**, `.github/workflows/release.yml`.
-
-- **Release preconditions.** The workflow refuses to publish when the tag and the
-  declared version disagree. `tools/check_release_metadata.py` runs it in CI.
-
-- **The documented non-extra stays a non-extra.** `mdcgenpy` is only available as
-  a git repository.
-
-- **Signed tags are not adopted here.** 0.7.0 through 0.9.0 publish with PEP 740
-  attestations.
 
 ## Article review
 

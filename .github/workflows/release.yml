@@ -25,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.route.outputs.version }}
+      prerelease: ${{ steps.route.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v7
 
@@ -45,13 +46,21 @@ jobs:
             python tools/check_release_metadata.py
           fi
 
-      # TestPyPI is the only index this workflow can reach.
-      - name: Read the version
+      # A PEP 440 final release (digits and dots only) goes to PyPI; anything
+      # else is a prerelease and rehearses on TestPyPI. An unparsable version
+      # falls to TestPyPI, so the failure mode is never an unintended PyPI upload.
+      - name: Read the version and route the upload
         id: route
         run: |
           VERSION=$(python -c "import pathlib, tomllib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          PRE=$(python -c "import re, sys; print('false' if re.fullmatch(r'[0-9]+(\.[0-9]+)*', sys.argv[1]) else 'true')" "$VERSION")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "publishing $VERSION to TestPyPI"
+          echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
+          if [ "$PRE" = "true" ]; then
+            echo "$VERSION is a prerelease -> TestPyPI"
+          else
+            echo "$VERSION is a final release -> PyPI"
+          fi
 
       - name: Install the build tools
         run: pip install build twine
@@ -88,6 +97,7 @@ jobs:
   testpypi:
     name: Publish to TestPyPI
     needs: build
+    if: needs.build.outputs.prerelease == 'true'
     runs-on: ubuntu-latest
     environment:
       name: testpypi
@@ -102,3 +112,21 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+
+  pypi:
+    name: Publish to PyPI
+    needs: build
+    if: needs.build.outputs.prerelease == 'false'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi                     # the approval gate for the real index
+      url: https://pypi.org/p/clmsynth
+    permissions:
+      id-token: write                # the OIDC token; nothing else is needed
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      # No repository-url: the action defaults to PyPI.
+      - uses: pypa/gh-action-pypi-publish@release/v1
