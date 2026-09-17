@@ -66,11 +66,11 @@
     },
     "copyrightYear": 2026,
     "dateCreated": "2026-07-15",
-    "dateModified": "2026-09-01",
+    "dateModified": "2026-09-17",
     "datePublished": "2026-07-31",
     "description": "A synthetic dataset generator that decouples cluster formation from class labels to evaluate cluster-label matching algorithms and measures.",
     "developmentStatus": "https://www.repostatus.org/#active",
-    "downloadUrl": "https://github.com/A-Gharibian/CLMSynth/archive/refs/tags/v0.7.0.tar.gz",
+    "downloadUrl": "https://github.com/A-Gharibian/CLMSynth/archive/refs/tags/v0.7.1.tar.gz",
     "funder": {
         "type": "Organization",
         "name": "VSB - Technical University of Ostrava"
@@ -211,19 +211,6 @@
         },
         {
             "type": "SoftwareApplication",
-            "identifier": "faker",
-            "name": "faker",
-            "provider": {
-                "type": "Organization",
-                "name": "PyPI",
-                "url": "https://pypi.org"
-            },
-            "runtimePlatform": "Python 3",
-            "sameAs": "https://pypi.org/project/faker/",
-            "description": "Optional. Used only by the fabricated_data source; it falls back to numpy."
-        },
-        {
-            "type": "SoftwareApplication",
             "identifier": "mdcgenpy",
             "name": "mdcgenpy",
             "provider": {
@@ -236,6 +223,6 @@
             "description": "Optional. Needed only for data_source 'mdcgen'. Distributed as a git repository rather than on PyPI, so it cannot be a declared extra."
         }
     ],
-    "softwareVersion": "0.7.0",
-    "version": "0.7.0"
+    "softwareVersion": "0.7.1",
+    "version": "0.7.1"
 }

@@ -11,7 +11,7 @@ Consolidated cluster/dataset generation module. Four sources:
 
 The registry shape (SOURCE_METADATA / SOURCE_DATASETS / HEAVY_BATTERIES, keyed by
 source name) is what makes a source pluggable; more are planned (i.e. repliclust).
-This also keeps the engine pure MIT without inheriting the liscences from upstream.
+This also keeps the engine pure MIT without inheriting the licenses from upstream.
 """
 
 import gzip
@@ -19,6 +19,7 @@ import io
 import logging
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -243,6 +244,14 @@ def print_battery_info(source: str) -> None:
         log.info(f"  - '{battery}': {info['description']} (Examples: {info['examples']})")
 
 
+def resolved_for_report(path_value) -> str:
+    """Absolute form, or the raw value."""
+    try:
+        return str(Path(path_value).resolve())
+    except (OSError, ValueError):
+        return str(path_value)
+
+
 # ===========================================================================
 # Source 1: clustbench
 # ===========================================================================
@@ -308,8 +317,8 @@ def fetch_clustbench_data(
 
     labeling = fetch_clustbench_labelings(dataset_group, dataset_name, base_url)
     labeling = {n: labels for n, labels in labeling.items() if len(labels) == len(data)}
-    if not labeling:
-        log.error(f"No usable labeling for {dataset_group}/{dataset_name}.")
+    if "labels0" not in labeling:
+        log.error(f"No usable labels0 for {dataset_group}/{dataset_name}.")
         return None
 
     feature_cols = [f"Feature_{i + 1}" for i in range(data.shape[1])]

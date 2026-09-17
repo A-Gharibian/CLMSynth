@@ -7,15 +7,14 @@ channels:
   - conda-forge
 dependencies:
   - python=3.14
-  - numpy=2.5.2
+  - numpy=2.5.3
   - pandas=3.0.5
   - pyyaml=6.0.3
   - scipy=1.18.1
-  - scikit-learn=1.9.0
-  - matplotlib=3.11.1
+  - scikit-learn=1.9.1
+  - matplotlib=3.11.2
   - seaborn=0.13.2
   - pip
   # Optional, feature-specific (uncomment what you use):
-  # - faker                                     # fabricated_data source; numpy fallback if absent
   # - pip:
   #     - git+https://github.com/CN-TU/mdcgenpy # data_source: "mdcgen"

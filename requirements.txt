@@ -1,15 +1,14 @@
 # Core dependencies for the CLMSynth pipeline (main.py and the clm_label engine).
 # Requires Python 3.12+; pinned to the versions used for verification (Python 3.14).
 # numpy and scipy below both declare >=3.12.
-numpy==2.5.2
+numpy==2.5.3
 pandas==3.0.5
 PyYAML==6.0.3
 scipy==1.18.1
-scikit-learn==1.9.0
-matplotlib==3.11.1
+scikit-learn==1.9.1
+matplotlib==3.11.2
 seaborn==0.13.2
 
 # --- Optional ---
 # git+https://github.com/CN-TU/mdcgenpy    # data_source: "mdcgen";
 # the code will work without it if configuration files point to other sources.
-# faker  # fabricated_data source only; has a numpy fallback if absent

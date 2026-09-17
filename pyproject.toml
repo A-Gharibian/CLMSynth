@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clmsynth"
-version = "0.7.0"
+version = "0.7.1"
 description = "Synthetic label generator with configurable cluster-label matching (CLM) against ground-truth clusters"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
@@ -41,7 +41,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-faker = ["faker"]
 # The static-analysis toolchain CI gates on, plus the stub packages mypy needs
 # to see through pandas and scipy. Unpinned on purpose and the rule SET is pinned in
 # [tool.ruff.lint] below.
@@ -59,7 +58,7 @@ test = ["pytest>=8"]
 [project.urls]
 Homepage = "https://github.com/A-Gharibian/CLMSynth"
 Repository = "https://github.com/A-Gharibian/CLMSynth"
-Documentation = "https://github.com/A-Gharibian/CLMSynth/blob/main/README.md"
+Documentation = "https://github.com/A-Gharibian/CLMSynth/tree/main/docs/manual"
 Changelog = "https://github.com/A-Gharibian/CLMSynth/blob/main/CHANGELOG.md"
 Issues = "https://github.com/A-Gharibian/CLMSynth/issues"
 
@@ -136,7 +135,7 @@ ignore = [
 # Python 3.11 was dropped at 0.7.0: numpy and scipy now
 # require >=3.12 (SPEC 0).
 ignore_missing_imports = true
-files = ["src/clmsynth"]
+files = ["src/clmsynth", "tools"]
 
 [tool.bandit]
 # Read with `bandit -c pyproject.toml -r src/clmsynth`. Recorded here for the

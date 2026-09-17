@@ -73,7 +73,7 @@ jobs:
 
       # `continue-on-error` is deliberately NOT set: these are gates.
       - name: Lint (ruff)
-        run: ruff check src/ tests/
+        run: ruff check src/ tests/ tools/
 
       - name: Typing (mypy)
         # Reads files and settings from [tool.mypy]; no path argument, same
@@ -155,9 +155,7 @@ jobs:
           sys.exit(1 if missing or yamls != logs else 0)
           PY
 
-      # Nothing else proves the wheel is usable: the test job installs with `-e`,
-      # which puts the source tree on the path and so cannot detect a module or
-      # an entry point missing from the built artifact.
+      # Nothing else proves the wheel is usable
       - name: The wheel installs, imports, and brings its console scripts
         run: |
           python -m venv /tmp/probe

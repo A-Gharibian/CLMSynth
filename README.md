@@ -60,7 +60,6 @@ pip install -r requirements.txt
 Optional, depending on which source/utility you use:
 
 ```bash
-pip install faker                                    # only used by the fabricated_data source
 pip install git+https://github.com/CN-TU/mdcgenpy    # only needed for data_source: "mdcgen"
 ```
 
@@ -272,12 +271,11 @@ applied after it.
 
 ## Known limitations
 
-- **`single` mode is budget-into-`k*`, not drain-`k*`-into-`l*`.** It tries to
-  place label `l*`'s full budget `m_{l*}` inside cluster `k*`, so without a
+- **`single` mode is budget-into-`k*`, not drain-`k*`-into-`l*`**. 
+It tries to place label `l*`'s full budget `m_{l*}` inside cluster `k*`, so without a
   `target_metric` it raises `InfeasibleAllocationError` whenever `|k*| < m_{l*}`,
   e.g. pointing `single_match` at the *smallest* cluster with a large budget.
-- **Target metric can be unreachable (structural ceiling)**, but the engine does not yet
-  compute or report the ceiling value. *(planned for 0.7.5)*
+- **Target metric can be unreachable (structural ceiling)**, but the engine does not yet compute or report the ceiling value. *(planned for 0.7.5)*
 - **Proportions are only possible with `spillover_rule: proportional_to_marginal`.**
   `uniform`/`concentrated` deliberately do not preserve the target label counts.
   - **`competing_noise` also breaks proportions**, Each entry converts

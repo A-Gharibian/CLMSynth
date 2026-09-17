@@ -14,19 +14,11 @@ from typing import Any
 import yaml
 
 from .dataset_sources import SOURCE_DATASETS, SOURCE_METADATA, is_heavy
+from .dataset_sources import resolved_for_report as _resolved_or_raw
 from .questions import SCHEMA
 
 # Windows' MAX_PATH.
 _MAX_PATH = 260
-
-
-# Duplicated, not imported: main.py pulls matplotlib.
-def _resolved_or_raw(path_value) -> str:
-    """Absolute form, or the raw value."""
-    try:
-        return str(Path(path_value).resolve())
-    except (OSError, ValueError):
-        return str(path_value)
 
 
 def _save_config(config: dict, out: str) -> str:
@@ -548,10 +540,10 @@ def _add_balance(clm, M):
     if ask_from("clm_label._explicit_proportions"):
         while True:
             props = ask_from("clm_label.proportions", prompt=f"Fraction for each of the {M} labels")
-            if len(props) == M and abs(sum(props) - 1.0) < 1e-6:
+            if len(props) == M and min(props) >= 0 and abs(sum(props) - 1.0) < 1e-6:
                 clm["proportions"] = props
                 return
-            print(f"    (need exactly {M} numbers that add up to 1.0)")
+            print(f"    (need exactly {M} non-negative numbers that add up to 1.0)")
     rule = ask_from("clm_label.skew_rule")
     clm["skew_rule"] = rule
     if rule == "geometric":

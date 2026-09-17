@@ -26,17 +26,23 @@ import tomllib
 REPO = pathlib.Path(__file__).resolve().parents[1]
 
 
+def _capture(pattern: str, text: str, flags: int = 0) -> str:
+    """sentinel"""
+    m = re.search(pattern, text, flags)
+    return m.group(1) if m else "(absent)"
+
+
 def collect() -> tuple:
-    """(version, version declarations, dates, changelog date, faults, doi)."""
+    """version, version declarations, dates, changelog date, faults, doi."""
     project = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     version = project["version"]
     found = {"pyproject.toml": version}
 
     init = (REPO / "src/clmsynth/__init__.py").read_text(encoding="utf-8")
-    found["__init__.py"] = re.search(r'__version__\s*=\s*"([^"]+)"', init).group(1)
+    found["__init__.py"] = _capture(r'__version__\s*=\s*"([^"]+)"', init)
 
     cff = (REPO / "CITATION.cff").read_text(encoding="utf-8")
-    found["CITATION.cff"] = re.search(r"^version:\s*(\S+)", cff, re.M).group(1)
+    found["CITATION.cff"] = _capture(r"^version:\s*(\S+)", cff, re.M)
 
     codemeta = json.loads((REPO / "codemeta.json").read_text(encoding="utf-8"))
     found["codemeta.json"] = codemeta.get("version", "(absent)")
@@ -54,8 +60,7 @@ def collect() -> tuple:
     # The software DOI is declared twice. It must be the SOFTWARE record, not a
     # version record and not the validation-data record, which is a distinct
     # deposit with its own DOI and lives in codemeta's `citation` instead.
-    cff_doi = re.search(r"^doi:\s*(\S+)", cff, re.M)
-    cff_doi = cff_doi.group(1) if cff_doi else "(absent)"
+    cff_doi = _capture(r"^doi:\s*(\S+)", cff, re.M)
     cm_doi = codemeta.get("identifier", "(absent)")
     doi_faults = []
     if cff_doi != cm_doi:
@@ -86,7 +91,7 @@ def collect() -> tuple:
     dates = None
     if dated:
         dates = {
-            "CITATION.cff date-released": re.search(r"^date-released:\s*(\S+)", cff, re.M).group(1),
+            "CITATION.cff date-released": _capture(r"^date-released:\s*(\S+)", cff, re.M),
             "codemeta.json dateModified": codemeta.get("dateModified", "(absent)"),
         }
     return (version, found, dates, dated.group(1) if dated else None,

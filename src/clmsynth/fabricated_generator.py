@@ -1,6 +1,5 @@
 # fabricated_generator.py
-"""Offline synthetic-feature generator
- the "fabricated_data" data source.
+"""Offline synthetic-feature generator.
 Six numeric feature types, plus a categorical column generator.
 """
 
@@ -25,7 +24,7 @@ log = logging.getLogger(__name__)
 
 def generate_faker_categories(n_samples: int, labels: list, seed: int) -> pd.Series:
     """Generates categorical labels using Faker, falling back to numpy if unavailable."""
-    # uses default_rng, and mutating global RNG state is not thread/process-safe.
+    # Local generator: global RNG state is not thread-safe.
     rng = np.random.default_rng(seed)
     if Faker is not None:
         Faker.seed(seed)
@@ -89,12 +88,10 @@ def generate_synthetic_data(
     labels_only = bool(cat_config.get("enable", False) and cat_config.get("labels_only", False))
     if labels_only:
         log.warning(
-            "fabricated_data 'labels_only': emitting ONLY the reserved 'Cohort_Class' "
-            "column, drawn uniformly, and none of the six engineered features. The "
-            "result carries cluster ids and no geometry, which is exactly what the "
-            "[CLM-125] guard refuses when spatial placement is also configured. Use "
-            "this to exercise the labels-only path; it is not a general-purpose "
-            "fabrication mode and any centroid_dependence will be rejected."
+            "'labels_only': emitting ONLY the reserved 'Cohort_Class' column, drawn "
+            "uniformly, and none of the six engineered features. The result carries "
+            "labels and no geometry. Use it for label-only workflows; it is not a "
+            "general-purpose fabrication mode."
         )
 
     final_dfs_to_concat: list = [] if labels_only else [scaled_df]

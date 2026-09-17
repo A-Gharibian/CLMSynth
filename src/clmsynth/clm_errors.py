@@ -40,7 +40,7 @@ CODES = {
     101: "Unknown matching_mode {mode!r}. Supported: perfect, single, random, custom.",
     102: "matching_mode 'perfect' requires M == K (got M={M}, K={K}).",
     103: "matching_mode 'single' requires M >= 2 and K >= 2 (got M={M}, K={K}).",
-    104: "{where}: label {label!r} out of range 0..{hi}.",
+    104: "{where}: label {label!r} {problem} 0..{hi}.",
     105: "{where}: cluster id(s) {unknown} not found (available: {available}).",
     106: "proportions must sum to 1, got {total}.",
     107: "Unknown skew_rule {skew_rule!r}. Supported: geometric, dominant_minority, dirichlet.",
@@ -59,7 +59,7 @@ CODES = {
          "aligned label for a competing label to compete with (use 'single' or 'custom').",
     116: "competing_noise: favors must be 'core', 'boundary' or 'random', got {favors!r}.",
     117: "competing_noise: share must be in [0, 1], got {share}.",
-    118: "competing_noise: label {label} out of range 0..{hi}.",
+    118: "competing_noise: label {label!r} {problem} 0..{hi}.",
     119: "competing_noise: cluster {cluster} does not exist (available: {available}).",
     120: "target_metric: no feasible alpha in [0, 1], every candidate recall_target "
          "produced an infeasible allocation. Check that your rule clusters have enough "
@@ -128,9 +128,9 @@ CODES = {
     203: "skew_rule is required when balance is not 'balanced' and no proportions "
          "are given.",
     204: "single_match is required by matching_mode 'single'.",
-    205: "single_match.cluster is required.",
+    205: "single_match.{key} is required.",
     206: "assignment_matrix is required by matching_mode 'custom'.",
-    207: "{where}: 'clusters' is required.",
+    207: "{where}: '{key}' is required.",
     208: "{where}: 'recall_target' is required without target_metric.",
     209: "target_metric.value is required.",
 

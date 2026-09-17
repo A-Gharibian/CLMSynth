@@ -224,7 +224,7 @@ label_generation:
     skew_rule: "geometric"          # fallback when unbalanced AND no proportions given:
                                      #   geometric          p_i ~ ratio^i
                                      #   dominant_minority  one dominant class, uniform rest
-                                     #   dirichlet          Dirichlet(alpha), drawn once per seed
+                                     #   dirichlet          alpha, drawn once per seed
     skew_params: {ratio: 0.5, dominant_index: 0, dominant_share: 0.6, alpha: 1.0}
 
     # 2. MATCHING MODE --------------------------------------------------------
@@ -277,23 +277,23 @@ label_generation:
 
 ## Project layout
 
-| File                                   | Role                                                                                                                                                                                                         |
-|----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `../../src/clmsynth/main.py`                 | Entry point, defaults to `test_data_config.yaml`.                                                                                                                                                            |
-| `../../src/clmsynth/dataset_sources.py`      | Online data sources: `clustbench` (Gagolewski benchmark downloads), `mdcgen` (synthetic, via `mdcgenpy`). For the two offline data sources see below.                                                        |
-| `../../src/clmsynth/fabricated_generator.py` | Feature generator with perfect-separation labels, used by the `fabricated_data` source.                                                                                                                      |
-| `../../src/clmsynth/byoc_source.py`          | Bring-your-own-clusters: imports user-provided CSV, with optional min-max standardization on import.                                                                                                         |
-| `../../src/clmsynth/label_context.py`        | `DatasetContext`, holds features, every ground-truth labeling, and every generated label.                                                                                                                    |
-| `../../src/clmsynth/label_generator.py`      | Orchestrates label generation: calls the CLM engine per `n_labels`, or falls back to simple noise-flipping if no `clm_label` config is given.                                                                |
-| `../../src/clmsynth/clm_label_engine.py`     | The CLM label-assignment: proportions/skew, matching modes, recall targets, allocation, spillover, competing noise, spatial placement, and the global target-metric solver.                                  |
-| `../../src/clmsynth/clm_errors.py`           | Diagnostics: message templates keyed by a `[CLM-###]` code (1xx `ValueError`, 15x `InfeasibleAllocationError`, 3xx warnings) plus helpers.                                                                   |
+| File                                         | Role                                                                                                                                                                                                                          |
+|----------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `../../src/clmsynth/main.py`                 | Entry point, defaults to `test_data_config.yaml`.                                                                                                                                                                             |
+| `../../src/clmsynth/dataset_sources.py`      | Online data sources: `clustbench` (Gagolewski benchmark downloads), `mdcgen` (synthetic, via `mdcgenpy`). For the two offline data sources see below.                                                                         |
+| `../../src/clmsynth/fabricated_generator.py` | Feature generator with perfect-separation labels, used by the `fabricated_data` source.                                                                                                                                       |
+| `../../src/clmsynth/byoc_source.py`          | Bring-your-own-clusters: imports user-provided CSV, with optional min-max standardization on import.                                                                                                                          |
+| `../../src/clmsynth/label_context.py`        | `DatasetContext`, holds features, every ground-truth labeling, and every generated label.                                                                                                                                     |
+| `../../src/clmsynth/label_generator.py`      | Orchestrates label generation: calls the CLM engine per `n_labels`, or falls back to simple noise-flipping if no `clm_label` config is given.                                                                                 |
+| `../../src/clmsynth/clm_label_engine.py`     | The CLM label-assignment: proportions/skew, matching modes, recall targets, allocation, spillover, competing noise, spatial placement, and the global target-metric solver.                                                   |
+| `../../src/clmsynth/clm_errors.py`           | Diagnostics: message templates keyed by a `[CLM-###]` code (1xx `ValueError`, 15x `InfeasibleAllocationError`, 3xx warnings) plus helpers.                                                                                    |
 | `../../src/clmsynth/metrics.py`              | Three standalone measures: `clustering_mcc` (multiclass MCC / Gorodkin R_K, Hungarian-matched to maximise R_K), `clustering_mcc_pair` (the quantity `target_metric.scope: pair`), and `clustering_ari` (adjusted Rand index). |
-| `../../src/clmsynth/visualization.py`        | Scatter-plot, annotated with measured MCC/ARI and the generating config.                                                                                                                                     |
-| `../../src/clmsynth/config_template.py`      | The YAML template string used to render a config.                                                                                                                                                            |
-| `../../src/clmsynth/generate_config.py`      | Renders `config_template.py` into a runnable config YAML from an upstream payload file (default `../../upstream_payload.yaml`).                                                                                    |
-| `../../upstream_payload.yaml`                | Example upstream payload: the minimal facts `generate_config.py` renders into the full config.                                                                                                               |
-| `../../src/clmsynth/config_wizard.py`        | Interactive CLI wizard: asks and explains every option, then writes a config YAML.                                                                                                                           |
-| `../../src/clmsynth/questions.py`            | The wizard's `Question`s per prompt (wording, help, default, range, `visible_when`), read by `config_wizard.py`.                                                                                             |
+| `../../src/clmsynth/visualization.py`        | Scatter-plot, annotated with measured MCC/ARI and the generating config.                                                                                                                                                      |
+| `../../src/clmsynth/config_template.py`      | The YAML template string used to render a config.                                                                                                                                                                             |
+| `../../src/clmsynth/generate_config.py`      | Renders `config_template.py` into a runnable config YAML from an upstream payload file (default `../../upstream_payload.yaml`).                                                                                               |
+| `../../upstream_payload.yaml`                | Example upstream payload: the minimal facts `generate_config.py` renders into the full config.                                                                                                                                |
+| `../../src/clmsynth/config_wizard.py`        | Interactive CLI wizard: asks and explains every option, then writes a config YAML.                                                                                                                                            |
+| `../../src/clmsynth/questions.py`            | The wizard's `Question`s per prompt (wording, help, default, range, `visible_when`), read by `config_wizard.py`.                                                                                                              |
 
 
 - The global solver builds rules, runs allocation **and assignment**, then
@@ -362,12 +362,15 @@ two sort-based `np.unique` calls and one Hungarian assignment on a `K x M` matri
 A solve costs a bounded number of probes `P` set by the target and `max_iter`, not
 by `N`, and the engine re-runs once per generated label:
 
-$$O\big(\underbrace{L}_{\text{n_labels}} \cdot \underbrace{P}_{\text{probes}} \cdot (N \log N + K^3)\big)$$
+ $$O\Big(\underbrace{(grid size + \text{max_iter})}{P}
+ \cdot\big(\underbrace{NK}{\text{per-cluster masking}} + \underbrace{\textstyle
+ \sum_k r_k, n_k \log n_k}{\text{placement}} + 
+ \underbrace{N \log N}{\text{metric}} + 
+ \underbrace{\min(K,M)^2\max(K,M)}_{\text{Hungarian}}\big)\Big)$$
 
 `K` and `M` are capped at 64, so `K^3` is a bounded constant and any fixed
 configuration reduces to `O(N log N)`. Measured over 10^3 to 5x10^5 points, the
-fitted exponent is 1.01-1.05 once fixed setup cost has amortised, which is not
-distinguishable from linear in practice.
+fitted exponent is 1.01-1.05 once fixed setup step timing is reduced, which is basically linear.
 ## Diagnostics (`clm_errors.py`)
 
 Every raise/warning above carries a stable `[CLM-###]` code from a single

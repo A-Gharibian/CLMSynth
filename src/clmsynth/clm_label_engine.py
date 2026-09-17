@@ -124,16 +124,27 @@ def _check_pair(label: int, clusters: list, M: int, cluster_ids: list, where: st
     """Fail fast on out-of-range label / unknown cluster ids in a matching
     rule, before allocate() would otherwise surface them as an uncoded numpy
     IndexError (label >= M), a KeyError (unknown cluster)."""
-    try:                                   # accept Python/NumPy ints; reject
-        is_int = (label == int(label))     # floats like 2.5, strings, None
-    except (TypeError, ValueError):
-        is_int = False
-    if not is_int or not (0 <= label < M):
-        raise clm_error(104, where=where, label=label, hi=M - 1)
+    is_int = isinstance(label, (int, np.integer)) and not isinstance(label, bool)
+    if not is_int:
+        raise clm_error(104, where=where, label=label, hi=M - 1,
+                        problem="is not an integer; labels are indices in")
+    if not (0 <= label < M):
+        raise clm_error(104, where=where, label=label, hi=M - 1, problem="out of range")
     unknown = [k for k in clusters if k not in cluster_ids]
     if unknown:
         raise clm_error(105, where=where, unknown=unknown,
                         available=sorted(cluster_ids, key=str))
+
+
+def _single_match(cfg: dict) -> dict:
+    """single_match with both required keys."""
+    sm = cfg.get("single_match")
+    if sm is None:
+        raise clm_missing(204)
+    for key in ("cluster", "label"):
+        if key not in sm:
+            raise clm_missing(205, key=key)
+    return sm
 
 
 def build_rules(cfg: dict, cluster_ids: list[int],
@@ -159,11 +170,7 @@ def build_rules(cfg: dict, cluster_ids: list[int],
     if mode == "single":
         if M < 2 or K < 2:
             raise clm_error(103, M=M, K=K)
-        sm = cfg.get("single_match")
-        if sm is None:
-            raise clm_missing(204)
-        if "cluster" not in sm:
-            raise clm_missing(205)
+        sm = _single_match(cfg)
         _check_pair(sm["label"], [sm["cluster"]], M, cluster_ids, "single_match")
         rt = recall_target_override if recall_target_override is not None else 1.0
         return [Rule(label=sm["label"], clusters=[sm["cluster"]], recall_target=rt)]
@@ -176,8 +183,9 @@ def build_rules(cfg: dict, cluster_ids: list[int],
         rules = []
         for i, row in enumerate(matrix):
             where = f"assignment_matrix row {i}"
-            if "clusters" not in row:
-                raise clm_missing(207, where=where)
+            for key in ("clusters", "label"):
+                if key not in row:
+                    raise clm_missing(207, where=where, key=key)
             _check_pair(row["label"], row["clusters"], M, cluster_ids, where)
             if recall_target_override is not None:
                 rt = recall_target_override
@@ -257,13 +265,14 @@ def _validate_target_metric_cfg(cfg: dict, cluster_ids: list) -> None:
         raise clm_error(122, scope=scope)
     if scope == "pair":
         # The single-pair MCC inverts in closed form (see _pair_label_counts);
-        # ARI has no such inverse, and the pair is taken from single_match.
+        # the pair is taken from single_match.
+        # Pair ARI also inverts quadratically; unsupported, see roadmap.
         if tm["type"] != "mcc":
             raise clm_error(123)
         if mode != "single":
             raise clm_error(124)
         # Validate the (cluster, label) pair
-        sm = cfg["single_match"]
+        sm = _single_match(cfg)
         _check_pair(sm["label"], [sm["cluster"]], cfg["num_classes"], cluster_ids, "single_match")
         # [CLM-130] The closed form is only exact while EVERY point of l* stays
         # inside k*
@@ -377,6 +386,22 @@ def _validate_skew_cfg(cfg: dict) -> None:
 
     if problem is not None:
         raise clm_error(131, problem=problem, hi=M - 1)
+
+
+def _validate_non_negative(cfg: dict) -> None:
+    """Reject negatives where they are meaningless."""
+    props = cfg.get("proportions")
+    values = [("proportions", p) for p in props] if isinstance(props, (list, tuple)) else []
+    matrix = cfg.get("assignment_matrix")
+    if isinstance(matrix, (list, tuple)):
+        values += [("recall_target", row.get("recall_target"))
+                   for row in matrix if isinstance(row, dict)]
+    for block, key in (("target_metric", "tolerance"), ("centroid_dependence", "steepness")):
+        if isinstance(cfg.get(block), dict):
+            values.append((key, cfg[block].get(key)))
+    for key, value in values:
+        if _is_real(value) and value < 0:
+            raise ValueError(f"{key} must not be negative, got {value!r}.")
 
 
 def _validate_centroid_cfg(cfg: dict) -> None:
@@ -656,8 +681,12 @@ def _competing_demand(cfg: dict, remaining_capacity: dict[int, int], M: int):
 
         if k not in remaining_capacity:
             raise clm_error(119, cluster=k, available=sorted(remaining_capacity, key=str))
+        is_int = isinstance(label, (int, np.integer)) and not isinstance(label, bool)
+        if not is_int:
+            raise clm_error(118, label=label, hi=M - 1,
+                            problem="is not an integer; labels are indices in")
         if not (0 <= label < M):
-            raise clm_error(118, label=label, hi=M - 1)
+            raise clm_error(118, label=label, hi=M - 1, problem="out of range")
         if not (0.0 <= share <= 1.0):
             raise clm_error(117, share=share)
         if favors not in ("core", "boundary", "random"):
@@ -935,6 +964,7 @@ def generate_clm_labels(cluster_labels: np.ndarray, coords: np.ndarray, cfg: dic
     # Must precede resolve_label_counts, which is what consumes skew_params: an
     # out-of-range value there does not raise, it returns negative label counts
     # that still sum to N ([CLM-131]).
+    _validate_non_negative(cfg)
     _validate_skew_cfg(cfg)
 
     m_counts = resolve_label_counts(cfg, N, rng)

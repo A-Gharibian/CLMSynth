@@ -4,7 +4,25 @@ All notable changes to CLMSynth are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
 ---
+
+## [0.7.1] — 2026-09-17
+
+### Changed
+
+- **`run_pipeline` split into helpers; behavior unchanged.**
+
+### Fixed
+
+- **`[CLM-205]` and `[CLM-207]` catch missing `label`.**
+- **The wizard rejects negative `proportions`.**
+- **The engine rejects negative `proportions`, `recall_target`, `tolerance`, `steepness`.**
+  A plain `ValueError`, not a `[CLM-###]` code.
+- **A non-integer `label` is refused by type.** `1.0` and `True` were accepted,
+  then failed later as an uncoded `IndexError`.
+- **`[CLM-104]` and `[CLM-118]` name the type, not the range.** A label that is a
+  column name no longer reads as out of range.
 
 ## [0.7.0] — 2026-09-01
 

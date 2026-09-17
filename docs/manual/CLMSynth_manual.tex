@@ -1,5 +1,5 @@
 % !CLMSynth-doc = manual
-% !CLMSynth-version = 0.7.0
+% !CLMSynth-version = 0.7.1
 % These two lines are a machine-readable marker, so the
 % file can be renamed freely, and checks the version above against the
 % package version so documentation cannot silently fall behind a release.
@@ -50,7 +50,7 @@
 \lstset{style=mystyle}
 
 % Names the release documented, not the candidate. Banner above tracks the build.
-\title{CLMSynth v0.7.0}
+\title{CLMSynth v0.7.1}
 \author{Arootin Gharibian}
 \date{\today}
 
@@ -208,7 +208,7 @@ print(L.value_counts().sort_index().to_dict())
 \newpage
 
 \section{Example Outputs}
-The global $R_K$/ARI between an $M$-label and a $K$-cluster partition has no closed form, which is why \texttt{scope: global} is solved numerically. The compact closed-form expression $TP^\star$ inverts the \emph{single} $2\times2$ MCC (what \texttt{scope: pair} evaluates), which is why that mode requires \texttt{type: mcc} and \texttt{matching\_mode: single} and reaches its target without a search (see the published article). That is why in table~\ref{tab:g2mg-outcomes} The CLM target of single-match configurations A3 and D1 is feasible. Configurations A4 and B1--B3 share one set of rules (labels sized $[1024,614,410]$, one rule per label); B1 and B2 request possible values within their configuration (solver within the tolerance $0.01$, while B3, a 3-label partition of a 2-cluster, requests $\mathrm{MCC}=0.99$, which is not possible. The solver returns its closest feasible value, $0.718$, which is the maximum attainable for this configuration. C1--C3 differ only in spatial placement.
+The global $R_K$/ARI between an $M$-label and a $K$-cluster partition has no closed form, which is why \texttt{scope: global} is solved numerically. The compact closed-form expression $TP^\star$ inverts the \emph{single} confusion table MCC (what \texttt{scope: pair} evaluates), which is why that mode reaches its target without a search. Maximizing over matchings lifts $R_K$'s null expectation above $0$, while ARI needs no alignment and stays centered on it (config A2). That is why the CLM target for single-match configurations A3 and D1 is feasible in table~\ref{tab:g2mg-outcomes}. Configurations A4 and B1--B3 share one set of rules (labels sized $[1024,614,410]$, one rule per label); B1 and B2 request possible values within their configuration (solver within the tolerance $0.01$, while B3, a 3-label partition of a 2-cluster, requests $\mathrm{MCC}$ $=0.99$, which is not possible. The solver returns the closest feasible value, $0.718$, the maximum attainable for this configuration. C1--C3 differ only in spatial placement.
 
 \begin{table}[!h]
 \centering\tiny
@@ -253,7 +253,10 @@ D1 & single (cluster 1, $M{=}2$) & fills cluster exactly; MCC $\approx 1$ & MCC 
   \vhEntry{0.7.0rc1}{2026-08-30}{AG}{Release candidate, rehearsed on TestPyPI.}
   \vhEntry{0.7.0rc2}{2026-09-01}{AG}{Documentation corrections: \texttt{[CLM-309]}' and \texttt{scope: pair} description.}
   \vhEntry{0.7.0}{2026-09-01}{AG}{Release on PyPI. SoftwareX Article Version.}
+  \vhEntry{0.7.1}{2026-09-17}{AG}{Patch release: negative \texttt{proportions}, \texttt{recall\_target}, \texttt{tolerance} and \texttt{steepness} are rejected; \texttt{[CLM-205]}/\texttt{[CLM-207]} report a missing \texttt{label}.}
 \end{versionhistory}
+
+\noindent The full change log is available in the project's GitHub repository.
 \newpage
 % \section*{License}
 
@@ -273,14 +276,16 @@ D1 & single (cluster 1, $M{=}2$) & fills cluster exactly; MCC $\approx 1$ & MCC 
 
 \section*{Licenses for Third-Party Libraries}
 
-Python is distributed under the Python Software Foundation License V.2. This project relies on several open-source third-party Python libraries, including \texttt{NumPy}, \texttt{Pandas}, \texttt{SciPy}, \texttt{scikit-learn}, \texttt{Matplotlib}, \texttt{Seaborn}, and \texttt{PyYAML}. Optionally \texttt{faker} and \texttt{mdcgenpy}. These packages are distributed under their respective licenses (BSD 3-Clause, MIT, and Apache 2.0). Refer to the official documentation of each package or the project repository for full third-party license details.
+% 0.7.1: faker removed, it was never used.
+Python is distributed under the Python Software Foundation License V.2. This project relies on several open-source third-party Python libraries, including \texttt{NumPy}, \texttt{Pandas}, \texttt{SciPy}, \texttt{scikit-learn}, \texttt{Matplotlib}, \texttt{Seaborn}, and \texttt{PyYAML}. Optionally \texttt{mdcgenpy}. These packages are distributed under their respective licenses (BSD 3-Clause, MIT, and Apache 2.0). Refer to the official documentation of each package or the project repository for full third-party license details.
 
 \section{References}
-\begin{itemize}
-    \item Gagolewski, M. (2020). \textit{A framework for benchmarking clustering algorithms}. \url{https://clustering-benchmarks.gagolewski.com/weave/suite-v1.html}
-    \item Iglesias, F., Zseby, T., Ferreira, D. \textit{et al.} (2019). \textit{MDCGen: A Multidimensional Dataset Generator for Clustering}. Journal of Classification. \url{https://link.springer.com/article/10.1007/s00357-019-9312-3}
-    \item Jeon, H., Aupetit, M., Shin, D., Cho, A., Park, S., and Seo, J. (2025). \textit{Measuring the Validity of Clustering Validation Datasets}. IEEE Transactions on Pattern Analysis and Machine Intelligence, 47(6), 5045-5058. \url{https://doi.org/10.1109/TPAMI.2025.3548011}
-\end{itemize}
+\begin{enumerate}
+    \item Gagolewski, M. (2020). \textit{A framework for benchmarking clustering algorithms}; Author's website: \href{https://clustering-benchmarks.gagolewski.com/weave/suite-v1.html}{clustering-benchmarks}
+    \item Iglesias, F., Zseby, T., Ferreira, D. \textit{et al.} (2019). \textit{MDCGen: A Multidimensional Dataset Generator for Clustering}. Journal of Classification. \href{https://link.springer.com/article/10.1007/s00357-019-9312-3}{doi: 10.1007/s00357-019-9312-3}
+    \item de Vries, S., Thierens, D. Generating the ground truth: Synthetic data for soft label and label noise research. Int J Data Sci Anal 20, 5603–5615 (2025). \href{https://doi.org/10.1007/s41060-025-00786-z}{doi: 10.1007/s41060-025-00786-z}
+    \item Jeon, H., Aupetit, M., Shin, D., Cho, A., Park, S., and Seo, J. (2025). \textit{Measuring the Validity of Clustering Validation Datasets}. IEEE Transactions on Pattern Analysis and Machine Intelligence, 47(6), 5045-5058. \href{https://doi.org/10.1109/TPAMI.2025.3548011}{doi: 10.1109/TPAMI.2025.3548011}
+\end{enumerate}
 
 
 

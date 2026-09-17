@@ -27,6 +27,7 @@ from .dataset_sources import (
     is_heavy,
     print_battery_info,
     resolve_selection,
+    resolved_for_report,
 )
 from .label_context import DatasetContext, build_context
 from .label_generator import generate_additional_labels
@@ -106,15 +107,6 @@ def _write_summary_txt(path: Path, friendly: str, source: str, battery: str, dat
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
     log.info(f"Saved summary: {path}")
-
-def resolved_for_report(path_value) -> str:
-    """The absolute form of a configured path, for logging. Never raises.
-    """
-    try:
-        return str(Path(path_value).resolve())
-    except (OSError, ValueError):
-        return str(path_value)
-
 
 def _is_plain_name(name) -> bool:
     """True when `name` is a bare name rather than anything path-shaped.
@@ -279,6 +271,93 @@ def _render_dataset_plots(final_df: pd.DataFrame, context: DatasetContext,
             log.warning(f"'{stem}': plot for '{r['name']}' failed; CSV/labels are unaffected.")
 
 
+def _resolve_jobs(source: str, batteries: list[str], datasets_cfg, fetch_kwargs: dict,
+                  clm_config: dict | None) -> list:
+    """(battery, dataset) pairs to run, BYOC pre-checked."""
+    if any(is_heavy(source, b) for b in batteries):
+        log.warning(f"Selection includes a heavy '{source}' battery: expect long fetch/generation times.")
+
+    jobs = _drop_path_shaped_names(
+        [(b, d) for b in batteries for d in get_datasets_for_battery(source, b, datasets_cfg)])
+    log.info(f"Resolved {len(jobs)} dataset(s) across {len(batteries)} batter(y/ies) from source '{source}'.")
+    if fetch_kwargs:
+        log.info(f"Extra fetch kwargs forwarded to '{source}': {fetch_kwargs}")
+
+    # Other sources surface [CLM-104]/[CLM-105] per dataset.
+    if source == "byoc":
+        log.info(f"BYOC input directory: "
+                 f"'{resolved_for_report(fetch_kwargs.get('input_dir', '.'))}'.")
+        precheck_byoc_matching_ids(jobs, fetch_kwargs, clm_config)
+    return jobs
+
+
+def _label_dataset(context: DatasetContext, battery: str, dataset: str, label_cfg: dict,
+                   n_add_labels: int, source_labeling: str, clm_config: dict | None) -> bool:
+    """False when label generation was skipped."""
+    try:
+        generate_additional_labels(
+            context, n_labels=n_add_labels, source_labeling=source_labeling,
+            clm_config=clm_config,
+            noise=label_cfg.get("noise", 0.1), seed=label_cfg.get("seed", 42),
+        )
+    except (KeyError, InfeasibleAllocationError) as e:
+        log.error(f"Skipping label generation for {battery}/{dataset}: {e}")
+        return False
+    return True
+
+
+def _score_labels(final_df: pd.DataFrame, context: DatasetContext,
+                  gt_col: str | None) -> list[dict[str, Any]]:
+    """MCC, ARI and counts per generated label."""
+    label_results: list[dict[str, Any]] = []
+    for label_name in context.generated_labels:
+        mcc = ari = None
+        if gt_col is not None:
+            mcc = float(clustering_mcc(final_df[gt_col], final_df[label_name]))
+            ari = float(clustering_ari(final_df[gt_col], final_df[label_name]))
+        counts = final_df[label_name].value_counts().sort_index().to_dict()
+        label_results.append({"name": label_name, "mcc": mcc, "ari": ari, "counts": counts})
+    return label_results
+
+
+def _write_dataset(context: DatasetContext, source: str, battery: str, dataset: str,
+                   source_labeling: str, clm_config: dict | None,
+                   csv_dir: Path, png_dir: Path, txt_dir: Path) -> None:
+    """CSV, summary and plots for one dataset."""
+    final_df = context.to_dataframe()
+    stem = f"{source}__{battery}__{dataset}"
+    final_df.to_csv(csv_dir / f"{stem}.csv", index=False)
+    log.info(f"Saved: {csv_dir / f'{stem}.csv'}")
+
+    friendly = SOURCE_DISPLAY.get(source, source)
+    plot_title = f"{friendly}: {battery}/{dataset}"
+    gt_col = (context.gt_column_name(source_labeling)
+              if source_labeling in context.ground_truths else None)
+
+    label_results = _score_labels(final_df, context, gt_col)
+
+    _write_summary_txt(txt_dir / f"{stem}.txt", friendly, source, battery, dataset,
+                       source_labeling, gt_col, len(final_df), clm_config, label_results)
+
+    _render_dataset_plots(final_df, context, png_dir, stem, gt_col,
+                          source_labeling, plot_title, label_results,
+                          clm_config)
+
+
+def _aborts_run(e: ValueError, battery: str, dataset: str) -> bool:
+    """Log the error; True for configuration-wide errors."""
+    code = getattr(e, "code", None)
+    # Judged against THIS dataset's K, ids or features.
+    if code in (102, 105, 119, 125, 127):
+        log.error(f"Skipping {battery}/{dataset}: {e}")
+        return False
+    if code is not None and not isinstance(e, InfeasibleAllocationError):
+        log.critical(f"Configuration error, aborting run: {e}")
+        return True
+    log.error(f"Skipping {battery}/{dataset}: unexpected error: {e}")
+    return False
+
+
 def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_dir: Path) -> int:
     """Runs every configured dataset through fetch, label generation, and
     output writing. Returns the number of datasets processed without error."""
@@ -289,7 +368,7 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
     print_battery_info(source)
 
     # Copy so popping keys below can't mutate the caller's master config dict.
-    source_config = config.get(f"{source}_suite", {}).copy()
+    source_config = (config.get(f"{source}_suite") or {}).copy()
 
     batteries_cfg = source_config.pop("batteries", None)
     if not batteries_cfg:
@@ -304,31 +383,12 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
     # fabricated_data's `n_samples`, clustbench's `base_url`).
     fetch_kwargs = source_config
 
-    label_cfg = config.get("label_generation", {})
+    label_cfg = config.get("label_generation") or {}
     n_add_labels = label_cfg.get("n_labels", 0)
     source_labeling = label_cfg.get("source_labeling", "labels0")
     clm_config: dict | None = label_cfg.get("clm_label")
 
-    if any(is_heavy(source, b) for b in batteries):
-        log.warning(f"Selection includes a heavy '{source}' battery: expect long fetch/generation times.")
-
-    jobs = _drop_path_shaped_names(
-        [(b, d) for b in batteries for d in get_datasets_for_battery(source, b, datasets_cfg)])
-    log.info(f"Resolved {len(jobs)} dataset(s) across {len(batteries)} batter(y/ies) from source '{source}'.")
-    if fetch_kwargs:
-        log.info(f"Extra fetch kwargs forwarded to '{source}': {fetch_kwargs}")
-
-    # BYOC only: cluster ids differ per CSV and are cheap to read, so the whole
-    # batch is checked before anything is written. The other sources cannot be
-    # pre-checked without fetching or generating every dataset twice, so there a
-    # [CLM-104]/[CLM-105] surfaces per dataset in the loop below instead.
-    if source == "byoc":
-        # The read-side counterpart of main()'s output-directory line, and once
-        # per run rather than once per dataset: a batch of forty CSVs wants one
-        # statement of where they are being read from, not forty.
-        log.info(f"BYOC input directory: "
-                 f"'{resolved_for_report(fetch_kwargs.get('input_dir', '.'))}'.")
-        precheck_byoc_matching_ids(jobs, fetch_kwargs, clm_config)
+    jobs = _resolve_jobs(source, batteries, datasets_cfg, fetch_kwargs, clm_config)
 
     fetcher = FETCHERS[source]
     n_ok = 0
@@ -342,68 +402,21 @@ def run_pipeline(source: str, config: dict, csv_dir: Path, png_dir: Path, txt_di
 
             context = build_context(source, battery, dataset, df)
 
-            if n_add_labels > 0:
-                try:
-                    generate_additional_labels(
-                        context, n_labels=n_add_labels, source_labeling=source_labeling,
-                        clm_config=clm_config,
-                        noise=label_cfg.get("noise", 0.1), seed=label_cfg.get("seed", 42),
-                    )
-                except (KeyError, InfeasibleAllocationError) as e:
-                    # The dataset is still written, so it still counts as processed;
-                    # it just has no Label_n column. Counted separately so the final
-                    # summary cannot claim ten successes over CSVs that are missing
-                    # the very thing the run was for.
-                    n_unlabelled += 1
-                    log.error(f"Skipping label generation for {battery}/{dataset}: {e}")
+            # Unlabelled datasets are still written and processed.
+            skipped = n_add_labels > 0 and not _label_dataset(
+                context, battery, dataset, label_cfg, n_add_labels,
+                source_labeling, clm_config)
 
-            final_df = context.to_dataframe()
-            stem = f"{source}__{battery}__{dataset}"
-            final_df.to_csv(csv_dir / f"{stem}.csv", index=False)
-            log.info(f"Saved: {csv_dir / f'{stem}.csv'}")
-
-            friendly = SOURCE_DISPLAY.get(source, source)
-            plot_title = f"{friendly}: {battery}/{dataset}"
-            gt_col = (context.gt_column_name(source_labeling)
-                      if source_labeling in context.ground_truths else None)
-
-            # Heterogeneous by design: a name, two optional floats and a counts
-            # mapping. Annotated so the values do not collapse to a union that
-            # then fails at the plot call below.
-            label_results: list[dict[str, Any]] = []
-            for label_name in context.generated_labels:
-                mcc = ari = None
-                if gt_col is not None:
-                    mcc = float(clustering_mcc(final_df[gt_col], final_df[label_name]))
-                    ari = float(clustering_ari(final_df[gt_col], final_df[label_name]))
-                counts = final_df[label_name].value_counts().sort_index().to_dict()
-                label_results.append({"name": label_name, "mcc": mcc, "ari": ari, "counts": counts})
-
-            _write_summary_txt(txt_dir / f"{stem}.txt", friendly, source, battery, dataset,
-                               source_labeling, gt_col, len(final_df), clm_config, label_results)
-
-            _render_dataset_plots(final_df, context, png_dir, stem, gt_col,
-                                  source_labeling, plot_title, label_results,
-                                  clm_config)
-
-            # Plots are best-effort; the deliverable is the CSV written above.
+            _write_dataset(context, source, battery, dataset, source_labeling, clm_config,
+                           csv_dir, png_dir, txt_dir)
             n_ok += 1
+            if skipped:
+                n_unlabelled += 1
         except ValueError as e:
-            code = getattr(e, "code", None)
-            # Judged against THIS dataset's K, ids or features.
-            if code in (102, 105, 119, 125, 127):
-                log.error(f"Skipping {battery}/{dataset}: {e}")
-                continue
-            # Any other coded [CLM-1xx] error means the *configuration* is wrong,
-            # which is equally wrong for every remaining dataset.
-            if code is not None and not isinstance(e, InfeasibleAllocationError):
-                log.critical(f"Configuration error, aborting run: {e}")
+            if _aborts_run(e, battery, dataset):
                 raise
-            log.error(f"Skipping {battery}/{dataset}: unexpected error: {e}")
-            continue
         except Exception as e:
             log.error(f"Skipping {battery}/{dataset}: unexpected error: {e}")
-            continue
 
     if n_unlabelled:
         log.warning(
@@ -464,7 +477,7 @@ def main() -> None:
 
     config_path = sys.argv[1] if len(sys.argv) > 1 else "test_data_config.yaml"
     config = load_config(config_path)
-    global_settings = config.get("global_settings", {})
+    global_settings = config.get("global_settings") or {}
     data_source = str(global_settings.get("data_source", "clustbench")).lower()
 
     base_dir = Path(global_settings.get("output_dir", "OUTPUT"))
