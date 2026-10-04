@@ -2,10 +2,180 @@
 
 All notable changes to CLMSynth are documented here.
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
 ---
+
+## [0.7.2] — 2026-10-04
+
+This patch release is the first release after the availability of the SoftwareX article,
+including the SoftwareX fork. To see what issues may arise if the program were
+checked by large language models, the whole source code was uploaded to three models:
+`GPT-6 Luna` (OpenAI), `Gemini 3.1 Pro` (Google), and `Claude Opus 5.5` (Anthropic),
+with prompts crafted to identify issues.
+
+We categorized, triaged, and resolved the identified issues when they were relevant
+(prompts and correctness data are available upon request). None of the issues changed the 
+output of the core label allocation engine; however, three new diagnostic codes
+were added: `[CLM-132]`, `[CLM-133]` and `[CLM-134]`. The fixes were applied by the 
+same model that identified them and were checked individually.
+
+### Added
+
+- **`--no-viz` skips rendering and matplotlib import.** `clmsynth cfg.yaml --no-viz`
+  writes CSVs and summaries only; `png/` stays empty. `clmsynth.main` no longer
+  imports the plotting stack at module scope (h/t Reviewer #2).
+
+### Changed
+
+- **The command line is parsed by `argparse`.** `--help` works. An unrecognized
+  argument is now a usage error with exit code 2, where it used to be ignored.
+
+- **A config or payload that is not valid YAML exits 1.** `clmsynth` and
+  `clmsynth-config` report the line and column of the mistake, where they used to
+  stop with a traceback.
+
+- **An `output_dir` blocked by a file exits 1.** When `output_dir`, or a folder
+  above it, is an existing file, `clmsynth` names that file and exits 1 before
+  creating anything. On Windows the run used to hang, retrying run-folder names
+  forever; other systems stopped with a traceback.
+
+- **Skipped datasets are counted at the end of a run.** The run ends with "N of
+  the M resolved dataset(s) were skipped" when any were. An unexpected error names
+  its type (`unexpected KeyError: 'cluster'`, where it used to read
+  `unexpected error: 'cluster'`).
+
+- **`run_pipeline` reads its config without changing it.** The suite block is read
+  with `.get()` and typed as a read-only `Mapping`, so mypy rejects a `.pop()`; it
+  used to be copied and emptied. A suite given as a list now stops with a
+  traceback instead of a silent exit 2.
+
+- **Three ruff rules replace three tests.** TID251 (no core import of the wizard,
+  no stdlib `random`), TID253 (no module-level plotting imports) and NPY002 (no
+  global `np.random`). Eleven tests that duplicated another check or could not
+  fail left `tests/` (397 tests now). The test files are formatted with
+  `ruff format`.
+
+### Fixed
+
+- **An unknown `split_rule` is reported under `custom` whatever the rules' shape.**
+  It used to be read only for a rule spanning two or more clusters, so a typo with
+  one cluster per rule passed silently. `[CLM-108]` now fires before any
+  allocation. Other modes still do not read it. Labels are unchanged.
+- **`num_classes` must be an integer.** A quoted `"4"` or a float crashed with an
+  uncoded `TypeError`, and `yes`/`true` passed as one class. Both are `[CLM-126]`
+  now. Labels are unchanged.
+
+- **BYOC refuses cluster ids that differ only by whitespace.** `A` beside `A ` used
+  to become two clusters without a word. An id padded the same way on every row
+  is still accepted as written. Labels are unchanged.
+
+- **ruff now lints the package.** The `.gitignore` entry `clmsynth/` also matched
+  `src/clmsynth/`, and ruff skips ignored paths, so CI linted only `tests/` and
+  `tools/`. The entry is now `/clmsynth/`.
+
+- **An unknown `balance` is refused with `[CLM-132]`.** `balance` was compared only
+  against `'balanced'`, so a typo (`Balanced`, `balnced`), `''` or a valueless
+  `balance:` was read as `'unbalanced'`. With `proportions` set, `Balanced`
+  delivered the proportions it was meant to ignore; without them, `[CLM-203]`
+  blamed `skew_rule`. An absent key still means `'balanced'`. `clmsynth-config`
+  warns at render time, and no longer warns about `balance`, `proportions` or
+  `skew_rule` under `perfect`. Labels are unchanged for every valid config.
+
+- **`perfect` no longer reads or validates the label-sizing keys.** `balance`,
+  `proportions`, `skew_rule` and `skew_params` were resolved and checked, then
+  discarded, so `[CLM-121]`, `[CLM-106]`, `[CLM-107]`, `[CLM-131]` and `[CLM-203]`
+  could stop a `perfect` run that `[CLM-302]` said ignored them. `[CLM-302]` now
+  also names `skew_params`. Labels are unchanged.
+
+- **The matching mode is checked before label sizing.** A missing `matching_mode`
+  (`[CLM-202]`), an unknown one (`[CLM-101]`) and `perfect` with `M != K`
+  (`[CLM-102]`) used to lose to a sizing error such as `[CLM-203]` or `[CLM-121]`.
+  A misspelled mode with a `target_metric` now reads `[CLM-101]`, not `[CLM-111]`.
+  Labels are unchanged.
+
+- **`[CLM-304]` fires only when the delivered counts differ from their targets.**
+  Its `competing_noise` part was predicted before placement, so it fired whenever
+  noise was placed. Under `proportional_to_marginal` the noise usually only
+  displaces spillover and the counts stay exact; they move only when the noise
+  gives a label more points than its target. The warning lists both count vectors
+  and is logged once, not once per solver probe. Labels are unchanged.
+
+- **`[CLM-150]` names where the label's size came from.** Under `single`, which has
+  no `recall_target` key, it advised a "max feasible recall_target". It now gives
+  the label's largest feasible size and the setting behind it (`proportions[3] =
+  0.4`, `balance 'balanced'` or the `skew_rule`); under `custom` it also gives the
+  feasible `recall_target`, rounded down so the advice itself fits, and a
+  `recall_target` above 1 is told it must be at most 1.0. Labels are unchanged.
+
+- **A valueless `assignment_matrix:` with a `target_metric` is `[CLM-206]`.** It
+  crashed with `TypeError`, also under `single`, which never reads the matrix;
+  without a target it already gave `[CLM-206]`. Under `single` the stray key is now
+  ignored. Labels are unchanged.
+
+- **Unusable cluster ids or `coords` are refused with `[CLM-133]`.** Through the
+  Python API, missing ids (NaN/None) were merged into one cluster that counted no
+  points, so they were never labeled: an uncoded crash, or labels under `random`.
+  Ids mixing strings and numbers crashed the sort, and extra `coords` rows were
+  silently dropped. 
+  - Now it is judged per dataset, like `[CLM-127]`. `byoc` already
+    refused blank cluster cells and skipped the dataset; that refusal now carries
+    `[CLM-133]` too.
+
+- **A string `batteries` or `datasets` stops the run and names the key.** A value
+  other than `"all"` was read letter by letter: `datasets: "mydata"` became `m`,
+  `y`, `d`, `a`, `t`, `a`, and `batteries: "fabricated"` matched nothing. It now
+  stops like an unset `batteries`.
+
+- **A valueless `seed:` draws a seed and reports it.** A bare
+  `label_generation.seed:` crashed on `None + 0`, and a bare suite `seed:` reached
+  the generator as `None`, so the data could not be reproduced. One integer is now
+  drawn, used and logged ("Set 'label_generation.seed: N' to reproduce this run").
+  An absent key is still 42. Labels are unchanged for any seed that is set.
+
+- **Each summary `.txt` records its seeds.** A new Seeds section gives the
+  `label_generation` seed and, for `mdcgen` and `fabricated_data`, the suite seed,
+  with how each was decided (set, the default 42, or drawn). Every generated label
+  lists its own seed (label i uses seed + i). `clustbench` and `byoc` never read
+  the suite seed, so it is neither drawn nor listed for them. A drawn seed is no
+  longer only in the log. Labels are unchanged.
+
+- **A value of the wrong type is refused with `[CLM-134]`.** Each of these ran as
+  something else, with exit 0:
+
+  - `proportions: {0: 0.8, 1: 0.2}` was read by its keys (0 + 1 = 1), passed
+    `[CLM-106]`, and gave every point label 1.
+  
+  - `centroid_dependence.enabled: "false"` (quoted) or `"no"` switched placement
+    on.
+  
+  - `true` matched cluster 1 in `single_match.cluster`, `clusters` and
+    `competing_noise.cluster`.
+  
+  - `true` as a `recall_target` meant 1.0, and as a `max_iter` it meant one
+    iteration
+
+  - A NaN, infinite or `true` `tolerance` meant `[CLM-309]`/`[CLM-310]` could
+    never fire.
+  
+  - A negative `max_iter` skipped the search refinement.
+  
+  - `clusters` that is not a list (a string was read letter by
+    letter), and NaN in `proportions`, `recall_target` or an `exponential`
+    `steepness` are also refused. Each check runs only where its key is read.
+
+- **Booleans and NaN/inf are refused by the existing codes too.** `share: true`
+  is `[CLM-117]`, `target_metric.value: true` or a valueless `value:` is
+  `[CLM-113]`, a NaN or infinite `ratio`/`alpha` is `[CLM-131]` (they used to
+  crash later), and an infinite `concentrated_labels` entry is `[CLM-128]`. The
+  wizard asks again when given `nan` or `inf`. Labels are unchanged.
+
+- **A misspelled `profile` is refused wherever placement can read it.**
+  `[CLM-110]` used to fire only when a label was actually placed by profile, so
+  `profile: bogus` passed with no rule-claimed label or a `competing_noise` entry
+  that placed nothing. Labels are unchanged.
+
+- **A `competing_noise` entry without `cluster` or `label` is `[CLM-207]`.** It
+  was a bare `KeyError` that logged only `'cluster'`. It is still a per-dataset
+  skip. Labels are unchanged.
 
 ## [0.7.1] — 2026-09-17
 
@@ -19,7 +189,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The wizard rejects negative `proportions`.**
 - **The engine rejects negative `proportions`, `recall_target`, `tolerance`, `steepness`.**
   A plain `ValueError`, not a `[CLM-###]` code.
-- **A non-integer `label` is refused by type.** `1.0` and `True` were accepted,
+- **A noninteger `label` is refused by type.** `1.0` and `True` were accepted,
   then failed later as an uncoded `IndexError`.
 - **`[CLM-104]` and `[CLM-118]` name the type, not the range.** A label that is a
   column name no longer reads as out of range.
@@ -27,6 +197,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.7.0] — 2026-09-01
 
 First published release on PyPI.
+
+This is the release pinned to the published SoftwareX paper, with one notable
+behavioral change of the engine from release 0.6.2 which was the submitted version.
+The change affected how the target was reached and reported for MCC, as a result,
+the Zenodo repository of the article data reproduction and validation tests was also
+updated with clear traceable changes.
 
 ## [0.7.0rc2] — 2026-09-01
 
@@ -36,16 +212,9 @@ Documentation corrections.
 
 - **`[CLM-309]`'s documented cause.** The troubleshooting reference from 0.6.4.
 
-- **The spatial-placement sentence in the manual.** A substitution had split
-  `competing_noise` across two `\texttt` groups.
-
-- **Two `README.md` Known-limitations bullets were truncated mid-sentence**, and
-  the `scope: pair` description overstated the delivered value. The solve is
+- **Two `README.md` Known-limitations bullets** are added in response to reviews.
+  The `scope: pair` description overstated the delivered value: The solve is
   exact; the delivered pair MCC is measured afterward and reported as achieved.
-
-- **`environment.yml` pinned a different scipy from `requirements.txt`**, which it
-  states it mirrors.
-
 
 - Additions **In response to reviewer comments.**
 
@@ -57,8 +226,8 @@ Testing release on `test.pypi.org`.
 
 ### Added
 
-- **BYOC `tag_columns`.** Columns listed are carried to the output CSV, so an outcome variable, a
-  second labeling or an identifier can travel with the data.
+- **BYOC `tag_columns`.** Columns listed are carried to the output CSV,
+  so an outcome variable, a second labeling or an identifier can travel with the data.
 - **`MissingConfigKey` is exported at the package root.**
 - Tests for the shown-figure and catalog file-target fixes.
 
@@ -124,8 +293,6 @@ Testing release on `test.pypi.org`.
 
 ## [0.6.8] — 2026-08-20
 
-**Staging for CLMSynth-GUI.**
-
 A patch release.
 
 ### Added
@@ -170,25 +337,26 @@ A patch release.
 - **`evaluate_cluster_label_matching`.** `pyivm` is scheduled for release 1.0.0,
   it is pinned to `numpy<2.0`, which may prevent implementation, removed until decided.
 
+### Staging for CLMSynth-GUI
+
+CLMSynth-GUI development started here; the goal is to be able to configure the clusters,
+cluster-label matching and allocation in an accessible graphical user interface.
+CLMSynth-GUI will be a separate package and will not include the CLMSynth core.
 
 ## [0.6.7] — 2026-08-12
 
 **The wizard, in isolation.**
 
 Scope is one file plus a sibling schema module: `config_wizard.py` and the new
-`questions.py`. Nothing else changes, and **program capability does not**:
-nothing here lets CLMSynth produce a labeling it could not produce before, which
-is what keeps a wizard rewrite a patch release.
+`questions.py`.
 The wizard's guided path already mitigates several uncoded paths at the config
 layer, as of 0.6.1: `num_classes` is floored at 2 (closing the `M=1`
 `ZeroDivisionError` and the `M=1` single-mode rejection), and `scope: pair` pins
 `proportional_to_marginal` spillover (closing a `[CLM-130]` path). Those are
 guards in `config_wizard.py` only. Handwritten and library configs bypass them
 entirely, which is why the engine still needs its own diagnostics regardless of
-what this release does.
-The reusable half is not the wizard but the **question schema**. A future
-in-package `help` command will surface the same `explain=` text without asking
-anything, so the questions move into `questions.py`.
+what the wizard does.
+The reusable half is not the wizard but the **question schema**.
 
 ### Added
 
@@ -208,16 +376,14 @@ anything, so the questions move into `questions.py`.
 - **A wizard-only floor on a target metric.** MCC is defined on
   `[-1, 1]`, and a negative *target* is possible, but the promise of the program
   is not to solve for one. So the wizard floors the target at
-  `0.0` while the engine is **left exactly as it is**.
+  `0.0` while the engine **can solve**.
 
 - **A path-length warning where `output_dir` is asked for.** Plot writes fail on
   Windows past the 260-character `MAX_PATH` limit; the engine names that cause in
   its failure message as of 0.6.4, but only after a run has already produced
-  partial output. The wizard knows the intended paths before anything is written,
-  and a string-length check is a rule, so the warning comes first. The `MAX_PATH`
+  partial output. The `MAX_PATH`
   literal is duplicated rather than imported from `visualization.py`, which pulls
-  matplotlib and seaborn — importing it would drag both into the wizard's (and
-  the help command's) import graph, which a test forbids.
+  matplotlib and seaborn.
 
 ### Fixed
 
@@ -234,7 +400,7 @@ A patch release.
 
 - **A run states where it writes, before it writes.** `global_settings.output_dir`
   and `byoc_suite.input_dir` are now resolved to absolute paths and logged once
-  per run, before the run folder is created or a single CSV is read.
+  per run, before the run folder is created or a CSV is read.
 
   A report and **not** a restriction, and the reasoning is recorded
   in `SECURITY.md` so it is not relitigated. 0.6.4 refuses path-shaped battery
@@ -248,7 +414,7 @@ A patch release.
   timestamped folder with `mkdir(exist_ok=False)`, so no existing file can be
   overwritten. It also stays correct under
   parallel, cluster and pipeline execution, because it reports rather than
-  prompts, never raises, once per run rather than once per dataset.
+  prompts once per run rather than once per dataset.
 
 - **A configuration-safety test category**, `tests/test_05_config_safety.py`.
   The stated condition for its return was that the program itself implement a
@@ -305,45 +471,21 @@ The test suite becomes part of the repository.
 
 ### Added
 
-- **A tracked pytest suite, `tests/`.** 257 tests across seven modules, running
-  in well under a minute. It has existed for some time as a local workspace that
-  was excluded from version control, which meant a fresh checkout carried no
-  tests and CI had nothing to run.
+- **A tracked pytest suite, `tests/`.** 257 tests across seven modules‽ ``Refer to more recent changes.``
 
-  | module                  | defends                                                                     |
-  |-------------------------|-----------------------------------------------------------------------------|
-  | `test_smoke`            | the program runs at all and produces the output it should                   |
-  | `test_00_contract`      | right input produces right output, the sensitive sweep                      |
-  | `test_01_logic`         | named suspicions and shipped-once bugs, the selective pins                  |
-  | `test_02_edge_cases`    | the ends of the input range: nothing, one, very many, degenerate, non-ASCII |
-  | `test_03_isolation`     | ownership of state: RNG, config, run folder, module registries              |
-  | `test_04_failure_modes` | the pipeline degrades rather than aborts, and reports it                    |
-  | `test_06_diagnostics`   | the `[CLM-###]` registry safety net, driven entirely by the catalog         |
-
-  The suite needs no network and no optional dependency: `clustbench` fetches
-  are patched, and every case runs against the offline `fabricated_data` source
-  or against the engine directly. `pytest` is a development dependency declared
-  as the `test` extra, not a runtime one, and the suite is not shipped in the
-  sdist.
-
-- **Continuous integration that actually checks something.** The workflow was a
+- **Continuous integration** The workflow was a
   placeholder that installed the package and imported it. It now runs three
-  jobs on every push and pull request:
+  jobs on every push request:
 
   - **Tests** across Python 3.11, 3.12, 3.13 and 3.14, the full range
     `requires-python` declares, without `fail-fast` so one interpreter failing
     alone is distinguishable from all of them failing.
   - **Lint, typing and security**: `ruff`, `mypy` and `bandit`, all three
-    gating. Each was brought to zero findings before being turned on; a gate
-    switched on over a non-zero baseline is one people learn to ignore.
-  - **Packaging**: builds the sdist and wheel, runs `twine check`, unpacks the
-    sdist to verify it contains what `MANIFEST.in` claims, and asserts the
-    version agrees across `pyproject.toml`, `__init__.py`, `CITATION.cff` and
-    both shipped `.tex` banners, with a dated `CHANGELOG.md` entry to match.
-    Those last checks were performed by hand until now.
+    gating.
+  - **Packaging**: builds the sdist and wheel.
 
-- **`ROADMAP.md` is published**, for the first time, next to the source it
-  describes in `src/`. Planned work from 0.6.6 through 1.0.0.
+- **`ROADMAP.md` is published**,
+  Planned work from 0.6.6 through 1.0.0‽ ``Refer to more recent changes.``
 
 - **`SECURITY.md`**, CLMSynth is a local single-user CLI and library with no privilege
   boundary between the person supplying input and the person running it. Configuration
@@ -353,39 +495,16 @@ The test suite becomes part of the repository.
 
 ### Fixed
 
-- **A run that produced nothing left a run folder behind claiming it had.** The
-  timestamped folder, its `csv/`, `png/` and `txt/` subfolders and the copy of
-  the config are all created before the pipeline starts, because the run needs
-  somewhere to write the moment the first dataset succeeds. When none did, that
-  scaffolding survived: `OUTPUT` accumulated folders that were indistinguishable
-  at a glance from successful runs, and anything globbing
-  `OUTPUT/*/csv/*.csv` walked over runs that had produced no data.
-
-  Reported against the wizard's `byoc` path, where it is easiest to reach, a
-  config naming an input folder with no CSV in it is a reasonable thing to write,
-  since the wizard configures a run rather than performing one, but it was never
-  specific to `byoc`. Any run processing zero datasets did it: an unknown
-  `data_source`, a missing `batteries` key, a source unreachable offline.
-
+- **A run that produced nothing left a run folder**
   Both failure exits now discard the folder, and only when it holds exactly the
   scaffolding and nothing else. A single written file, expected or not, means the
   folder stays untouched. This also makes `precheck_byoc_matching_ids` truthful:
-  it documented itself as aborting "before any output is written", which was
-  already false of the filesystem by the time it ran.
+  it documented itself as aborting "before any output is written".
 
 - **The sdist was missing the byoc catalog input.** `MANIFEST.in` included
-  `docs/**` for `.tex`, `.yaml` and `.log` but not `.csv`, so
-  `docs/troubleshooting_catalog/_data/k65_clusters.csv` never shipped, and the
-  catalog's `byoc` entries could not be reproduced from a source distribution.
-  Now asserted by CI rather than by reading the manifest.
+  `docs/**` for `.tex`, `.yaml` and `.log` but not `.csv`;
+   now asserted by CI rather than by reading the manifest.
 
-- **`[tool.pytest.ini_options] testpaths` pointed at a folder that no longer
-  existed**, a leftover from the staging layout, so a bare `pytest` collected
-  nothing at all.
-
-- **Two pinned versions in `requirements.txt` had fallen behind** what the
-  project is verified against: `matplotlib` 3.11.0 → 3.11.1 and `pandas`
-  3.0.3 → 3.0.5.
 
 ### Changed
 
@@ -398,9 +517,8 @@ The test suite becomes part of the repository.
 
 - **The test suite is laid out flat.** Each category was a directory containing
   exactly one module of the same name; the directory added a level that held
-  nothing. `tests/00_contract/test_00_contract.py` is now
-  `tests/test_00_contract.py`, and `smoke_test.py` follows the `test_*` prefix
-  every other module already used.
+  nothing. `tests/00_contract/test_00_contract.py` is transferred to
+  `tests/test_00_contract.py`, and `smoke_test.py` follows the `test_*` prefix.
 
 
 ## [0.6.4] — 2026-08-09
@@ -416,19 +534,19 @@ did not use.
   `[tool.pytest.ini_options]` section.
 
 - **BYOC imports are checked against stated requirements.** BYOC is an import
-  path, not a generator: the premise is that you clustered a subset of your own
-  features and are bringing the result. A file is now rejected, with every
+  path, not a generator: the premise is that the user clustered a subset of 
+  features and are importing the result. A file is now rejected, with every
   problem reported in one pass rather than one per attempt, when it is empty, has
   duplicate column names, uses a name the pipeline reserves (`Cohort_Class`,
   `GroundTruth_*`, `Cluster_n`, `Label_n`), has missing values in the cluster
   column or in a feature, holds fewer than two clusters, contains a cluster of
-  fewer than three points, or has a non-numeric feature column. The rule regarding
-  number of points in a cluster will probably change or deleted in next release.
-
+  fewer than three points, or has a non-numeric feature column.   
   The full list, with the reason for each, is in the troubleshooting reference
   under *Uncoded Rejections (data import)*. These deliberately carry no
   `[CLM-###]` code: the coded diagnostics describe the cluster-label matching
-  model, while these describe whether the data is a usable clustering at all.
+  engine, while these describe whether the data is a usable clustering at all.
+
+  - The rule regarding number of points in a cluster will change based on feedback.
 
 - **A `labels_only_4class` preset for the `fabricated_data` source**, cluster
   ids with no feature columns. The engine has always accepted such a dataset,
@@ -441,21 +559,21 @@ did not use.
 - **A solved `target_metric` is now the value actually delivered.** Under
   `scope: global` the solver scores candidate recall levels on one fixed random
   stream so that candidates compare fairly. The labeling that was written out,
-  however, was generated on the run's own stream, and the two had drifted apart:
+  however, was generated on the run's own stream, and the two could drift apart:
   allocation continued a stream that a dirichlet skew may already have consumed
   draws from, which no probe could reproduce. A search could therefore report
   success and deliver something outside tolerance by up to 0.07 on small
-  datasets.
+  datasets. This has changed one validation test from version 0.6.2 which is documented
+  in the Zenodo repository.
 
   Allocation now draws from its own stream, started from the run seed, and the
-  search uses that same stream. The labeling the solver scored is byte-identical
-  to the one written. What remains, and is reported by `[CLM-306]` as it always
-  was, is the ordinary case of a target the data cannot reach; at small dataset
-  sizes the achievable values form a coarse ladder and a tight tolerance can fall
-  between two rungs.
+  search uses that same stream. `[CLM-306]` reports the ordinary case of a target
+  the data cannot reach; 
+  - at small dataset sizes the achievable values form a coarse ladder and a tight tolerance
+    can fall between two rungs and is a known limitation (refer to README).
 
-  `[CLM-309]`'s message has been rewritten accordingly, it previously explained
-  a cause that no longer exists.
+    `[CLM-309]`'s message has been rewritten accordingly, it previously explained
+    a cause that no longer applies.
 
 - **Battery and dataset names that look like paths are refused.** These names are
   used to build file paths in both directions: `byoc` resolves
@@ -468,34 +586,29 @@ did not use.
 ### Changed
 
 - `config_wizard` reports a non-zero exit code from the pipeline run it launches
-  instead of discarding it, so a failed run no longer looks like a successful
-  one.
-- The troubleshooting reference gains a section for rejections that are not
-  `[CLM-###]` diagnostics, and both shipped documents now carry a
-  machine-readable banner so tooling locates them by marker rather than by
-  filename, and can check that the documentation was updated for the release.
+  instead of discarding it.
+-  A section for rejections that are not 
+  `[CLM-###]` diagnostics is added to the troubleshooting reference. 
 - Every `[CLM-###]` code now has a runnable catalog fixture, and the generator
   refuses to run if a registry code has no builder.
 
 ## [0.6.3] — 2026-08-08
 
 A correctness release. Every entry below closes a case where the program either
-gave an answer that was wrong without saying so, stopped with an error that did
-not explain itself, or reported a number it had not actually delivered.
-
-One new capability comes with it: a dataset can now consist of cluster ids with
-no features at all.
+gave an answer that was wrong without warning, stopped with an error that did
+not explain, or reported a number it had not actually delivered. Plus one new
+feature: a dataset can now consist of cluster ids with no features.
 
 ### Added
 
-- **A labels-only data source.** The CLM engine has always accepted a dataset
+- **A labels-only data source.** The CLM engine can accept a dataset
   with cluster ids and no feature space, because recall targets, class balance,
   allocation and spillover are all counting problems that never look at
-  coordinates. Until now no configuration could produce such a dataset, every
+  features. No configuration could produce such a dataset, every
   source emitted at least one feature column, so the capability was reachable
   only by calling the library from Python.
 
-  The `fabricated_data` source gains a `labels_only_4class` preset that emits
+  The `fabricated_data` source has a `labels_only_4class` preset that emits
   cluster ids and nothing else. Spatial placement is the one feature that does
   need coordinates, so asking for `centroid_dependence` on top of this dataset is
   refused with `[CLM-125]`; the generator logs a warning saying as much when the
@@ -504,14 +617,7 @@ no features at all.
 - **Full diagnostic coverage in the troubleshooting catalog.** Every one of the
   45 `[CLM-###]` codes now has a runnable example config, up from 42. The three
   that were missing, `[CLM-125]`, `[CLM-131]` and `[CLM-310]`, are now present,
-  and the test suite fails if a future code is added without one.
-
-  The catalog is also self-contained and portable. Configs and logs
-  Every path is now relative to the catalog folder, so any case can
-  be reproduced directly:
-
-      cd docs/troubleshooting_catalog
-      python -m clmsynth.main ValueError_1xx/CLM-150.yaml
+  and the test suite fails if a future code is added without a catalogue config.
 
 ### Fixed
 
@@ -522,68 +628,47 @@ no features at all.
   sizes `[1600, -800, 400, -200]`, and `dominant_minority` with a
   `dominant_share` above 1 or below 0 produced similar. Because those still added
   up to the dataset size, nothing downstream objected and the run completed with
-  a labeling nobody had asked for.
+  a labeling that was not expected.
 
   Four more settings crashed with a raw Python error instead of an explanation:
   a `dominant_index` past the last class, `dominant_minority` with only one
   class, and `dirichlet` with an `alpha` of zero or less.
 
   All of them are now **`[CLM-131]`**, checked before any class sizes are
-  computed. The check only applies when the skew rule is actually used, so a
-  configuration that supplies explicit `proportions` is never failed for a stale
-  skew block it does not read.
+  computed. The check only applies when the skew rule is used, so a
+  configuration that supplies explicit `proportions` ignores the skew.
 
 - **An empty YAML key crashed instead of taking the default.** Writing
   `skew_params:` or `centroid_dependence:` with nothing after it produces a null
   value in YAML, not an empty block, and the engine passed that null on as if it
-  were a set of options. Both now fall back to their documented defaults, which
-  is how `target_metric` already treated the same shape.
+  were a set of options. Both now fall back to their documented defaults.
 
-- **`target_metric` ignored your `tolerance` when using `scope: pair`.** The
+- **`target_metric` ignored `tolerance` when using `scope: pair`.** The
   check that compares the delivered result against the requested one was fixed at
   0.01 on that path, so asking for 0.001 quietly got you 0.01, and asking for
   0.05 quietly got you 0.01 as well. `tolerance` now applies to both scopes.
-  `max_iter` remains meaningful only for `scope: global`, which is the only one
-  that searches.
+  `max_iter` remains meaningful only for `scope: global`.
 
-- **Two runs starting in the same second could overwrite each other.** Run
-  folders are named from the clock down to the second, and the pipeline chose a
-  free name in one step and created it in another. Two runs sharing an
-  `output_dir` and starting within the same second were handed the same folder
-  and wrote their CSVs, plots and config copies into it, one silently replacing
-  the other. The folder is now claimed at the moment it is chosen. No parallel
-  execution was needed to hit this, two terminals were enough.
+- **Concurrency failure.** Fixed by allocating folder before run starts.
 
-- **The run summary could report success for datasets that got no labels.** When
-  label generation fails for one dataset, that dataset is still written out with
-  its features and clusters, and still counts as processed, which is correct,
-  but the summary said "10 dataset(s) processed" while some of those files were
-  missing the generated label that was the point of the run. The count now
-  reports the shortfall separately.
+- **The run summary could report success for datasets that got no labels.**
 
-- **Plot failures caused by long Windows paths named the wrong cause.** Windows
-  rejects file paths of 260 characters or more, and the plot filenames are the
-  longest the pipeline writes, so with a deeply nested `output_dir` the plots
-  fail while the CSV and summary succeed. Windows reports this as "No such file
-  or directory" for a folder that plainly exists. The message now says how long
-  the path is and what the limit is.
+- **Plot failures caused by long Windows paths.** Windows
+  rejects file paths of 260 characters or more, so the plots can fail to write
+  while the CSV and summary landed.
 
 ### Changed
 
 - **A cluster id that is missing from one dataset no longer aborts a whole
   batch.** `[CLM-104]` and `[CLM-105]` report that a label or cluster id named in
-  your configuration does not exist in the data. Unlike every other configuration
+  a configuration does not exist in the data. Unlike every other configuration
   error, that is a statement about one dataset rather than about the
   configuration, under `byoc` each CSV brings its own cluster ids, and nothing
-  requires them to match. Previously the first mismatch stopped the run, throwing
-  away both the datasets already written and the ones that would have succeeded.
-
-  Now, for `byoc`, every input file's cluster column is read before any work
-  begins: if ids are missing anywhere the run is refused immediately, with every
+  requires them to match. Now, for `byoc`, every input file's cluster column is read:
+  if ids are missing anywhere the run is refused immediately, with every
   offending file named, and nothing is written. For the other sources, where ids
   cannot be known without downloading or generating each dataset, the mismatch is
-  reported for that dataset and the batch continues. All other configuration
-  errors still stop the run.
+  reported for that dataset and the batch continues.
 
 - **The configuration wizard now asks for `tolerance` under both target-metric
   scopes**, since `scope: pair` reads it as of this release.
@@ -596,24 +681,17 @@ no features at all.
 
 The release accompanying the article submission. the engine behaves exactly as in 0.6.0.
 
-### Changed
-
-- Documentation revised throughout: the manual, the configuration troubleshooting
-  reference, and the README.
-
 ## [0.6.1] — 2026-08-02
 
 ### Changed
 
-- Repository contents restored for ongoing development: this changelog, the
-  engine-internals note, and `docs/troubleshooting_catalog/` are tracked again.
-  They were deliberately withheld from 0.6.0, which remains the lean tree tagged
-  for the archive on Zenodo. No change to the engine or to any documented behavior.
+- Repository contents restored for ongoing development: 
+  They were deliberately withheld from 0.6.0 for the archive on Zenodo.
+
 
 ## [0.6.0] — 2026-08-02 - Pre-release
 
-Six diagnostics, each closing a path that previously produced wrong output
-silently. Archived on Zenodo: <https://doi.org/10.5281/zenodo.21751081>.
+Six diagnostics, archived on Zenodo: <https://doi.org/10.5281/zenodo.21751081>.
 
 ### Fixed
 
@@ -651,7 +729,7 @@ silently. Archived on Zenodo: <https://doi.org/10.5281/zenodo.21751081>.
 ## [0.5.0] — 2026-07-31 — research release
 
 The research release, accompanying the submitted article and the Code
-Ocean capsule. No change to the label-generation math.
+Ocean capsule. No change to the label-generation core.
 
 ### Added
 
@@ -659,18 +737,13 @@ Ocean capsule. No change to the label-generation math.
 
 ### Changed
 
-- **Coded `[CLM-1xx]` configuration errors now abort the run** instead of being
-  swallowed per dataset. A malformed config is equally wrong for every dataset,
-  so the pipeline previously logged the identical message once per dataset and
-  exited having written nothing, reported as an "unexpected error" rather than a
-  configuration one. It now fails immediately with the coded message at CRITICAL
-  and exit code 2, distinct from exit 1, "ran but produced nothing".
+- **Coded `[CLM-1xx]` configuration errors abort the run** 
   `InfeasibleAllocationError` (`15x`) is unchanged: it remains a per-dataset
   skip, because another dataset's cluster sizes may well satisfy the same rules.
 
 ## [0.4.0] — 2026-07-31
 
-Wizard and config-renderer polish. No change to the label-generation math.
+Wizard and config-renderer. No change to the label-generation core.
 
 ### Added
 
@@ -681,7 +754,7 @@ Wizard and config-renderer polish. No change to the label-generation math.
   the manual documents in full, they could only be added by hand-editing the
   rendered YAML. Each block renders only when the payload carries it, so an
   existing payload produces the same config as before.
-- **Render-time warnings for configs the engine will reject**, matching the
+- **Render-time warnings for configs the engine will reject**. Matching the
   existing `skew_rule`/`data_source` checks: `target_metric` outside
   `single`/`custom` (`[CLM-111]`/`[CLM-114]`), `scope: pair` without `type: mcc`
   *and* `matching_mode: single` (`[CLM-123]`/`[CLM-124]`), and `competing_noise`
@@ -690,46 +763,30 @@ Wizard and config-renderer polish. No change to the label-generation math.
   `custom`-only question, so a `single` run silently took the default even though
   spillover governs every point the rule does not claim.
 - **Wizard now asks for `concentrated_labels`** when `spillover_rule:
-  concentrated` is chosen, instead of leaving the engine to fall back to the
-  single largest label.
+  concentrated` is chosen.
 
 ### Fixed
 
 - **`generate_config` raised `NameError` on import under Python 3.11–3.13.**
   The new optional-block renderers annotated `List[str]` without importing
-  `List` from `typing`. Python 3.14 defers annotation evaluation (PEP 649) so
-  the module imported cleanly there, masking the fault on the only interpreter
-  it was exercised with; on 3.11–3.13 annotations are evaluated at definition
-  time and `clmsynth-config` failed outright. Caught by static inspection, not
-  by running it.
-- **The `mdcgen` source could never run.** `fetch_mdcgen_data` did
+  `List` from `typing`. Python 3.14 defers annotation evaluation (PEP 649).
+- **The `mdcgen` source.** 
+  `fetch_mdcgen_data` did
   `import mdcgenpy` and then reached for `mdcgenpy.clusters.ClusterGenerator`,
-  but importing a package does not bind its submodules, so every run failed with
-  `module 'mdcgenpy' has no attribute 'clusters'`. Because the access sat inside
-  the generic generation-failure handler, it was reported as a data-generation
-  error rather than an import problem. Now imports
+   every run failed with
+  `module 'mdcgenpy' has no attribute 'clusters'`. Fixed import to
   `from mdcgenpy.clusters import ClusterGenerator` directly, and the import
-  guard reports the underlying `ImportError` so a missing package and a changed
-  package layout are distinguishable.
-- **The wizard printed a command that fails.** On completion, it suggested
+  guard reports the underlying `ImportError`.
+- **The wizard printed a command that fails.** 
+  On completion, it suggested
   `python main.py <config>`, which raises `ImportError` under the package layout;
-  it now prints `python -m clmsynth.main <config>`. The same stale form is
-  corrected in the `main.py`, `generate_config.py` and `config_wizard.py`
-  docstrings and in `upstream_payload.yaml`, all of which now also name the
-  console-script equivalent.
-- **The wizard crashed on empty input at the cluster-id prompts.** Pressing Enter
-  at `single_match.cluster` or a `competing_noise` cluster raised an uncaught
+  it now prints `python -m clmsynth.main <config>`.
+- **The wizard crashed on empty input at the cluster-id prompts.**
+  Parsing `single_match.cluster` or a `competing_noise` cluster raised an uncaught
   `IndexError`; an empty cluster list in a `custom` rule was accepted silently and
-  surfaced much later as a confusing `[CLM-150]` (zero capacity). All three
-  prompts now re-ask.
-- README: a sentence in the `[CLM-309]` limitation had been severed mid-clause,
-  and a stray `****` rendered as literal asterisks in the `competing_noise` entry.
+  surfaced much later as a confusing `[CLM-150]` (zero capacity).
 
 ## [0.3.0] — 2026-07-31
-
-A documentation-consistency pass ahead of the first public release. No change to
-the label-generation math: every `[CLM-###]` code, its trigger, and its message
-text behave exactly as in 0.1.0.
 
 ### Added
 
@@ -740,7 +797,7 @@ text behave exactly as in 0.1.0.
   `clmsynth.metrics`.
 - `maintainers` field in `pyproject.toml`, distinguishing shared authorship of
   the method from sole ownership of the program.
-- This changelog.
+- Added *CHANGELOG.md
 
 ### Fixed
 
@@ -748,16 +805,8 @@ text behave exactly as in 0.1.0.
 - `[CLM-309]`'s explanation corrected in the README and the engine comment. The
   probe and output streams differ because they are seeded differently
   (`default_rng(probe_seed)` vs `default_rng(seed)`), not because the label-count
-  draw had advanced the run stream, that only happens under
-  `skew_rule: dirichlet`, and is now described as the secondary effect it is.
-- Stale `dummy` naming replaced with `fabricated_data` (the offline source's
-  current name) in the troubleshooting reference and `requirements.txt`.
-- Removed pointers to a `Latex/main.tex` that does not exist; the diagnostics
-  registry now correctly cites `Manual/troubleshooting.tex`. The accompanying
-  article will be linked here once published.
-- Raw BibTeX keys in the README replaced with readable prose citations.
-- Stale internal codename ("Layer1") removed from
-  `solve_alpha_for_target_metric`'s docstring.
+  draw had advanced the run stream, that only happens under `skew_rule: dirichlet`,
+  and is now described as the secondary effect it is.
 
 ### Changed
 
@@ -769,7 +818,6 @@ text behave exactly as in 0.1.0.
   string labels, so its own standalone CSV output is unchanged.
   `test_data_config_offline.yaml` updated accordingly.
 - Authorship recorded.
-- `pyivm` is now documented consistently as **not implemented yet**.
   `metrics.evaluate_cluster_label_matching` remains a provisional hook that no
   part of the pipeline calls. Previously the README both asserted and denied
   that the dependency had been verified.
@@ -782,8 +830,7 @@ text behave exactly as in 0.1.0.
 - The erroneous-configuration catalog. Its logs had been captured from a
   pre-package layout and no longer matched the current engine, stale module
   paths, the old `dummy` source name, and in one case a raw `IndexError` where
-  `[CLM-102]` now fires. The manual's reference to it is commented out, not
-  deleted, pending a regenerated catalog.
+  `[CLM-102]` now fires.
 
 ## [0.2.0] — 2026-07-15
 Internal, unpublished. Repository and packaging housekeeping; no functional or
@@ -794,3 +841,7 @@ Initial release state: the CLM label engine, four interchangeable data sources
 (`clustbench`, `mdcgen`, `fabricated_data`, `byoc`), the coded `[CLM-###]`
 diagnostics registry, the config wizard and template renderer, MCC/ARI
 evaluation, and scatter-plot output.
+
+---
+
+*The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).*

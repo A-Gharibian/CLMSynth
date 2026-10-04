@@ -18,7 +18,12 @@ label_generation:
   seed: 42
   clm_label:
     num_classes: 3
-    balance: balanced
+    proportions:
+    - 0.25
+    - 0.25
+    - 0.25
+    - 0.25
+    balance: unbalanced
     skew_rule: geometric
     matching_mode: perfect
     split_rule: proportional_to_size

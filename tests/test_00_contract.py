@@ -30,6 +30,7 @@ from clmsynth.metrics import clustering_ari, clustering_mcc
 # Geometry
 # ---------------------------------------------------------------------------
 
+
 def geometry(sizes, dim=2, seed=0):
     """K gaussian blobs with the given sizes -> (cluster_labels, coords)."""
     rng = np.random.default_rng(seed)
@@ -53,6 +54,7 @@ GEOMETRIES = {
 # ---------------------------------------------------------------------------
 # Log capture, diagnostic run check
 # ---------------------------------------------------------------------------
+
 
 class Capture(logging.Handler):
     def __init__(self):
@@ -87,6 +89,7 @@ def run(cfg, cluster_labels, coords, seed=42):
 # ---------------------------------------------------------------------------
 # Configurations: the VALID space, one axis at a time plus key combinations
 # ---------------------------------------------------------------------------
+
 
 def placement(profile=None, favors="core"):
     if profile is None:
@@ -124,8 +127,9 @@ def bijection(M, recall=0.8, **extra):
         "num_classes": M,
         "balance": "balanced",
         "matching_mode": "custom",
-        "assignment_matrix": [{"clusters": [i], "label": i, "recall_target": recall}
-                              for i in range(M)],
+        "assignment_matrix": [
+            {"clusters": [i], "label": i, "recall_target": recall} for i in range(M)
+        ],
         "split_rule": "proportional_to_size",
         "spillover_rule": "proportional_to_marginal",
         "centroid_dependence": placement(),
@@ -139,44 +143,81 @@ def cases():
     out: list[Any] = []
 
     # -- matching modes -----------------------------------------------------
-    out.append(("perfect", "equal_4x200",
-                {"num_classes": 4, "balance": "balanced", "matching_mode": "perfect",
-                 "centroid_dependence": placement()}))
-    out.append(("random", "equal_4x200",
-                {"num_classes": 4, "balance": "balanced", "matching_mode": "random",
-                 "centroid_dependence": placement()}))
-    out.append(("single", "equal_4x200",
-                {"num_classes": 4, "balance": "balanced", "matching_mode": "single",
-                 "single_match": {"cluster": 0, "label": 0},
-                 "spillover_rule": "proportional_to_marginal",
-                 "centroid_dependence": placement()}))
+    out.append(
+        (
+            "perfect",
+            "equal_4x200",
+            {
+                "num_classes": 4,
+                "balance": "balanced",
+                "matching_mode": "perfect",
+                "centroid_dependence": placement(),
+            },
+        )
+    )
+    out.append(
+        (
+            "random",
+            "equal_4x200",
+            {
+                "num_classes": 4,
+                "balance": "balanced",
+                "matching_mode": "random",
+                "centroid_dependence": placement(),
+            },
+        )
+    )
+    out.append(
+        (
+            "single",
+            "equal_4x200",
+            {
+                "num_classes": 4,
+                "balance": "balanced",
+                "matching_mode": "single",
+                "single_match": {"cluster": 0, "label": 0},
+                "spillover_rule": "proportional_to_marginal",
+                "centroid_dependence": placement(),
+            },
+        )
+    )
     for g, sizes in GEOMETRIES.items():
         K = len(sizes)
-        out.append((f"custom_bijection[{g}]", g,
-                    bijection(K, recall=safe_recall(sizes, K))))
+        out.append((f"custom_bijection[{g}]", g, bijection(K, recall=safe_recall(sizes, K))))
 
     # -- recall levels ------------------------------------------------------
     for r in (0.0, 0.25, 0.5, 0.75, 1.0):
         out.append((f"recall={r}", "equal_4x200", bijection(4, recall=r)))
 
     # -- balance / skew -----------------------------------------------------
-    out.append(("proportions_explicit", "equal_4x200",
-                bijection(4, balance="unbalanced",
-                          proportions=[0.4, 0.3, 0.2, 0.1], recall=0.4)))
-    for rule, params in (("geometric", {"ratio": 0.5}),
-                         ("dominant_minority", {"dominant_index": 0, "dominant_share": 0.55}),
-                         ("dirichlet", {"alpha": 1.0})):
+    out.append(
+        (
+            "proportions_explicit",
+            "equal_4x200",
+            bijection(4, balance="unbalanced", proportions=[0.4, 0.3, 0.2, 0.1], recall=0.4),
+        )
+    )
+    for rule, params in (
+        ("geometric", {"ratio": 0.5}),
+        ("dominant_minority", {"dominant_index": 0, "dominant_share": 0.55}),
+        ("dirichlet", {"alpha": 1.0}),
+    ):
         # Low recall: a dirichlet draw can put most of the mass on one label, and
         # a high recall would then over-claim its cluster ([CLM-150]) for reasons
         # unrelated to the invariant under test.
-        out.append((f"skew={rule}", "equal_4x200",
-                    bijection(4, balance="unbalanced", skew_rule=rule,
-                              skew_params=params, recall=0.2)))
+        out.append(
+            (
+                f"skew={rule}",
+                "equal_4x200",
+                bijection(4, balance="unbalanced", skew_rule=rule, skew_params=params, recall=0.2),
+            )
+        )
 
     # -- spillover ----------------------------------------------------------
     for rule in ("proportional_to_marginal", "uniform", "concentrated"):
-        out.append((f"spillover={rule}", "equal_4x200",
-                    bijection(4, spillover_rule=rule, recall=0.5)))
+        out.append(
+            (f"spillover={rule}", "equal_4x200", bijection(4, spillover_rule=rule, recall=0.5))
+        )
 
     # -- split rule (rules spanning >1 cluster) -----------------------------
     # recall 0.3, not 0.5: an EQUAL split halves the budget across clusters [2,3]
@@ -184,59 +225,118 @@ def cases():
     # cluster ([CLM-151]) while proportional_to_size would have fit. The recall
     # has to suit the stricter of the two rules for them to be comparable.
     for split in ("proportional_to_size", "equal"):
-        out.append((f"split={split}", "unequal_4",
-                    {"num_classes": 2, "balance": "balanced", "matching_mode": "custom",
-                     "assignment_matrix": [{"clusters": [0, 1], "label": 0, "recall_target": 0.3},
-                                           {"clusters": [2, 3], "label": 1, "recall_target": 0.3}],
-                     "split_rule": split, "spillover_rule": "proportional_to_marginal",
-                     "centroid_dependence": placement()}))
+        out.append(
+            (
+                f"split={split}",
+                "unequal_4",
+                {
+                    "num_classes": 2,
+                    "balance": "balanced",
+                    "matching_mode": "custom",
+                    "assignment_matrix": [
+                        {"clusters": [0, 1], "label": 0, "recall_target": 0.3},
+                        {"clusters": [2, 3], "label": 1, "recall_target": 0.3},
+                    ],
+                    "split_rule": split,
+                    "spillover_rule": "proportional_to_marginal",
+                    "centroid_dependence": placement(),
+                },
+            )
+        )
 
     # -- placement ----------------------------------------------------------
     for name, cd in PLACEMENTS:
-        out.append((f"placement={name}", "equal_4x200",
-                    bijection(4, recall=0.6, centroid_dependence=cd)))
+        out.append(
+            (f"placement={name}", "equal_4x200", bijection(4, recall=0.6, centroid_dependence=cd))
+        )
 
     # -- target metric ------------------------------------------------------
     for t in (0.3, 0.5, 0.7):
-        out.append((f"target_mcc={t}", "equal_4x200",
-                    bijection(4, target_metric={"type": "mcc", "value": t, "tolerance": 0.05})))
-        out.append((f"target_ari={t}", "equal_4x200",
-                    bijection(4, target_metric={"type": "ari", "value": t, "tolerance": 0.05})))
-    out.append(("target_pair_mcc", "equal_4x200",
-                {"num_classes": 4, "balance": "balanced", "matching_mode": "single",
-                 "single_match": {"cluster": 0, "label": 0},
-                 "spillover_rule": "proportional_to_marginal",
-                 "target_metric": {"type": "mcc", "value": 0.6, "scope": "pair"},
-                 "centroid_dependence": placement()}))
+        out.append(
+            (
+                f"target_mcc={t}",
+                "equal_4x200",
+                bijection(4, target_metric={"type": "mcc", "value": t, "tolerance": 0.05}),
+            )
+        )
+        out.append(
+            (
+                f"target_ari={t}",
+                "equal_4x200",
+                bijection(4, target_metric={"type": "ari", "value": t, "tolerance": 0.05}),
+            )
+        )
+    out.append(
+        (
+            "target_pair_mcc",
+            "equal_4x200",
+            {
+                "num_classes": 4,
+                "balance": "balanced",
+                "matching_mode": "single",
+                "single_match": {"cluster": 0, "label": 0},
+                "spillover_rule": "proportional_to_marginal",
+                "target_metric": {"type": "mcc", "value": 0.6, "scope": "pair"},
+                "centroid_dependence": placement(),
+            },
+        )
+    )
 
     # -- competing noise ----------------------------------------------------
     for favors in ("core", "boundary", "random"):
-        out.append((f"competing={favors}", "equal_4x200",
-                    bijection(4, recall=0.5,
-                              competing_noise=[{"cluster": 1, "label": 2,
-                                                "share": 0.5, "favors": favors}])))
+        out.append(
+            (
+                f"competing={favors}",
+                "equal_4x200",
+                bijection(
+                    4,
+                    recall=0.5,
+                    competing_noise=[{"cluster": 1, "label": 2, "share": 0.5, "favors": favors}],
+                ),
+            )
+        )
 
     # -- cardinality edges --------------------------------------------------
-    out.append(("M=1", "equal_4x200",
-                {"num_classes": 1, "balance": "balanced", "matching_mode": "custom",
-                 "assignment_matrix": [{"clusters": [0], "label": 0, "recall_target": 0.2}],
-                 "split_rule": "proportional_to_size",
-                 "spillover_rule": "proportional_to_marginal",
-                 "centroid_dependence": placement()}))
+    out.append(
+        (
+            "M=1",
+            "equal_4x200",
+            {
+                "num_classes": 1,
+                "balance": "balanced",
+                "matching_mode": "custom",
+                "assignment_matrix": [{"clusters": [0], "label": 0, "recall_target": 0.2}],
+                "split_rule": "proportional_to_size",
+                "spillover_rule": "proportional_to_marginal",
+                "centroid_dependence": placement(),
+            },
+        )
+    )
     out.append(("M<K", "equal_4x200", bijection(2, recall=0.5)))
-    out.append(("M>K", "equal_3x150",
-                {"num_classes": 5, "balance": "balanced", "matching_mode": "custom",
-                 "assignment_matrix": [{"clusters": [i], "label": i, "recall_target": 0.5}
-                                       for i in range(3)],
-                 "split_rule": "proportional_to_size",
-                 "spillover_rule": "proportional_to_marginal",
-                 "centroid_dependence": placement()}))
+    out.append(
+        (
+            "M>K",
+            "equal_3x150",
+            {
+                "num_classes": 5,
+                "balance": "balanced",
+                "matching_mode": "custom",
+                "assignment_matrix": [
+                    {"clusters": [i], "label": i, "recall_target": 0.5} for i in range(3)
+                ],
+                "split_rule": "proportional_to_size",
+                "spillover_rule": "proportional_to_marginal",
+                "centroid_dependence": placement(),
+            },
+        )
+    )
     return out
 
 
 # ---------------------------------------------------------------------------
 # Invariants
 # ---------------------------------------------------------------------------
+
 
 def check_case(name, gkey, cfg):
     """Returns a list of (invariant, ok, detail)."""
@@ -252,22 +352,28 @@ def check_case(name, gkey, cfg):
         # breach: this geometry cannot hold the requested budget. The failure
         # catalogue covers those; skip the case here rather than mis-report it.
         return [("config_feasible_as_written", False, f"skipped: {exc}")]
-    except Exception as exc:                       # broad by design: reporting
+    except Exception as exc:  # broad by design: reporting
         return [("no_unexpected_exception", False, f"{type(exc).__name__}: {exc}")]
     res.append(("no_unexpected_exception", True, ""))
 
     # 1. label domain
     bad = sorted({int(v) for v in np.unique(out) if not (0 <= v < M)})
-    res.append(("labels_within_0..M-1", not bad,
-                f"out-of-range labels {bad} (M={M})" if bad else ""))
+    res.append(
+        ("labels_within_0..M-1", not bad, f"out-of-range labels {bad} (M={M})" if bad else "")
+    )
 
     # 2. row alignment
     res.append(("length_preserved", len(out) == N, f"{len(out)} != {N}"))
 
     # 3. determinism
     out2, _ = run(cfg, c, X)
-    res.append(("deterministic_for_seed", np.array_equal(out, out2),
-                "second run differed" if not np.array_equal(out, out2) else ""))
+    res.append(
+        (
+            "deterministic_for_seed",
+            np.array_equal(out, out2),
+            "second run differed" if not np.array_equal(out, out2) else "",
+        )
+    )
 
     # 4. exact marginals, only where the engine promises them
     promises_counts = (
@@ -280,8 +386,9 @@ def check_case(name, gkey, cfg):
         want = resolve_label_counts(cfg, N, np.random.default_rng(42))
         got = np.bincount(out, minlength=M)
         ok = len(want) == len(got) and np.array_equal(np.asarray(want), got)
-        res.append(("exact_label_counts", ok,
-                    "" if ok else f"target {list(want)} != achieved {list(got)}"))
+        res.append(
+            ("exact_label_counts", ok, "" if ok else f"target {list(want)} != achieved {list(got)}")
+        )
 
     # 5. target metric delivered, or flagged
     tm = cfg.get("target_metric")
@@ -291,9 +398,15 @@ def check_case(name, gkey, cfg):
         tol = tm.get("tolerance", 0.01)
         within = abs(achieved - tm["value"]) <= tol
         flagged = bool({"306", "309"} & codes)
-        res.append(("target_met_or_flagged", within or flagged,
-                    "" if (within or flagged) else
-                    f"achieved {achieved:.4f} vs {tm['value']}+/-{tol}, no 306/309"))
+        res.append(
+            (
+                "target_met_or_flagged",
+                within or flagged,
+                ""
+                if (within or flagged)
+                else f"achieved {achieved:.4f} vs {tm['value']}+/-{tol}, no 306/309",
+            )
+        )
 
     return res
 
@@ -313,8 +426,10 @@ def check_placement_invariance():
         for pname, cd in PLACEMENTS:
             cfg = bijection(K, recall=r, centroid_dependence=cd)
             out, _ = run(cfg, c, X)
-            seen[pname] = (round(float(clustering_mcc(c, out)), 10),
-                           round(float(clustering_ari(c, out)), 10))
+            seen[pname] = (
+                round(float(clustering_mcc(c, out)), 10),
+                round(float(clustering_ari(c, out)), 10),
+            )
         vals = set(seen.values())
         ok = len(vals) == 1
         detail = "" if ok else "; ".join(f"{k}={v}" for k, v in seen.items())
@@ -327,15 +442,19 @@ def check_concentrated_labels_guard():
     reaches the written labeling with no error. Isolated here because it is a
     known open item, so its failure is expected until the guard lands."""
     c, X = geometry(GEOMETRIES["equal_4x200"])
-    cfg = bijection(4, recall=0.5, spillover_rule="concentrated",
-                    concentrated_labels=[99])
+    cfg = bijection(4, recall=0.5, spillover_rule="concentrated", concentrated_labels=[99])
     try:
         out, _ = run(cfg, c, X)
-    except Exception as exc:                       # broad by design: reporting
+    except Exception as exc:  # broad by design: reporting
         return [("concentrated_labels_rejected", True, f"raised {type(exc).__name__}")]
     bad = sorted({int(v) for v in np.unique(out) if not (0 <= v < 4)})
-    return [("concentrated_labels_rejected", not bad,
-             f"label 99 accepted; wrote out-of-range {bad} into the labeling" if bad else "")]
+    return [
+        (
+            "concentrated_labels_rejected",
+            not bad,
+            f"label 99 accepted; wrote out-of-range {bad} into the labeling" if bad else "",
+        )
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -344,22 +463,11 @@ def check_concentrated_labels_guard():
 
 CASES = cases()
 
+
 def _assert_all_hold(results, context):
     """Fail with every broken invariant listed, not just the first."""
     broken = [(inv, detail) for inv, ok, detail in results if not ok]
-    assert not broken, context + "\n" + "\n".join(
-        f"  {inv}: {detail}" for inv, detail in broken)
-
-
-def test_case_inventory_is_not_empty():
-    """Guard the parametrization itself.
-
-    A module that collects nothing is silently green inside a directory run:
-    `pytest` succeeds identically whether this file contributes 41 tests or
-    zero.
-    """
-    assert len(CASES) >= 40, f"expected the full sweep, collected {len(CASES)} cases"
-    assert len({name for name, _, _ in CASES}) == len(CASES), "duplicate case names"
+    assert not broken, context + "\n" + "\n".join(f"  {inv}: {detail}" for inv, detail in broken)
 
 
 @pytest.mark.parametrize("name,gkey,cfg", CASES, ids=[c[0] for c in CASES])

@@ -40,7 +40,8 @@ centroid_favors: "boundary"
 # Each renders only when present, so leaving them commented out produces exactly
 # the config above. See the manual for the full semantics of each.
 
-# Skew parameters, used only when balance is "unbalanced" AND proportions is unset.
+# Skew parameters, used only when balance is "unbalanced" AND proportions is unset
+# (never under matching_mode "perfect").
 # Give the keys for your skew_rule: geometric -> ratio; dominant_minority ->
 # dominant_index + dominant_share; dirichlet -> alpha.
 # skew_params: {ratio: 0.5}

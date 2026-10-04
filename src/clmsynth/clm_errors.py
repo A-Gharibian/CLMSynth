@@ -74,7 +74,7 @@ CODES = {
     125: "centroid placement requires per-point feature vectors: {placement} is set but "
          "coords is {got}. Provide an (N, d) feature array, or disable "
          "centroid_dependence and any competing_noise favors 'core'/'boundary'.",
-    126: "num_classes must be between 1 and {max_val} (got {M}).",
+    126: "num_classes must be an integer between 1 and {max_val} (got {M}).",
     127: "the dataset's cluster count K={K} exceeds the supported maximum of {max_val}.",
     128: "spillover_rule 'concentrated': concentrated_labels must be a LIST of integer "
          "label ids, each in 0..{hi}; got {given!r}. Values reaching the output "
@@ -106,10 +106,24 @@ CODES = {
          "integer in 0..{hi}, with num_classes >= 2; dirichlet 'alpha' > 0. Omit "
          "skew_params entirely to take the documented defaults.",
 
+    132: "balance must be 'balanced' or 'unbalanced', got {balance!r}. Matching is "
+         "case-sensitive and exact; any other value would silently be read as "
+         "'unbalanced', so a typo of 'balanced' would deliver the proportions it was "
+         "meant to ignore. Omit the key for the default, 'balanced'; a valueless "
+         "`balance:` is not the default.",
+
+    133: "the dataset cannot be labelled: {problem}. Every point needs one cluster id, "
+         "the ids must be all numbers or all strings, and coords, when given, needs one "
+         "row per point.",
+
+    134: "{key} must be {expected}, got {value!r}. Values are not converted: YAML reads "
+         "true/yes/no as booleans and .nan/.inf as numbers, and each was accepted as "
+         "something else (true as 1, a quoted \"false\" as on, NaN past every range "
+         "check, a mapping's keys as its values).",
+
     # --- 15x : InfeasibleAllocationError (valid config, counts don't fit) ---
-    150: "Infeasible rule: label {label} needs recall_target={rt} ({tp} of its {m} points) "
-         "but clusters {clusters} hold only {capacity} points total. "
-         "Max feasible recall_target here: {max_recall:.3f}.",
+    150: "Infeasible rule: label {label} needs {tp} of its {m} points in clusters "
+         "{clusters}, which hold only {capacity} points total. {remedy}",
     151: "Infeasible configuration: cluster {k} has {size} points but rules jointly claim "
          "{claimed} (per label: {per_label}). Lower the competing recall_targets or spread "
          "them across more clusters.",
@@ -137,14 +151,16 @@ CODES = {
     # --- 3xx : Warnings (non-fatal) -----------------------------------------
     301: "balance='balanced': explicit 'proportions' are ignored (uniform 1/M split "
          "enforced). Set balance to 'unbalanced' to have your proportions used.",
-    302: "matching_mode='perfect': proportions/balance/skew_rule ignored, label counts "
-         "are forced to match their paired cluster's size.",
+    302: "matching_mode='perfect': proportions/balance/skew_rule/skew_params ignored "
+         "and not validated, label counts are forced to match their paired cluster's "
+         "size.",
     303: "target_metric present: per-rule recall_target values in assignment_matrix are "
          "ignored; recall_target is solved for globally.",
     # One code, two causes; {cause} names which. Precedent: 104, 131.
-    304: "{cause}: achieved label counts are no longer held to the target proportions, "
-         "{why} bypasses the marginal. Exact counts are delivered only by spillover_rule "
-         "'proportional_to_marginal' with no competing_noise.",
+    304: "{cause}: the delivered label counts {achieved} differ from their targets "
+         "{target}. spillover_rule 'proportional_to_marginal' refills every label to its "
+         "target; 'uniform' and 'concentrated' do not, and competing_noise moves the "
+         "counts when it gives a label more points than its target.",
     305: "competing_noise: cluster {k} has no unclaimed points (or share rounds to 0); "
          "entry {entry} has no effect.",
     306: "target_metric: did not converge within tolerance after {max_iter} iterations. "

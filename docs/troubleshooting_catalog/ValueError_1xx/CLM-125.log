@@ -11,5 +11,6 @@ INFO - Generating synthetic data (Seed: 42)...
 WARNING - 'labels_only': emitting ONLY the reserved 'Cohort_Class' column, drawn uniformly, and none of the six engineered features. The result carries labels and no geometry. Use it for label-only workflows; it is not a general-purpose fabrication mode.
 INFO - Generated fabricated_data 'labels_only_4class': 800 rows, 0 feature(s), 1 labeling(s) (cluster ids 0..3).
 ERROR - Skipping fabricated/labels_only_4class: [CLM-125] centroid placement requires per-point feature vectors: centroid_dependence.enabled is set but coords is empty. Provide an (N, d) feature array, or disable centroid_dependence and any competing_noise favors 'core'/'boundary'.
+WARNING - 1 of the 1 resolved dataset(s) were skipped (see the errors above).
 ERROR - No datasets were successfully processed.
 INFO - No output was produced, so the empty run folder '_scratch/CLM-125/{run}' was removed.

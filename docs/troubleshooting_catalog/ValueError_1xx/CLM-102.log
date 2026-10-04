@@ -11,5 +11,6 @@ INFO - Generating synthetic data (Seed: 42)...
 INFO - Applying perfect separation ground truth to categorical labels...
 INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
 ERROR - Skipping fabricated/baseline_4class: [CLM-102] matching_mode 'perfect' requires M == K (got M=3, K=4).
+WARNING - 1 of the 1 resolved dataset(s) were skipped (see the errors above).
 ERROR - No datasets were successfully processed.
 INFO - No output was produced, so the empty run folder '_scratch/CLM-102/{run}' was removed.

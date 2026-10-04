@@ -51,12 +51,16 @@ from clmsynth.main import resolved_for_report
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("raw,expected", [
-    ("plain message", "plain message"),
-    ("forged\nsecond line", "forged\\nsecond line"),
-    ("carriage\rreturn", "carriage\\rreturn"),
-    ("windows\r\nline", "windows\\r\\nline"),
-], ids=["untouched", "newline", "carriage-return", "crlf"])
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("plain message", "plain message"),
+        ("forged\nsecond line", "forged\\nsecond line"),
+        ("carriage\rreturn", "carriage\\rreturn"),
+        ("windows\r\nline", "windows\\r\\nline"),
+    ],
+    ids=["untouched", "newline", "carriage-return", "crlf"],
+)
 def test_a_newline_in_a_message_cannot_forge_a_second_record(raw, expected):
     """Whatever the configuration value contained, the record stays one line.
 
@@ -75,8 +79,13 @@ def test_a_newline_in_a_message_cannot_forge_a_second_record(raw, expected):
     reasons unrelated to the code under test.
     """
     record = logging.LogRecord(
-        name="clmsynth.test", level=logging.INFO, pathname=__file__, lineno=1,
-        msg=raw, args=(), exc_info=None,
+        name="clmsynth.test",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg=raw,
+        args=(),
+        exc_info=None,
     )
     assert SingleLineFilter().filter(record) is True, "the filter must not drop records"
     assert record.getMessage() == expected
@@ -93,8 +102,13 @@ def test_the_filter_finishes_lazy_percent_formatting_before_scrubbing():
     second time against arguments that are no longer there.
     """
     record = logging.LogRecord(
-        name="clmsynth.test", level=logging.WARNING, pathname=__file__, lineno=1,
-        msg="skew_rule %s is unknown", args=("geometric\nFORGED",), exc_info=None,
+        name="clmsynth.test",
+        level=logging.WARNING,
+        pathname=__file__,
+        lineno=1,
+        msg="skew_rule %s is unknown",
+        args=("geometric\nFORGED",),
+        exc_info=None,
     )
     SingleLineFilter().filter(record)
 
@@ -126,6 +140,7 @@ def test_a_configured_path_is_reported_as_an_absolute_path(tmp_path, monkeypatch
 # ---------------------------------------------------------------------------
 # Destructive tooling
 # ---------------------------------------------------------------------------
+
 
 def _catalog_gen(monkeypatch, out_dir):
     """Import the tool with OUT_DIR as its argv."""

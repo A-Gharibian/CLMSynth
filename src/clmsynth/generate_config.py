@@ -14,8 +14,10 @@ from .config_template import YAML_TEMPLATE
 
 log = logging.getLogger(__name__)
 
-VALID_SKEW_RULES = {"geometric", "dominant_minority", "dirichlet"}
-VALID_SOURCES = {"clustbench", "mdcgen", "fabricated_data", "byoc"}
+# Tuples, not sets: `in` must not hash a payload value, which may be a list.
+VALID_SKEW_RULES = ("geometric", "dominant_minority", "dirichlet")
+VALID_BALANCE = ("balanced", "unbalanced")
+VALID_SOURCES = ("clustbench", "mdcgen", "fabricated_data", "byoc")
 
 
 def format_yaml_snippet(data, indent_level=6):
@@ -70,23 +72,30 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
         log.warning(f"data_source '{data_source}' is not one of {VALID_SOURCES}; "
                     "main.py's FETCHERS dict will reject this at runtime.")
 
+    mode = pick("matching_mode", "custom")
     balance = pick("balance", "unbalanced")
     skew_rule = pick("skew_rule", "geometric")
     has_proportions = bool(pick("proportions", []))
 
-    if balance == "balanced" and has_proportions:
+    # 'perfect' never reads balance, proportions or skew_rule, so the engine neither
+    # checks nor applies them there, and none of these three warnings applies.
+    sizing_read = mode != "perfect"
+    if sizing_read and balance not in VALID_BALANCE:
+        log.warning(f"balance {balance!r} is not one of 'balanced'/'unbalanced': the engine "
+                    "rejects it ([CLM-132]). Matching is case-sensitive and exact.")
+    if sizing_read and balance == "balanced" and has_proportions:
         log.warning(
             "balance='balanced' with 'proportions' also set: the engine enforces a "
             "uniform 1/M split and ignores explicit proportions. Set balance to "
             "'unbalanced' to have your proportions used directly."
         )
-    if balance == "unbalanced" and not has_proportions and skew_rule not in VALID_SKEW_RULES:
+    if (sizing_read and balance == "unbalanced" and not has_proportions
+            and skew_rule not in VALID_SKEW_RULES):
         log.warning(f"skew_rule '{skew_rule}' is not implemented by clm_label_engine.py "
                     f"(valid: {VALID_SKEW_RULES}). This config will fail at runtime unless fixed.")
 
     # --- optional clm_label blocks ------------------------------------------
 
-    mode = pick("matching_mode", "custom")
     target_metric = pick("target_metric", {})
     competing_noise = pick("competing_noise", [])
 
@@ -236,6 +245,9 @@ def main() -> None:
         log.critical(f"Payload file '{payload_path}' not found. It ships with the "
                      f"repository and the sdist, not the wheel. Pass a payload path, "
                      f"or run clmsynth-wizard instead.")
+        sys.exit(1)
+    except yaml.YAMLError as e:
+        log.critical(f"Payload file '{payload_path}' is not valid YAML: {e}")
         sys.exit(1)
 
     if not isinstance(payload, dict):

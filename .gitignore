@@ -9,7 +9,7 @@ Inspection/
 Article/
 wizard_config.yaml
 ignore/
-clmsynth/
+/clmsynth/
 
 # PyCharm/IntelliJ inspection exports.
 

@@ -22,6 +22,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .clm_errors import clm_error
+
 log = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
@@ -106,10 +108,13 @@ def validate_import(df: pd.DataFrame, header: list[str], cluster_column: str,
     if cluster_column in df.columns:
         clusters = df[cluster_column]
         if clusters.isna().any():
-            problems.append(
-                f"the cluster column '{cluster_column}' has {int(clusters.isna().sum())} "
-                "missing value(s): every point must belong to a cluster, and a blank "
-                "would become a cluster of its own")
+            # The one coded check here: a missing cluster id is the condition
+            # [CLM-133] names for every entry point, so it reads the same as the
+            # engine's refusal of the same ids through the Python API.
+            problems.append(str(clm_error(
+                133, problem=f"{int(clusters.isna().sum())} of the {len(clusters)} values in "
+                             f"the cluster column '{cluster_column}' are missing (blank "
+                             "cells); they would never be labelled")))
         else:
             sizes = clusters.value_counts()
             if len(sizes) < 2:
@@ -123,6 +128,22 @@ def validate_import(df: pd.DataFrame, header: list[str], cluster_column: str,
                     f"{len(undersized)} cluster(s) hold fewer than {MIN_CLUSTER_SIZE} "
                     f"points ({shown}). Clusters that small are strays rather than "
                     "clusters; merge or drop them before importing")
+            # 'A' and 'A ' are two values to pandas, so a stray space in a
+            # hand-edited or exported file quietly adds a cluster and changes
+            # every size the matching arithmetic is built on. Refused rather than
+            # stripped: which spelling was meant is the user's call. An id padded
+            # the same way everywhere is one cluster, so it is left alone.
+            spellings: dict[str, list[str]] = {}
+            for k in sizes.index:
+                if isinstance(k, str):
+                    spellings.setdefault(k.strip(), []).append(k)
+            ambiguous = [sorted(group) for group in spellings.values() if len(group) > 1]
+            if ambiguous:
+                shown = "; ".join(" vs ".join(repr(k) for k in group) for group in ambiguous[:5])
+                problems.append(
+                    f"the cluster column '{cluster_column}' holds id(s) that differ only by "
+                    f"leading or trailing whitespace ({shown}): each spelling would become "
+                    "a cluster of its own. Make the ids identical before importing")
 
         tags = as_tag_columns(tag_columns)
         absent = [t for t in tags if t not in df.columns]

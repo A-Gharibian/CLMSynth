@@ -10,5 +10,5 @@ INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed
 INFO - Generating synthetic data (Seed: 42)...
 INFO - Applying perfect separation ground truth to categorical labels...
 INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
-CRITICAL - Configuration error, aborting run: [CLM-126] num_classes must be between 1 and 64 (got 100).
+CRITICAL - Configuration error, aborting run: [CLM-126] num_classes must be an integer between 1 and 64 (got 100).
 INFO - No output was produced, so the empty run folder '_scratch/CLM-126/{run}' was removed.

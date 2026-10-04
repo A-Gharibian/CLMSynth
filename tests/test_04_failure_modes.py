@@ -20,12 +20,15 @@ What is checked:
                        0.6.9)
   interactive branch   omitting `output_path` shows and keeps the figure
   exit codes           a missing or malformed config exits 1, distinct from
-                       exit 2 for a coded config error and 0 for success
+                       exit 2 for a coded config error and 0 for success; so
+                       does an output_dir blocked by a file, which used to
+                       hang on Windows
   network timeout      `CLUSTBENCH_TIMEOUT` is passed to `urlopen`
 
 """
 
 import logging
+import re
 import sys
 from pathlib import Path
 from unittest import mock
@@ -37,6 +40,7 @@ import pytest
 import yaml
 
 import clmsynth.main
+import clmsynth.visualization
 from clmsynth import dataset_sources
 from clmsynth.label_context import DatasetContext
 from clmsynth.label_generator import generate_additional_labels
@@ -59,13 +63,21 @@ def byoc_config(input_dir, output_dir, datasets):
     return {
         "global_settings": {"data_source": "byoc", "output_dir": str(output_dir)},
         "byoc_suite": {
-            "batteries": ["local"], "input_dir": str(input_dir), "datasets": datasets,
-            "cluster_column": "cluster", "standardize": False, "seed": 42,
+            "batteries": ["local"],
+            "input_dir": str(input_dir),
+            "datasets": datasets,
+            "cluster_column": "cluster",
+            "standardize": False,
+            "seed": 42,
         },
         "label_generation": {
-            "n_labels": 1, "source_labeling": "labels0", "noise": 0.1, "seed": 42,
+            "n_labels": 1,
+            "source_labeling": "labels0",
+            "noise": 0.1,
+            "seed": 42,
             "clm_label": {
-                "num_classes": 2, "matching_mode": "single",
+                "num_classes": 2,
+                "matching_mode": "single",
                 "single_match": {"cluster": 0, "label": 0},
                 "target_metric": {"type": "mcc", "value": 0.5, "scope": "pair"},
             },
@@ -77,14 +89,18 @@ def byoc_config(input_dir, output_dir, datasets):
 # Batch isolation
 # ---------------------------------------------------------------------------
 
+
 def write_byoc_batch(inputs, specs):
     """One CSV per (name, cluster-0 size); every dataset has 40 rows, ids {0, 1}."""
     rng = np.random.default_rng(0)
     for name, n_zero in specs:
-        pd.DataFrame({
-            "f1": rng.normal(size=40), "f2": rng.normal(size=40),
-            "cluster": [0] * n_zero + [1] * (40 - n_zero),
-        }).to_csv(inputs / f"{name}.csv", index=False)
+        pd.DataFrame(
+            {
+                "f1": rng.normal(size=40),
+                "f2": rng.normal(size=40),
+                "cluster": [0] * n_zero + [1] * (40 - n_zero),
+            }
+        ).to_csv(inputs / f"{name}.csv", index=False)
 
 
 def infeasible_config(input_dir, output_dir, datasets):
@@ -92,15 +108,25 @@ def infeasible_config(input_dir, output_dir, datasets):
     return {
         "global_settings": {"data_source": "byoc", "output_dir": str(output_dir)},
         "byoc_suite": {
-            "batteries": ["local"], "input_dir": str(input_dir), "datasets": datasets,
-            "cluster_column": "cluster", "standardize": False, "seed": 42,
+            "batteries": ["local"],
+            "input_dir": str(input_dir),
+            "datasets": datasets,
+            "cluster_column": "cluster",
+            "standardize": False,
+            "seed": 42,
         },
         "label_generation": {
-            "n_labels": 1, "source_labeling": "labels0", "noise": 0.1, "seed": 42,
+            "n_labels": 1,
+            "source_labeling": "labels0",
+            "noise": 0.1,
+            "seed": 42,
             "clm_label": {
-                "num_classes": 2, "balance": "balanced", "matching_mode": "custom",
+                "num_classes": 2,
+                "balance": "balanced",
+                "matching_mode": "custom",
                 "assignment_matrix": [{"label": 0, "clusters": [0], "recall_target": 1.0}],
-                "split_rule": "equal", "spillover_rule": "proportional_to_marginal",
+                "split_rule": "equal",
+                "spillover_rule": "proportional_to_marginal",
             },
         },
     }
@@ -118,7 +144,7 @@ def test_infeasible_allocation_skips_only_the_labelling(tmp_path, monkeypatch):
     the *labeling* is skipped. The dataset is still written, still counted in
     `n_ok`, and its CSV simply has no `Label_0` column.
     """
-    monkeypatch.setattr(clmsynth.main, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -128,18 +154,24 @@ def test_infeasible_allocation_skips_only_the_labelling(tmp_path, monkeypatch):
     for d in (csv_dir, png_dir, txt_dir):
         d.mkdir()
 
-    n_ok = run_pipeline("byoc", infeasible_config(inputs, tmp_path,
-                                                  ["good_a", "poison_b", "good_c"]),
-                        csv_dir, png_dir, txt_dir)
+    n_ok = run_pipeline(
+        "byoc",
+        infeasible_config(inputs, tmp_path, ["good_a", "poison_b", "good_c"]),
+        csv_dir,
+        png_dir,
+        txt_dir,
+    )
     assert n_ok == 3
 
     written = {p.name: list(pd.read_csv(p).columns) for p in csv_dir.glob("*.csv")}
-    assert "byoc__local__good_c.csv" in written, \
+    assert "byoc__local__good_c.csv" in written, (
         "the dataset AFTER the failure was not written: the batch aborted"
+    )
     assert "Label_0" in written["byoc__local__good_a.csv"]
     assert "Label_0" in written["byoc__local__good_c.csv"]
-    assert "Label_0" not in written["byoc__local__poison_b.csv"], \
+    assert "Label_0" not in written["byoc__local__poison_b.csv"], (
         "the dataset whose labelling failed got a label anyway"
+    )
 
 
 def test_byoc_id_mismatch_is_refused_before_any_output(tmp_path, monkeypatch, caplog):
@@ -149,17 +181,24 @@ def test_byoc_id_mismatch_is_refused_before_any_output(tmp_path, monkeypatch, ca
     against *each dataset's own* cluster ids, and under `byoc` every CSV brings
     its own.
     """
-    monkeypatch.setattr(clmsynth.main, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
     rng = np.random.default_rng(0)
-    for name, cluster_ids in [("good_a", [0, 1]), ("poison_b", [5, 6]),
-                              ("poison_c", [7, 8]), ("good_d", [0, 1])]:
-        pd.DataFrame({
-            "f1": rng.normal(size=40), "f2": rng.normal(size=40),
-            "cluster": np.repeat(cluster_ids, 20),
-        }).to_csv(inputs / f"{name}.csv", index=False)
+    for name, cluster_ids in [
+        ("good_a", [0, 1]),
+        ("poison_b", [5, 6]),
+        ("poison_c", [7, 8]),
+        ("good_d", [0, 1]),
+    ]:
+        pd.DataFrame(
+            {
+                "f1": rng.normal(size=40),
+                "f2": rng.normal(size=40),
+                "cluster": np.repeat(cluster_ids, 20),
+            }
+        ).to_csv(inputs / f"{name}.csv", index=False)
 
     csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
     for d in (csv_dir, png_dir, txt_dir):
@@ -167,17 +206,19 @@ def test_byoc_id_mismatch_is_refused_before_any_output(tmp_path, monkeypatch, ca
 
     with caplog.at_level(logging.DEBUG, logger="clmsynth"):
         with pytest.raises(ValueError) as excinfo:
-            run_pipeline("byoc", byoc_config(inputs, tmp_path,
-                                             ["good_a", "poison_b", "poison_c", "good_d"]),
-                         csv_dir, png_dir, txt_dir)
+            run_pipeline(
+                "byoc",
+                byoc_config(inputs, tmp_path, ["good_a", "poison_b", "poison_c", "good_d"]),
+                csv_dir,
+                png_dir,
+                txt_dir,
+            )
 
     assert "[CLM-105]" in str(excinfo.value)
-    assert not list(csv_dir.glob("*.csv")), \
-        "output was written despite the batch being refused"
+    assert not list(csv_dir.glob("*.csv")), "output was written despite the batch being refused"
     for offender in ("poison_b", "poison_c"):
         assert offender in caplog.text, f"{offender} was not named in the refusal"
     assert "2 of 4" in caplog.text, "the refusal did not count the offending datasets"
-
 
 
 def test_byoc_label_out_of_range_is_reported_once_not_per_dataset(tmp_path, caplog):
@@ -186,10 +227,13 @@ def test_byoc_label_out_of_range_is_reported_once_not_per_dataset(tmp_path, capl
     inputs.mkdir()
     rng = np.random.default_rng(0)
     for name in ("a", "b", "c", "d"):
-        pd.DataFrame({
-            "f1": rng.normal(size=40), "f2": rng.normal(size=40),
-            "cluster": np.repeat([0, 1], 20),
-        }).to_csv(inputs / f"{name}.csv", index=False)
+        pd.DataFrame(
+            {
+                "f1": rng.normal(size=40),
+                "f2": rng.normal(size=40),
+                "cluster": np.repeat([0, 1], 20),
+            }
+        ).to_csv(inputs / f"{name}.csv", index=False)
 
     config = byoc_config(inputs, tmp_path, ["a", "b", "c", "d"])
     config["label_generation"]["clm_label"]["single_match"]["label"] = 9
@@ -203,15 +247,35 @@ def test_byoc_label_out_of_range_is_reported_once_not_per_dataset(tmp_path, capl
             run_pipeline("byoc", config, csv_dir, png_dir, txt_dir)
 
     assert "[CLM-104]" in str(excinfo.value)
-    assert caplog.text.count("[CLM-104]") == 1, \
+    assert caplog.text.count("[CLM-104]") == 1, (
         f"104 was reported per dataset, not once:\n{caplog.text}"
-    assert "of 4 BYOC dataset(s)" not in caplog.text, \
+    )
+    assert "of 4 BYOC dataset(s)" not in caplog.text, (
         "the batch summary blamed the datasets for a configuration error"
+    )
 
-@pytest.mark.parametrize("name", [
-    "../escape", "..\\escape", "sub/dir", "sub\\dir", "C:evil", "..", ".",
-], ids=["posix-parent", "windows-parent", "posix-sep", "windows-sep",
-        "drive-relative", "dotdot", "dot"])
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../escape",
+        "..\\escape",
+        "sub/dir",
+        "sub\\dir",
+        "C:evil",
+        "..",
+        ".",
+    ],
+    ids=[
+        "posix-parent",
+        "windows-parent",
+        "posix-sep",
+        "windows-sep",
+        "drive-relative",
+        "dotdot",
+        "dot",
+    ],
+)
 def test_path_shaped_dataset_names_are_refused(tmp_path, monkeypatch, caplog, name):
     """A dataset name is a file stem, and is used to build paths in both directions.
 
@@ -221,7 +285,7 @@ def test_path_shaped_dataset_names_are_refused(tmp_path, monkeypatch, caplog, na
     against a known list and cannot carry one of these; byoc trusts the config
     verbatim, which is the only route in.
     """
-    monkeypatch.setattr(clmsynth.main, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -232,8 +296,9 @@ def test_path_shaped_dataset_names_are_refused(tmp_path, monkeypatch, caplog, na
         d.mkdir()
 
     with caplog.at_level(logging.DEBUG, logger="clmsynth"):
-        n_ok = run_pipeline("byoc", infeasible_config(inputs, tmp_path, [name, "good"]),
-                            csv_dir, png_dir, txt_dir)
+        n_ok = run_pipeline(
+            "byoc", infeasible_config(inputs, tmp_path, [name, "good"]), csv_dir, png_dir, txt_dir
+        )
 
     assert n_ok == 1, "the well-named dataset should still be processed"
     assert "is not a plain name" in caplog.text
@@ -258,7 +323,7 @@ def test_non_byoc_id_mismatch_skips_only_that_dataset(tmp_path, monkeypatch):
     K or its features and are per-dataset for the same reason. `[CLM-104]` is
     not, its bound is num_classes, which no dataset can change.
     """
-    monkeypatch.setattr(clmsynth.main, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
     for d in (csv_dir, png_dir, txt_dir):
@@ -266,22 +331,32 @@ def test_non_byoc_id_mismatch_skips_only_that_dataset(tmp_path, monkeypatch):
 
     config = {
         "global_settings": {"data_source": "fabricated_data", "output_dir": str(tmp_path)},
-        "fabricated_data_suite": {"batteries": ["fabricated"],
-                                  "datasets": ["baseline_2class", "baseline_4class"],
-                                  "seed": 42},
+        "fabricated_data_suite": {
+            "batteries": ["fabricated"],
+            "datasets": ["baseline_2class", "baseline_4class"],
+            "seed": 42,
+        },
         "label_generation": {
-            "n_labels": 1, "source_labeling": "labels0", "noise": 0.1, "seed": 42,
-            "clm_label": {"num_classes": 2, "balance": "balanced", "matching_mode": "custom",
-                          "assignment_matrix": [{"label": 0, "clusters": [3],
-                                                 "recall_target": 0.5}],
-                          "split_rule": "equal",
-                          "spillover_rule": "proportional_to_marginal"}},
+            "n_labels": 1,
+            "source_labeling": "labels0",
+            "noise": 0.1,
+            "seed": 42,
+            "clm_label": {
+                "num_classes": 2,
+                "balance": "balanced",
+                "matching_mode": "custom",
+                "assignment_matrix": [{"label": 0, "clusters": [3], "recall_target": 0.5}],
+                "split_rule": "equal",
+                "spillover_rule": "proportional_to_marginal",
+            },
+        },
     }
 
     n_ok = run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir)
     assert n_ok == 1, "the batch did not continue past the mismatched dataset"
-    assert {p.name for p in csv_dir.glob("*.csv")} == \
-        {"fabricated_data__fabricated__baseline_4class.csv"}
+    assert {p.name for p in csv_dir.glob("*.csv")} == {
+        "fabricated_data__fabricated__baseline_4class.csv"
+    }
 
 
 def test_datasets_written_without_a_label_are_reported_separately(tmp_path, monkeypatch, caplog):
@@ -293,7 +368,7 @@ def test_datasets_written_without_a_label_are_reported_separately(tmp_path, monk
     never invisible; the summary simply contradicted it, and the summary is what
     a script reads.
     """
-    monkeypatch.setattr(clmsynth.main, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -304,18 +379,59 @@ def test_datasets_written_without_a_label_are_reported_separately(tmp_path, monk
         d.mkdir()
 
     with caplog.at_level(logging.DEBUG, logger="clmsynth"):
-        n_ok = run_pipeline("byoc", infeasible_config(inputs, tmp_path,
-                                                      ["good_a", "poison_b"]),
-                            csv_dir, png_dir, txt_dir)
+        n_ok = run_pipeline(
+            "byoc",
+            infeasible_config(inputs, tmp_path, ["good_a", "poison_b"]),
+            csv_dir,
+            png_dir,
+            txt_dir,
+        )
 
     assert n_ok == 2, "both datasets are written, so both are still processed"
-    assert "1 of the 2 processed dataset(s) were written WITHOUT" in caplog.text, \
+    assert "1 of the 2 processed dataset(s) were written WITHOUT" in caplog.text, (
         f"the unlabelled dataset was not reported. Captured:\n{caplog.text}"
+    )
+
+
+def test_an_unexpected_error_names_its_type_and_the_skip_is_counted(tmp_path, monkeypatch, caplog):
+    """An exception nobody anticipated skips its dataset alone, and says what it was.
+
+    `str(KeyError('cluster'))` is just `'cluster'`: without the type the log line
+    names a word, not a failure. The end-of-run summary counts the skip, because
+    `n_ok` alone cannot tell "1 of 1" from "1 of 2".
+    """
+    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
+    real_build_context = clmsynth.main.build_context
+
+    def build_context(source, battery, dataset, df):
+        if dataset == "broken":
+            raise KeyError("cluster")
+        return real_build_context(source, battery, dataset, df)
+
+    monkeypatch.setattr(clmsynth.main, "build_context", build_context)
+
+    inputs = tmp_path / "input"
+    inputs.mkdir()
+    write_byoc_batch(inputs, [("good", 20), ("broken", 20)])
+
+    csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
+    for d in (csv_dir, png_dir, txt_dir):
+        d.mkdir()
+
+    with caplog.at_level(logging.DEBUG, logger="clmsynth"):
+        n_ok = run_pipeline(
+            "byoc", byoc_config(inputs, tmp_path, ["good", "broken"]), csv_dir, png_dir, txt_dir
+        )
+
+    assert n_ok == 1, "the healthy dataset must still be processed"
+    assert "Skipping local/broken: unexpected KeyError: 'cluster'" in caplog.text, caplog.text
+    assert "1 of the 2 resolved dataset(s) were skipped" in caplog.text, caplog.text
 
 
 # ---------------------------------------------------------------------------
 # Plot failure is reported, but is not a dataset failure
 # ---------------------------------------------------------------------------
+
 
 def test_plot_failure_returns_false_and_leaves_no_file(tmp_path, caplog):
     """Finding N3: a rendering failure must be distinguishable from success.
@@ -329,8 +445,9 @@ def test_plot_failure_returns_false_and_leaves_no_file(tmp_path, caplog):
     frame = pd.DataFrame({"x": [[1, 2]] * 10, "y": list(range(10)), "hue": [0] * 5 + [1] * 5})
 
     with caplog.at_level(logging.DEBUG):
-        result = plot_feature_scatter(frame, "x", "y", hue_col="hue",
-                                      output_path=str(target), title="forced failure")
+        result = plot_feature_scatter(
+            frame, "x", "y", hue_col="hue", output_path=str(target), title="forced failure"
+        )
 
     assert result is False, "plot failure did not report itself"
     assert not target.exists(), "a partial PNG was left behind"
@@ -343,20 +460,20 @@ def test_plot_failure_does_not_reduce_the_processed_count(tmp_path, monkeypatch)
     Plotting is best-effort on top of it, so a plot that fails must be logged
     but must not turn a dataset that produced correct labels into a failure.
     """
-    monkeypatch.setattr(clmsynth.main, "plot_feature_scatter", lambda *a, **k: False)
+    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: False)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
     rng = np.random.default_rng(0)
-    pd.DataFrame({"f1": rng.normal(size=40), "f2": rng.normal(size=40),
-                  "cluster": np.repeat([0, 1], 20)}).to_csv(inputs / "solo.csv", index=False)
+    pd.DataFrame(
+        {"f1": rng.normal(size=40), "f2": rng.normal(size=40), "cluster": np.repeat([0, 1], 20)}
+    ).to_csv(inputs / "solo.csv", index=False)
 
     csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
     for d in (csv_dir, png_dir, txt_dir):
         d.mkdir()
 
-    n_ok = run_pipeline("byoc", byoc_config(inputs, tmp_path, ["solo"]),
-                        csv_dir, png_dir, txt_dir)
+    n_ok = run_pipeline("byoc", byoc_config(inputs, tmp_path, ["solo"]), csv_dir, png_dir, txt_dir)
 
     assert n_ok == 1, "a failed plot was counted as a failed dataset"
     assert (csv_dir / "byoc__local__solo.csv").is_file()
@@ -365,23 +482,30 @@ def test_plot_failure_does_not_reduce_the_processed_count(tmp_path, monkeypatch)
 def test_figure_creation_failure_returns_false_like_every_other_failure(tmp_path):
     """Finding N4, closed in 0.6.9. Regression pin."""
     frame = pd.DataFrame({"x": [1, 2, 3], "y": [1, 2, 3], "hue": [0, 1, 0]})
-    with mock.patch("clmsynth.visualization.plt.subplots",
-                    side_effect=RuntimeError("simulated figure-creation failure")):
-        assert plot_feature_scatter(
-            frame, "x", "y", hue_col="hue",
-            output_path=str(tmp_path / "x.png"), title="t") is False
+    with mock.patch(
+        "clmsynth.visualization.plt.subplots",
+        side_effect=RuntimeError("simulated figure-creation failure"),
+    ):
+        assert (
+            plot_feature_scatter(
+                frame, "x", "y", hue_col="hue", output_path=str(tmp_path / "x.png"), title="t"
+            )
+            is False
+        )
 
 
 # ---------------------------------------------------------------------------
 # The interactive branch: a shown figure belongs to the viewer
 # ---------------------------------------------------------------------------
 
+
 def test_interactive_plot_shows_and_keeps_the_figure_open(monkeypatch):
     """Omitting output_path shows and keeps the figure open."""
     show = mock.MagicMock()
     monkeypatch.setattr("clmsynth.visualization.plt.show", show)
-    frame = pd.DataFrame({"x": [1.0, 2.0, 3.0, 4.0], "y": [1.0, 4.0, 2.0, 3.0],
-                          "hue": [0, 1, 0, 1]})
+    frame = pd.DataFrame(
+        {"x": [1.0, 2.0, 3.0, 4.0], "y": [1.0, 4.0, 2.0, 3.0], "hue": [0, 1, 0, 1]}
+    )
 
     before = set(plt.get_fignums())
     result = plot_feature_scatter(frame, "x", "y", hue_col="hue", title="interactive")
@@ -400,15 +524,20 @@ def test_interactive_plot_shows_and_keeps_the_figure_open(monkeypatch):
 # Exit codes: the three outcomes must stay distinguishable
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("content", [None, "", "just a string, not a mapping"],
-                         ids=["missing-file", "empty-file", "not-a-mapping"])
+
+@pytest.mark.parametrize(
+    "content",
+    [None, "", "just a string, not a mapping", "global_settings: [unclosed"],
+    ids=["missing-file", "empty-file", "not-a-mapping", "malformed-yaml"],
+)
 def test_unloadable_config_exits_one(tmp_path, content):
     """Exit 1 is "ran but produced nothing", distinct from exit 2 for a coded
     config error and 0 for success.
 
     An empty YAML file parses to `None` and a scalar document parses to a
     string; both would surface much later as an unhelpful `AttributeError` on
-    `config.get(...)` without this check.
+    `config.get(...)` without this check. A syntax error used to escape as a
+    `yaml.YAMLError` traceback.
     """
     path = tmp_path / "cfg.yaml"
     if content is not None:
@@ -427,19 +556,25 @@ def test_unknown_data_source_processes_nothing_without_raising(tmp_path):
     assert run_pipeline("no_such_source", {}, csv_dir, png_dir, txt_dir) == 0
 
 
-
-@pytest.mark.parametrize("suite", [
-    {"datasets": "all", "seed": 42},
-    {"batteries": None, "datasets": "all", "seed": 42},
-    {"batteries": [], "datasets": "all", "seed": 42},
-], ids=["key-absent", "key-null", "key-empty-list"])
+@pytest.mark.parametrize(
+    "suite",
+    [
+        {"datasets": "all", "seed": 42},
+        {"batteries": None, "datasets": "all", "seed": 42},
+        {"batteries": [], "datasets": "all", "seed": 42},
+    ],
+    ids=["key-absent", "key-null", "key-empty-list"],
+)
 def test_unset_batteries_stops_the_run_and_names_the_key(suite, tmp_path, caplog):
     """Unset batteries stops the run. Deliberately uncoded."""
     config = {
         "global_settings": {"data_source": "fabricated_data", "output_dir": str(tmp_path)},
         "fabricated_data_suite": suite,
         "label_generation": {
-            "n_labels": 1, "source_labeling": "labels0", "noise": 0.1, "seed": 42,
+            "n_labels": 1,
+            "source_labeling": "labels0",
+            "noise": 0.1,
+            "seed": 42,
             "clm_label": {"num_classes": 4, "matching_mode": "perfect"},
         },
     }
@@ -453,13 +588,149 @@ def test_unset_batteries_stops_the_run_and_names_the_key(suite, tmp_path, caplog
     assert "fabricated_data_suite.batteries" in caplog.text, caplog.text
     assert not list(csv_dir.glob("*.csv")), "the run did work despite an unset key"
 
-@pytest.mark.parametrize("clm_label,expected_exit", [
-    ({"num_classes": 2, "matching_mode": "perfect"}, 0),
-    ({"num_classes": 2, "matching_mode": "bogus_mode"}, 2),
-    ({"num_classes": 2, "matching_mode": "custom",
-      "assignment_matrix": [{"label": 0, "clusters": [0], "recall_target": 1.0}],
-      "split_rule": "equal", "spillover_rule": "proportional_to_marginal"}, 1),
-], ids=["success-0", "coded-config-error-2", "nothing-processed-1"])
+
+def _fabricated_config(tmp_path, suite, label_seed=42):
+    """A one-dataset fabricated run; returns (config, csv_dir, png_dir, txt_dir)."""
+    config = {
+        "global_settings": {"data_source": "fabricated_data", "output_dir": str(tmp_path)},
+        "fabricated_data_suite": suite,
+        "label_generation": {
+            "n_labels": 1,
+            "source_labeling": "labels0",
+            "seed": label_seed,
+            "clm_label": {"num_classes": 4, "matching_mode": "perfect"},
+        },
+    }
+    dirs = [tmp_path / "csv", tmp_path / "png", tmp_path / "txt"]
+    for d in dirs:
+        d.mkdir()
+    return (config, *dirs)
+
+
+@pytest.mark.parametrize(
+    "key,suite",
+    [
+        ("batteries", {"batteries": "fabricated", "datasets": ["baseline_4class"]}),
+        ("datasets", {"batteries": ["fabricated"], "datasets": "baseline_4class"}),
+    ],
+    ids=["batteries", "datasets"],
+)
+def test_a_string_batteries_or_datasets_stops_the_run_and_names_the_key(
+    key, suite, tmp_path, caplog
+):
+    """A string other than "all" used to be iterated letter by letter.
+    datasets "mydata" became m, y, d, a, t, a; batteries "fabricated" matched
+    nothing. Refused like an unset batteries, naming the key."""
+    config, csv_dir, png_dir, txt_dir = _fabricated_config(tmp_path, dict(suite, seed=42))
+    with caplog.at_level(logging.ERROR, logger="clmsynth"):
+        assert run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir, False) == 0
+    assert f"fabricated_data_suite.{key}" in caplog.text, caplog.text
+    assert not list(csv_dir.glob("*.csv"))
+
+
+@pytest.mark.parametrize("where", ["suite", "label_generation"])
+def test_a_valueless_seed_draws_one_and_reports_it(where, tmp_path, caplog):
+    """A valueless `seed:` asks for randomness. The label seed crashed on
+    None + 0, and the suite seed reached the generator as None, so the log said
+    'Seed: None' and the data could not be reproduced. One integer is now drawn
+    and logged, so rerunning with it reproduces the run."""
+    suite = {"batteries": ["fabricated"], "datasets": ["baseline_4class"], "seed": 42}
+    if where == "suite":
+        suite["seed"] = None
+    config, csv_dir, png_dir, txt_dir = _fabricated_config(
+        tmp_path, suite, label_seed=None if where == "label_generation" else 42
+    )
+    with caplog.at_level(logging.WARNING, logger="clmsynth"):
+        assert run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir, False) == 1
+    name = "fabricated_data_suite.seed" if where == "suite" else "label_generation.seed"
+    match = re.search(
+        rf"'{re.escape(name)}' has no value: using the randomly drawn seed (\d+)", caplog.text
+    )
+    assert match, caplog.text
+    # The log can be lost; the summary txt keeps the drawn value with the run.
+    summary = next(txt_dir.glob("*.txt")).read_text(encoding="utf-8")
+    assert f"{name} = {match.group(1)} (drawn at random; the key has no value)" in summary
+
+
+@pytest.mark.parametrize(
+    "label_seed,expected",
+    [
+        (7, "label_generation.seed = 7 (set in the config)"),
+        ("absent", "label_generation.seed = 42 (default; the key is absent)"),
+    ],
+    ids=["set", "absent"],
+)
+def test_the_summary_txt_records_every_seed(label_seed, expected, tmp_path):
+    """Both seeds, however each was decided, and each label's own seed (label
+    i uses seed + i), so the summary alone reproduces the run."""
+    suite = {"batteries": ["fabricated"], "datasets": ["baseline_4class"], "seed": 3}
+    config, csv_dir, png_dir, txt_dir = _fabricated_config(tmp_path, suite, label_seed)
+    config["label_generation"]["n_labels"] = 2
+    if label_seed == "absent":
+        del config["label_generation"]["seed"]
+    assert run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir, False) == 1
+
+    summary = next(txt_dir.glob("*.txt")).read_text(encoding="utf-8")
+    assert "fabricated_data_suite.seed = 3 (set in the config)" in summary, summary
+    assert expected in summary, summary
+    base = 7 if label_seed == 7 else 42
+    assert "Label_0:" in summary and f"    seed = {base}\n" in summary, summary
+    assert f"    seed = {base + 1}\n" in summary, summary
+
+
+def test_a_source_that_ignores_the_suite_seed_never_mentions_it(tmp_path, caplog):
+    """byoc reads a file and clustbench downloads fixed data, so their suite seed
+    is never read: no seed is drawn for a valueless key, and the summary lists
+    only the label seed."""
+    inputs = tmp_path / "input"
+    inputs.mkdir()
+    rng = np.random.default_rng(0)
+    pd.DataFrame(
+        {"f1": rng.normal(size=40), "f2": rng.normal(size=40), "cluster": np.repeat([0, 1], 20)}
+    ).to_csv(inputs / "solo.csv", index=False)
+    config = byoc_config(inputs, tmp_path, ["solo"])
+    config["byoc_suite"]["seed"] = None
+    csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
+    for d in (csv_dir, png_dir, txt_dir):
+        d.mkdir()
+
+    with caplog.at_level(logging.WARNING, logger="clmsynth"):
+        assert run_pipeline("byoc", config, csv_dir, png_dir, txt_dir, False) == 1
+    assert "byoc_suite.seed" not in caplog.text, caplog.text
+    summary = next(txt_dir.glob("*.txt")).read_text(encoding="utf-8")
+    assert "byoc_suite.seed" not in summary, summary
+    assert "label_generation.seed = 42 (set in the config)" in summary, summary
+
+
+def test_resolve_seed_keeps_the_documented_default():
+    """An absent key is still 42; only a valueless one draws."""
+    from clmsynth.main import _resolve_seed
+
+    assert _resolve_seed({}, "x.seed") == (42, "default; the key is absent")
+    assert _resolve_seed({"seed": 7}, "x.seed") == (7, "set in the config")
+    drawn, how = _resolve_seed({"seed": None}, "x.seed")
+    assert isinstance(drawn, int) and 0 <= drawn < 2**31
+    assert how == "drawn at random; the key has no value"
+
+
+@pytest.mark.parametrize(
+    "clm_label,expected_exit",
+    [
+        ({"num_classes": 2, "matching_mode": "perfect"}, 0),
+        ({"num_classes": 2, "matching_mode": "bogus_mode"}, 2),
+        (
+            {
+                "num_classes": 2,
+                "matching_mode": "custom",
+                "assignment_matrix": [{"label": 0, "clusters": [0], "recall_target": 1.0}],
+                "split_rule": "equal",
+                "spillover_rule": "proportional_to_marginal",
+            },
+            1,
+        ),
+    ],
+    ids=["success-0", "coded-config-error-2", "nothing-processed-1"],
+)
 def test_the_three_exit_codes_stay_distinguishable(tmp_path, clm_label, expected_exit, monkeypatch):
     """0, 1 and 2 mean three different things and must not collapse into each other.
 
@@ -473,7 +744,7 @@ def test_the_three_exit_codes_stay_distinguishable(tmp_path, clm_label, expected
     hold label 0's budget, so labeling is skipped for every dataset and none
     is written.
     """
-    monkeypatch.setattr(clmsynth.main, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -482,12 +753,18 @@ def test_the_three_exit_codes_stay_distinguishable(tmp_path, clm_label, expected
     config = {
         "global_settings": {"data_source": "byoc", "output_dir": str(tmp_path / "out")},
         "byoc_suite": {
-            "batteries": ["local"], "input_dir": str(inputs),
+            "batteries": ["local"],
+            "input_dir": str(inputs),
             "datasets": ["solo"] if expected_exit != 1 else ["no_such_dataset"],
-            "cluster_column": "cluster", "standardize": False, "seed": 42,
+            "cluster_column": "cluster",
+            "standardize": False,
+            "seed": 42,
         },
         "label_generation": {
-            "n_labels": 1, "source_labeling": "labels0", "noise": 0.1, "seed": 42,
+            "n_labels": 1,
+            "source_labeling": "labels0",
+            "noise": 0.1,
+            "seed": 42,
             "clm_label": clm_label,
         },
     }
@@ -519,6 +796,7 @@ def test_the_three_exit_codes_stay_distinguishable(tmp_path, clm_label, expected
 # folder goes, and anything with real output in it stays.
 # ---------------------------------------------------------------------------
 
+
 def minimal_byoc_config(input_dir, output_dir, datasets, clm_label=None):
     """A byoc config whose `clm_label` the caller chooses.
 
@@ -531,11 +809,18 @@ def minimal_byoc_config(input_dir, output_dir, datasets, clm_label=None):
     return {
         "global_settings": {"data_source": "byoc", "output_dir": str(output_dir)},
         "byoc_suite": {
-            "batteries": ["local"], "input_dir": str(input_dir), "datasets": datasets,
-            "cluster_column": "cluster", "standardize": False, "seed": 42,
+            "batteries": ["local"],
+            "input_dir": str(input_dir),
+            "datasets": datasets,
+            "cluster_column": "cluster",
+            "standardize": False,
+            "seed": 42,
         },
         "label_generation": {
-            "n_labels": 1, "source_labeling": "labels0", "noise": 0.1, "seed": 42,
+            "n_labels": 1,
+            "source_labeling": "labels0",
+            "noise": 0.1,
+            "seed": 42,
             "clm_label": clm_label or {"num_classes": 2, "matching_mode": "perfect"},
         },
     }
@@ -543,7 +828,7 @@ def minimal_byoc_config(input_dir, output_dir, datasets, clm_label=None):
 
 def run_main(tmp_path, monkeypatch, config):
     """Drive the CLI over `config` and return (exit code, surviving run folders)."""
-    monkeypatch.setattr(clmsynth.main, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
     config_path = tmp_path / "cfg.yaml"
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["clmsynth", str(config_path)])
@@ -570,8 +855,8 @@ def test_a_run_that_writes_nothing_leaves_no_run_folder(tmp_path, monkeypatch):
     inputs.mkdir()
 
     code, survivors = run_main(
-        tmp_path, monkeypatch,
-        minimal_byoc_config(inputs, tmp_path / "out", ["no_such_dataset"]))
+        tmp_path, monkeypatch, minimal_byoc_config(inputs, tmp_path / "out", ["no_such_dataset"])
+    )
 
     assert code == 1, f"expected exit 1 for a run that processed nothing, got {code}"
     assert survivors == [], f"an empty run folder survived: {survivors}"
@@ -591,12 +876,21 @@ def test_a_coded_config_error_leaves_no_run_folder(tmp_path, monkeypatch):
 
     # Cluster id 9 is in no dataset -> [CLM-105] out of precheck.
     code, survivors = run_main(
-        tmp_path, monkeypatch,
-        minimal_byoc_config(inputs, tmp_path / "out", ["solo"],
-                    clm_label={"num_classes": 2, "balance": "balanced",
-                               "matching_mode": "single",
-                               "single_match": {"cluster": 9, "label": 0},
-                               "spillover_rule": "proportional_to_marginal"}))
+        tmp_path,
+        monkeypatch,
+        minimal_byoc_config(
+            inputs,
+            tmp_path / "out",
+            ["solo"],
+            clm_label={
+                "num_classes": 2,
+                "balance": "balanced",
+                "matching_mode": "single",
+                "single_match": {"cluster": 9, "label": 0},
+                "spillover_rule": "proportional_to_marginal",
+            },
+        ),
+    )
 
     assert code == 2, f"expected exit 2 for a coded config error, got {code}"
     assert survivors == [], f"an empty run folder survived a coded abort: {survivors}"
@@ -614,7 +908,8 @@ def test_a_successful_run_keeps_everything_it_wrote(tmp_path, monkeypatch):
     write_byoc_batch(inputs, [("solo", 20)])
 
     code, survivors = run_main(
-        tmp_path, monkeypatch, minimal_byoc_config(inputs, tmp_path / "out", ["solo"]))
+        tmp_path, monkeypatch, minimal_byoc_config(inputs, tmp_path / "out", ["solo"])
+    )
 
     assert code == 0, f"expected a clean run, got exit {code}"
     assert len(survivors) == 1, f"the successful run's folder is missing: {survivors}"
@@ -622,8 +917,11 @@ def test_a_successful_run_keeps_everything_it_wrote(tmp_path, monkeypatch):
     assert written, "the run folder survived but its csv/ is empty"
 
 
-@pytest.mark.parametrize("litter", ["csv/result.csv", "png/plot.png", "stray.txt"],
-                         ids=["a-csv", "a-plot", "an-unexpected-file"])
+@pytest.mark.parametrize(
+    "litter",
+    ["csv/result.csv", "png/plot.png", "stray.txt"],
+    ids=["a-csv", "a-plot", "an-unexpected-file"],
+)
 def test_a_run_folder_holding_anything_real_is_never_removed(tmp_path, litter):
     """The predicate directly: one file is enough to make a folder untouchable.
 
@@ -663,6 +961,45 @@ def test_the_barren_predicate_accepts_exactly_the_scaffolding(tmp_path):
     assert not run_dir.exists()
 
 
+@pytest.mark.parametrize("below", ["", "sub/deeper"], ids=["is-the-file", "under-the-file"])
+def test_an_output_dir_blocked_by_a_file_exits_one_instead_of_hanging(
+    tmp_path, monkeypatch, caplog, below
+):
+    """A FILE where the output folder, or a folder above it, should be.
+
+    On Windows `mkdir` under a file raises FileExistsError, which `build_run_dir`
+    read as "this run name is taken" and retried under the next suffix forever.
+    (On Linux it was a NotADirectoryError traceback.) The run now stops before
+    anything is created, names the file, and exits 1 without a `[CLM-###]` code.
+
+    Bounded: `Path.mkdir` fails the test after 50 calls, so a regression is a
+    red test, not a hung suite. The retry itself stays guarded by
+    `test_build_run_dir_never_hands_out_the_same_name_twice` in `03_isolation`.
+    """
+    blocker = tmp_path / "OUTPUT"
+    blocker.write_text("not a folder", encoding="utf-8")
+
+    real_mkdir = Path.mkdir
+    calls = []
+
+    def capped_mkdir(self, *args, **kwargs):
+        calls.append(self)
+        if len(calls) > 50:
+            raise AssertionError(f"build_run_dir is looping: {len(calls)} mkdir calls, last {self}")
+        return real_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", capped_mkdir)
+    with caplog.at_level(logging.CRITICAL, logger="clmsynth"):
+        code, _ = run_main(
+            tmp_path, monkeypatch, minimal_byoc_config(tmp_path, blocker / below, ["solo"])
+        )
+
+    assert code == 1, f"expected exit 1, got {code}"
+    assert blocker.read_text(encoding="utf-8") == "not a folder", "the blocking file was changed"
+    assert f"'{blocker.resolve()}' is a file, not a folder" in caplog.text, caplog.text
+    assert "[CLM-" not in caplog.text, "a file layout problem was reported as a CLM error"
+
+
 def test_reporting_a_path_never_raises():
     """A line describing where a run will write must not be why it fails.
 
@@ -696,9 +1033,23 @@ def test_generate_config_exits_one_on_a_missing_payload(tmp_path, monkeypatch):
     assert excinfo.value.code == 1
 
 
+def test_generate_config_exits_one_on_a_malformed_payload(tmp_path, monkeypatch):
+    """A YAML syntax error in the payload exits 1 like a missing file, not a traceback."""
+    from clmsynth import generate_config
+
+    payload = tmp_path / "payload.yaml"
+    payload.write_text("clm_label: [unclosed", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["clmsynth-config", str(payload), str(tmp_path / "out.yaml")])
+    with pytest.raises(SystemExit) as excinfo:
+        generate_config.main()
+    assert excinfo.value.code == 1
+    assert not (tmp_path / "out.yaml").exists()
+
+
 # ---------------------------------------------------------------------------
 # Row alignment: the guarantee the whole dataset format rests on
 # ---------------------------------------------------------------------------
+
 
 def test_context_refuses_a_misaligned_generated_label():
     """`DatasetContext` must reject a column that is not row-aligned.
@@ -710,26 +1061,28 @@ def test_context_refuses_a_misaligned_generated_label():
     nothing downstream would notice, the file would look entirely well-formed.
     """
     features = pd.DataFrame({"f1": range(10), "f2": range(10)})
-    context = DatasetContext("src", "battery", features,
-                             ground_truths={"labels0": pd.Series(range(10))})
+    context = DatasetContext(
+        "src", "battery", features, ground_truths={"labels0": pd.Series(range(10))}
+    )
 
     for bad_length in (9, 11):
         with pytest.raises(ValueError, match="misaligned"):
             context.add_generated_label("Label_0", pd.Series(range(bad_length)))
 
 
-
 def test_a_missing_clm_label_is_refused_not_silently_filled():
     """A config without clm_label is refused."""
     features = pd.DataFrame({"f1": range(10), "f2": range(10)})
-    context = DatasetContext("src", "battery", features,
-                             ground_truths={"labels0": pd.Series([0] * 5 + [1] * 5)})
+    context = DatasetContext(
+        "src", "battery", features, ground_truths={"labels0": pd.Series([0] * 5 + [1] * 5)}
+    )
 
     with pytest.raises(KeyError) as excinfo:
         generate_additional_labels(context, n_labels=1, clm_config=None)
 
     assert "'clm_label' is required" in str(excinfo.value)
     assert not context.generated_labels, "a label was attached despite the refusal"
+
 
 def test_context_accepts_an_aligned_label_and_ignores_its_index():
     """The other half: correct length is accepted, and a foreign index is reset.
@@ -739,8 +1092,9 @@ def test_context_accepts_an_aligned_label_and_ignores_its_index():
     silently aligned by index and scrambled.
     """
     features = pd.DataFrame({"f1": range(10), "f2": range(10)})
-    context = DatasetContext("src", "battery", features,
-                             ground_truths={"labels0": pd.Series(range(10))})
+    context = DatasetContext(
+        "src", "battery", features, ground_truths={"labels0": pd.Series(range(10))}
+    )
 
     reindexed = pd.Series(range(10), index=range(100, 110))
     context.add_generated_label("Label_0", reindexed)
@@ -753,6 +1107,7 @@ def test_context_accepts_an_aligned_label_and_ignores_its_index():
 # ---------------------------------------------------------------------------
 # Network timeout
 # ---------------------------------------------------------------------------
+
 
 def test_clustbench_timeout_is_passed_to_urlopen():
     """Finding F4: the configured timeout must reach the call.
@@ -769,21 +1124,27 @@ def test_clustbench_timeout_is_passed_to_urlopen():
         captured["timeout"] = timeout
         raise OSError("not connecting in a test")
 
-    with mock.patch("clmsynth.dataset_sources.urllib.request.urlopen", fake_urlopen),          pytest.raises(OSError):
+    with (
+        mock.patch("clmsynth.dataset_sources.urllib.request.urlopen", fake_urlopen),
+        pytest.raises(OSError),
+    ):
         dataset_sources._loadtxt_url("http://example.invalid/data.txt")
 
     assert captured["timeout"] == dataset_sources.CLUSTBENCH_TIMEOUT
     assert captured["timeout"] is not None, "fetch would inherit the OS default timeout"
 
 
-
-@pytest.mark.parametrize("url", ["file:///etc/passwd", "data:text/plain,x", "/tmp/local.gz"],
-                         ids=["file", "data", "no-scheme"])
+@pytest.mark.parametrize(
+    "url",
+    ["file:///etc/passwd", "data:text/plain,x", "/tmp/local.gz"],
+    ids=["file", "data", "no-scheme"],
+)
 def test_clustbench_refuses_a_non_http_base_url(url):
     """`base_url` comes from a shareable config, so only http(s) is opened."""
     with pytest.raises(ValueError) as excinfo:
         dataset_sources._loadtxt_url(url)
     assert "only http(s) is fetched" in str(excinfo.value)
+
 
 def test_clustbench_fetch_returns_none_when_the_source_is_unreachable():
     """A failed fetch is a skipped dataset, not an exception out of the batch.
@@ -791,8 +1152,14 @@ def test_clustbench_fetch_returns_none_when_the_source_is_unreachable():
     Patched rather than pointed at a real unreachable host, so it is instant
     and does not depend on the runner having (or not having) a network.
     """
-    with mock.patch("clmsynth.dataset_sources.urllib.request.urlopen",
-                    side_effect=OSError("unreachable")):
-        assert dataset_sources.fetch_clustbench_data(
-            dataset_group="wut", dataset_name="smile",
-            base_url="http://example.invalid/benchmark") is None
+    with mock.patch(
+        "clmsynth.dataset_sources.urllib.request.urlopen", side_effect=OSError("unreachable")
+    ):
+        assert (
+            dataset_sources.fetch_clustbench_data(
+                dataset_group="wut",
+                dataset_name="smile",
+                base_url="http://example.invalid/benchmark",
+            )
+            is None
+        )

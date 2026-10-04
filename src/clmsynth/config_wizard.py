@@ -6,6 +6,7 @@ Configuration Generator (CLI wizard).
 Run as a module, not as a file.
 """
 
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -89,6 +90,10 @@ def ask_float(prompt, default=None, lo=None, hi=None, explain=None, lo_strict=Fa
             f = float(v)
         except ValueError:
             print("    (enter a number)")
+            continue
+        # float() accepts 'nan' and 'inf', and NaN fails no bound check.
+        if not math.isfinite(f):
+            print("    (enter a finite number)")
             continue
         below = lo is not None and (f <= lo if lo_strict else f < lo)
         if below or (hi is not None and f > hi):
@@ -192,6 +197,9 @@ def ask_floats(prompt, explain=None) -> list[float]:
             vals = [float(x) for x in raw.split(",") if x.strip()]
         except ValueError:
             print("    (enter numbers separated by commas)")
+            continue
+        if not all(math.isfinite(x) for x in vals):
+            print("    (enter finite numbers)")
             continue
         if vals:
             return vals

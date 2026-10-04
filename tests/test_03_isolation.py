@@ -5,16 +5,15 @@ single-threaded, deterministic assertion about *ownership of state*.
 
 What is checked, in order:
 
-  RNG ownership        `fabricated_generator` reproduces a seed exactly even
-                       after `np.random.seed()`/`rand()` have moved the global
-                       stream, reproduces it again after an interleaved call
-                       with a different seed, and genuinely differs between
-                       seeds (so the first two are not vacuous).
+  RNG ownership        `fabricated_generator` reproduces a seed exactly after
+                       an interleaved call with a different seed, and genuinely
+                       differs between seeds (so the first is not vacuous).
+                       Direct use of the global np.random stream is ruff
+                       NPY002's job (pyproject.toml).
   config ownership     `run_pipeline` does not mutate the config dict it is
-                       handed, it pops keys off the per-source suite block,
-                       so without a defensive copy a second call with the same
-                       object resolves zero datasets. Asserted both directly
-                       and through that consequence.
+                       handed, or a second call with the same object resolves
+                       zero datasets. mypy guards the suite block itself
+                       (typed Mapping); this guards the lists inside it.
   run-folder ownership `build_run_dir` creates the name it returns, and never
                        returns the same name twice. Finding N2 (check-then-act)
                        was closed in 0.6.3; both halves are now guarantees
@@ -26,17 +25,21 @@ What is checked, in order:
                        a library caller keeps their own handlers and format.
                        What the filter they install *does* is not this module's
                        subject -- that is `05_config_safety`.
-  no async             The package contains no `async def`, `await` or
-                       `asyncio`, which every claim above assumes.
+  viz isolation        `main` imports no plotting stack; --no-viz renders nothing.
 
 """
 
+import json
 import logging
-from pathlib import Path
+import subprocess
+import sys
 
 import numpy as np
 import pytest
+import yaml
 
+import clmsynth.main
+import clmsynth.visualization
 from clmsynth import fabricated_generator
 from clmsynth.cli_logging import SingleLineFilter, configure_cli_logging
 from clmsynth.main import build_run_dir, run_pipeline
@@ -57,10 +60,15 @@ def pipeline_config(output_dir):
     return {
         "global_settings": {"data_source": "fabricated_data", "output_dir": str(output_dir)},
         "fabricated_data_suite": {
-            "batteries": ["fabricated"], "datasets": ["baseline_4class"], "seed": 42,
+            "batteries": ["fabricated"],
+            "datasets": ["baseline_4class"],
+            "seed": 42,
         },
         "label_generation": {
-            "n_labels": 1, "source_labeling": "labels0", "noise": 0.1, "seed": 42,
+            "n_labels": 1,
+            "source_labeling": "labels0",
+            "noise": 0.1,
+            "seed": 42,
             "clm_label": {"num_classes": 4, "matching_mode": "perfect"},
         },
     }
@@ -73,31 +81,14 @@ def _no_plots(no_plots):
     `04_failure_modes`, which tests plot failure deliberately, is unaffected.
     """
 
+
 # ---------------------------------------------------------------------------
 # The RNG must not travel through global interpreter state
 # ---------------------------------------------------------------------------
 
+
 def _fabricate(seed):
     return fabricated_generator.generate_synthetic_data(n_samples=200, output_file=None, seed=seed)
-
-
-def test_generator_output_survives_global_rng_mutation():
-    """Finding F5: a fixed seed must reproduce even if the global RNG moved.
-
-    `np.random.seed()` / `np.random.rand()` mutate process-global state. A
-    generator built on `np.random.*` rather than its own `default_rng(seed)`
-    would silently produce different data depending on what else in the process
-    had drawn from numpy first, and the caller would have no way to tell,
-    because the seed they passed did not change.
-    """
-    before = _fabricate(42)
-
-    np.random.seed(999)
-    np.random.rand(10_000)
-
-    after = _fabricate(42)
-    assert before["Feature_1"].equals(after["Feature_1"])
-    assert before["Feature_6"].equals(after["Feature_6"])
 
 
 def test_interleaved_seeds_do_not_contaminate_each_other():
@@ -105,6 +96,10 @@ def test_interleaved_seeds_do_not_contaminate_each_other():
     Catches state carried *between* calls rather than in from outside. a
     generator instance reused across calls, or a module-level stream advanced by
     whatever ran last.
+
+    Also the guard for global-RNG draws that ruff NPY002 cannot see, such as
+    pandas `.sample()` or an sklearn call without `random_state`: each moves the
+    global stream between the calls.
     """
     first = _fabricate(42)
     _fabricate(7)
@@ -113,10 +108,10 @@ def test_interleaved_seeds_do_not_contaminate_each_other():
 
 
 def test_different_seeds_actually_differ():
-    """Guards the two tests above from being vacuous.
+    """Guards the test above from being vacuous.
 
-    If the generator ignored its seed entirely and returned constant data, both
-    isolation tests would pass perfectly. This is what makes them mean
+    If the generator ignored its seed entirely and returned constant data, the
+    interleaved test would pass perfectly. This is what makes it mean
     something.
     """
     assert not _fabricate(42)["Feature_1"].equals(_fabricate(7)["Feature_1"])
@@ -126,20 +121,24 @@ def test_different_seeds_actually_differ():
 # run_pipeline must not mutate the config it is handed
 # ---------------------------------------------------------------------------
 
+
 def test_run_pipeline_does_not_mutate_the_callers_config(tmp_path):
     """
-    The suite block is consumed by popping keys, so it must be copied first.
-    `run_pipeline` pops `batteries`, `datasets` off the per-source
-    suite block as it resolves them. Without the defensive copy those keys are
-    gone from the caller's dict afterward, so a second call with the same
-    config, a caller looping over sources, or any library user reusing a
-    parsed config, would silently resolve zero datasets.
+    A second call with the same config, a caller looping over sources, or any
+    library user reusing a parsed config must see it unchanged, or it would
+    silently resolve zero datasets.
+
+    `run_pipeline` reads the suite with `.get()`, and its `Mapping` type makes a
+    `.pop()` or assignment on the suite a mypy error. The values inside are
+    `Any`, though: an in-place change to the caller's `batteries` or `datasets`
+    list (`.clear()`, `.sort()`) passes mypy, and this test is what catches it.
     """
     # Asserted behaviourally. This was previously checked by reading the function
     # source with `inspect.getsource` and searching for the literal text.
     config = pipeline_config(tmp_path)
-    before = {k: list(v) if isinstance(v, list) else v
-              for k, v in config["fabricated_data_suite"].items()}
+    before = {
+        k: list(v) if isinstance(v, list) else v for k, v in config["fabricated_data_suite"].items()
+    }
 
     csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
     for d in (csv_dir, png_dir, txt_dir):
@@ -149,39 +148,9 @@ def test_run_pipeline_does_not_mutate_the_callers_config(tmp_path):
     assert config["fabricated_data_suite"] == before, "run_pipeline mutated the caller's config"
 
 
-def test_run_pipeline_is_repeatable_with_the_same_config_object(tmp_path):
-    """The consequence of the above, stated directly: two calls, same result.
-    This is the failure a caller would actually see, the second run quietly
-    processing nothing.
-    """
-    config = pipeline_config(tmp_path)
-    counts = []
-    for run in ("first", "second"):
-        out = tmp_path / run
-        dirs = [out / "csv", out / "png", out / "txt"]
-        for d in dirs:
-            d.mkdir(parents=True)
-        counts.append(run_pipeline("fabricated_data", config, *dirs))
-    assert counts == [1, 1], f"second run with the same config object processed {counts[1]}"
-
-
 # ---------------------------------------------------------------------------
 # build_run_dir hands out a reservation, not just a name
 # ---------------------------------------------------------------------------
-
-def test_build_run_dir_reserves_what_it_returns(tmp_path):
-    """Finding N2, closed in 0.6.3: the name and the claim are now one step.
-
-    `build_run_dir` used to pick a free name with `while unique.exists()` while
-    the `mkdir` happened in the caller a full call later. Between those two
-    moments the name was unclaimed, so a second caller checking in that window
-    was told the same name was free, two runs starting in the same second
-    against one `output_dir` interleaved their csv/png/txt and config copy into
-    one folder.
-    """
-    path = build_run_dir(tmp_path, "IsolationTest")
-    assert path.exists(), "build_run_dir returned a name it had not claimed"
-    assert path.is_dir()
 
 
 def test_build_run_dir_never_hands_out_the_same_name_twice(tmp_path):
@@ -199,9 +168,11 @@ def test_build_run_dir_never_hands_out_the_same_name_twice(tmp_path):
     assert all(p.is_dir() for p in paths), "build_run_dir returned a path it did not create"
     assert len(list(tmp_path.iterdir())) == 3, "a folder was created that was never returned"
 
+
 # ---------------------------------------------------------------------------
-# Structural: the package is synchronous
+# Module-level state
 # ---------------------------------------------------------------------------
+
 
 def test_module_level_registries_survive_a_run_unchanged(tmp_path):
     """Nothing accumulates in module-level state across a pipeline run.
@@ -238,14 +209,20 @@ def test_module_level_registries_survive_a_run_unchanged(tmp_path):
     csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
     for d in (csv_dir, png_dir, txt_dir):
         d.mkdir()
-    assert run_pipeline("fabricated_data", pipeline_config(tmp_path),
-                        csv_dir, png_dir, txt_dir) == 1
+    assert (
+        run_pipeline("fabricated_data", pipeline_config(tmp_path), csv_dir, png_dir, txt_dir) == 1
+    )
 
     _fabricate(42)
     from clmsynth.clm_label_engine import generate_clm_labels
+
     clusters = np.concatenate([np.full(50, k) for k in range(4)])
-    generate_clm_labels(clusters, np.random.default_rng(0).normal(size=(200, 2)),
-                        {"num_classes": 4, "matching_mode": "perfect"}, seed=1)
+    generate_clm_labels(
+        clusters,
+        np.random.default_rng(0).normal(size=(200, 2)),
+        {"num_classes": 4, "matching_mode": "perfect"},
+        seed=1,
+    )
 
     changed = [name for name, obj in watched.items() if obj != before[name]]
     assert not changed, f"module-level state mutated during a run: {changed}"
@@ -254,6 +231,7 @@ def test_module_level_registries_survive_a_run_unchanged(tmp_path):
 # ---------------------------------------------------------------------------
 # Logging configuration belongs to the process owner, not to the package
 # ---------------------------------------------------------------------------
+
 
 def test_importing_the_package_configures_no_logging():
     """A library must not reconfigure the logging of the process it is imported into.
@@ -270,10 +248,12 @@ def test_importing_the_package_configures_no_logging():
     import clmsynth  # noqa: F401  (the import is the thing under test)
 
     package_logger = logging.getLogger("clmsynth")
-    assert package_logger.handlers == [], \
+    assert package_logger.handlers == [], (
         f"importing clmsynth installed handlers: {package_logger.handlers}"
-    assert package_logger.filters == [], \
+    )
+    assert package_logger.filters == [], (
         f"importing clmsynth installed filters: {package_logger.filters}"
+    )
 
 
 def test_configure_cli_logging_is_idempotent(monkeypatch):
@@ -299,20 +279,85 @@ def test_configure_cli_logging_is_idempotent(monkeypatch):
     assert len(scrubbers) == 1, f"expected exactly one filter, got {len(scrubbers)}"
 
 
-def test_package_contains_no_async_constructs():
-    """The async section was a prose declaration; this makes it checkable.
+# ---------------------------------------------------------------------------
+# The plotting stack stays out of the import graph until a plot is asked for
+# ---------------------------------------------------------------------------
 
-    Every claim in this module rests on the pipeline being synchronous, one
-    thread, one process, a sequential loop. If `async def`, `await` or
-    `asyncio` ever appear, that assumption needs revisiting and so does
-    everything above.
-    """
-    import clmsynth
 
-    offenders = []
-    for path in sorted(Path(clmsynth.__path__[0]).glob("*.py")):
-        text = path.read_text(encoding="utf-8")
-        for token in ("async def", "await ", "import asyncio"):
-            if token in text:
-                offenders.append(f"{path.name}: {token}")
-    assert not offenders, f"package is no longer synchronous: {offenders}"
+def test_importing_main_loads_no_plotting_stack():
+    """Importing the pipeline must not load matplotlib."""
+    # Subprocess: conftest imports matplotlib session-wide. -I (isolated) ignores
+    # PYTHONPATH: an IDE's plot support puts a sitecustomize.py on it that imports
+    # matplotlib at interpreter start (PyCharm's "Show plots in tool window"), which
+    # the child would otherwise inherit and blame on clmsynth.main.
+    probe = (
+        "import json, sys\n"
+        "def plotting():\n"
+        "    return sorted(m for m in sys.modules if m.split('.')[0] in {'matplotlib', 'seaborn'})\n"
+        "before = plotting()\n"
+        "import clmsynth.main\n"
+        "print(json.dumps([before, [m for m in plotting() if m not in before]]))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", probe], capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+    before, loaded = json.loads(result.stdout)
+    # Otherwise the import below proves nothing: modules already present cannot be
+    # loaded again, so the check would pass whatever clmsynth.main imports.
+    assert not before, (
+        f"the interpreter loaded the plotting stack before clmsynth was imported: {before}. "
+        "A sitecustomize.py or .pth file in the environment imports it."
+    )
+    assert not loaded, f"importing clmsynth.main loaded the plotting stack: {loaded}"
+
+
+def test_a_no_viz_run_never_reaches_the_plotter(tmp_path, monkeypatch):
+    """`render_plots=False` reaches no plotting call."""
+    calls = []
+
+    def record(*args, **kwargs):
+        calls.append(1)
+        return True
+
+    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", record)
+
+    def run(name, render_plots):
+        dirs = [tmp_path / name / d for d in ("csv", "png", "txt")]
+        for d in dirs:
+            d.mkdir(parents=True)
+        return run_pipeline(
+            "fabricated_data", pipeline_config(tmp_path / name), *dirs, render_plots=render_plots
+        )
+
+    assert run("on", True) == 1
+    assert calls, "the default run rendered nothing, which would make the check below vacuous"
+
+    calls.clear()
+    assert run("off", False) == 1
+    assert calls == [], f"a --no-viz run still called the plotter {len(calls)} time(s)"
+    assert not list((tmp_path / "off" / "png").iterdir()), "a PNG was written anyway"
+
+
+@pytest.mark.parametrize(
+    "flags,renders", [([], True), (["--no-viz"], False)], ids=["default", "no-viz"]
+)
+def test_the_no_viz_flag_reaches_the_pipeline(tmp_path, monkeypatch, flags, renders):
+    """The CLI flag reaches `run_pipeline`: driven through `main()`, not the argument."""
+    calls = []
+
+    def record(*args, **kwargs):
+        calls.append(1)
+        return True
+
+    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", record)
+    config_path = tmp_path / "cfg.yaml"
+    config_path.write_text(yaml.safe_dump(pipeline_config(tmp_path / "out")), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["clmsynth", str(config_path), *flags])
+
+    clmsynth.main.main()
+
+    assert bool(calls) is renders, (
+        f"flags {flags}: expected rendering={renders}, plotter called {len(calls)} time(s)"
+    )

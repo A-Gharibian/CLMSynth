@@ -101,8 +101,9 @@ jobs:
           python-version: "3.13"
           cache: pip
 
+      # PyYAML: the metadata check at the end reads CITATION.cff as YAML.
       - name: Install the build tools
-        run: pip install build twine
+        run: pip install build twine pyyaml
 
       - name: Build the sdist and wheel
         run: python -m build

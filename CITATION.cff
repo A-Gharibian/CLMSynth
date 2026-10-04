@@ -1,66 +1,49 @@
-# Citation File Format 1.2.0 -- https://citation-file-format.github.io/
-# Validate with:  pip install cffconvert && cffconvert --validate
+# This CITATION.cff file was generated with cffinit.
 
 cff-version: 1.2.0
-message: "If you use this software, please cite it as below."
-title: "CLMSynth: A Synthetic Data Generator for Cluster and Label Matching Evaluation"
-abstract: >-
-  CLMSynth generates a label L(x) and attaches it to an existing set of cluster
-  IDs c(x) (ground truth or algorithm output), with the relationship between L
-  and c specified by a configuration file rather than measured afterwards.
-  Unlike clustering benchmarks that implicitly equate clusters with classes, it
-  treats cluster formation and class assignment as independent processes with
-  configurable matching outcomes, supporting mathematically controlled agreement
-  through recall targets, class balance, spatial placement, and a solved target
-  metric (multiclass Gorodkin R_K, a closed-form single-pair Matthews phi, or
-  the adjusted Rand index).
+title: >-
+  CLMSynth: A Synthetic Data Generator for Cluster and Label
+  Matching Evaluation
+message: 'If you use this software, please cite it as below.'
 type: software
-
 authors:
   - family-names: Gharibian
     given-names: Arootin
     email: arootin.gharibian@vsb.cz
-    affiliation: "VSB - Technical University of Ostrava"
-    orcid: "https://orcid.org/0000-0001-7819-0842"
+    affiliation: VSB - Technical University of Ostrava
+    orcid: 'https://orcid.org/0000-0001-7819-0842'
   - family-names: Kudelka
     given-names: Milos
-    affiliation: "VSB - Technical University of Ostrava"
-    orcid: "https://orcid.org/0000-0002-7219-1008"
-
-version: 0.7.1
-date-released: 2026-09-17
-license: MIT
-repository-code: "https://github.com/A-Gharibian/CLMSynth"
-doi: 10.5281/zenodo.21759538
-
+    affiliation: VSB - Technical University of Ostrava
+    orcid: 'https://orcid.org/0000-0002-7219-1008'
 identifiers:
   - type: doi
     value: 10.5281/zenodo.21759538
-    description: "Zenodo record for CLMSynth, resolving to the latest release"
+    description: Zenodo record for CLMSynth
+repository-code: 'https://github.com/A-Gharibian/CLMSynth'
+repository-artifact: 'https://zenodo.org/records/21755236'
+url: >-
+  https://www.sciencedirect.com/science/article/pii/S2352711026005686
+license: MIT
+version: 0.7.2
+date-released: '2026-10-04'
 
-keywords:
-  - synthetic-data
-  - cluster-label matching
-  - class imbalance
-
-# ----------------------------------------------------
-# The article. Currently the SSRN preprint: it carries a permanent DOI of its
-# own, so it can be cited now and replaced when the journal assigns one.
 preferred-citation:
   type: article
-  title: "A Synthetic Data Generator for Cluster and Label Matching Evaluation"
+  title: A Synthetic Data Generator for Cluster and Label Matching Evaluation
   authors:
     - family-names: Gharibian
       given-names: Arootin
       email: arootin.gharibian@vsb.cz
-      affiliation: "VSB - Technical University of Ostrava"
-      orcid: "https://orcid.org/0000-0001-7819-0842"
+      affiliation: VSB - Technical University of Ostrava
+      orcid: 'https://orcid.org/0000-0001-7819-0842'
     - family-names: Kudelka
       given-names: Milos
-      affiliation: "VSB - Technical University of Ostrava"
-      orcid: "https://orcid.org/0000-0002-7219-1008"
-  journal: "SSRN Electronic Journal"
+      affiliation: VSB - Technical University of Ostrava
+      orcid: 'https://orcid.org/0000-0002-7219-1008'
+  journal: SoftwareX
+  volume: 36
   year: 2026
-  doi: 10.2139/ssrn.7268626
-  url: "https://dx.doi.org/10.2139/ssrn.7268626"
-  notes: "Preprint. Replace with the journal DOI once one is assigned."
+  start: 103077
+  issn: 2352-7110
+  doi: 10.1016/j.softx.2026.103077

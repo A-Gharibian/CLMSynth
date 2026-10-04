@@ -10,7 +10,7 @@ INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed
 INFO - Generating synthetic data (Seed: 42)...
 INFO - Applying perfect separation ground truth to categorical labels...
 INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
-WARNING - [CLM-302] matching_mode='perfect': proportions/balance/skew_rule ignored, label counts are forced to match their paired cluster's size.
+WARNING - [CLM-302] matching_mode='perfect': proportions/balance/skew_rule/skew_params ignored and not validated, label counts are forced to match their paired cluster's size.
 INFO - CLM labels generated. Target counts: [200, 200, 200, 200], achieved: [200, 200, 200, 200].
 INFO - [fabricated_data/fabricated/baseline_4class] Attached generated label 'Label_0'.
 INFO - Saved: _scratch/CLM-302/{run}/csv/fabricated_data__fabricated__baseline_4class.csv

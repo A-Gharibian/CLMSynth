@@ -1,8 +1,8 @@
 # CLMSynth Roadmap
 
-[![Version](https://img.shields.io/badge/version-0.7.1-blue)](https://github.com/A-Gharibian/CLMSynth/releases)
+[![Version](https://img.shields.io/badge/version-0.7.2-blue)](https://github.com/A-Gharibian/CLMSynth/releases)
 
-Planned work from 0.7.2 to 0.9.0. Current behavior is in **`../README.md`**.
+Planned work from 0.7.3 to 0.9.0. Current behavior is in **`../README.md`**.
 Past changes are in **`../CHANGELOG.md`**.
 
 ## Conventions
@@ -15,46 +15,16 @@ minor, except for a fix.
 
 ---
 
-## 0.7.2
-
-**Correctness and diagnostics.** No new capability, so it stays a patch release.
-
-### Will be Fixed, engine
-
-- **Duplicate `competing_noise` entries.** Duplicates sum their counts but keep the
-  last `favors`. *[issue]*
-- N for labels can deviate from N for clusters for N > 10^6 in some cases. *[issue]*
-
-### Will be Fixed, diagnostics
-
-Labels are correct below; only the message is wrong.
-
-- **`matching_mode: random` skips three validators.** `[CLM-128]` and `[CLM-129]`
-  never fire there. *[improvement]*
-
-- **A valueless `assignment_matrix:` with a `target_metric`.** It raises `TypeError`
-  instead of `[CLM-206]`. *[improvement]*
-
-- **`[CLM-111]` pre-empts `[CLM-101]`.** A misspelled mode with a target reads as
-  incompatibility. *[improvement]*
-
-- **`[CLM-121]` fires under `perfect`.** `[CLM-302]` says `proportions` are ignored
-  there. *[improvement]*
-
----
-
-## 0.7.3 and 0.7.4
+## 0.7.3
 
 ### Reachability of MCC ceiling
 
-- **The closed-form ceiling at the point of asking.** The ceiling
+- **The ceiling while the wizard is running.** The ceiling
   `MCC=sqrt(M(M-1)/(K(K-1)))` needs `K` before any fetch. `byoc` knows `K`;
-  `clustbench` and `mdcgen` need a static table. *[feature]*
+  `clustbench` need a static table. Generative data such as `mdcgen` can report
+   only at the end if target fails to reach. *[feature]*
 
-- **The ceiling while the wizard is running.** A rule-based wizard can only show
-  the closed-form ceiling. *[feature]*
-
-### Added
+### Will be Added
 
 - **The engine computes and reports the ceiling.** The closed-form ceiling needs only
   `M` and `K`. The reachable ceiling is the MCC at full recall. The solver already
@@ -67,6 +37,8 @@ Labels are correct below; only the message is wrong.
 - **`scope: pair` with `type: ari`.** Pair ARI inverts in closed form, as a
   quadratic. `[CLM-123]` refuses it today. `[CLM-307]` would need the ARI floor. *[feature]*
 
+## 0.7.4
+
 ### Parallel-safe batch execution and performance release
 
 ### Will be Fixed
@@ -77,10 +49,8 @@ Labels are correct below; only the message is wrong.
 - **Integer label counts must sum to `N`.** The `[CLM-106]` tolerance can make the
   rounding remainder negative. Large datasets then get too many labels. *[issue]*
 
-- **`--no-viz`, and the import that has to move with it.** Skipping the render is a
-  one-line guard. `main.py` still imports `plot_feature_scatter` at module scope.
-  Defer that import into `_render_dataset_plots`. Tests patch it on `clmsynth.main`,
-  so restate them first. `config_wizard.py` already avoids this dependency. *[feature]*
+- **Duplicate `competing_noise` entries.** Duplicates sum their counts but keep the
+  last `favors`. *[issue]*
 
 - **matplotlib/seaborn plotting is not thread-safe.** `plot_feature_scatter` uses
   process-global pyplot and seaborn state. *Fix:* `matplotlib.use("Agg")` at import
@@ -90,7 +60,7 @@ Labels are correct below; only the message is wrong.
   cannot be attributed. Messages do not always name their dataset. Per-run log
   files or a run id: still open. *[preventive]*
 
-### Added
+### Will be Added
 
 - **A documented batch entry point.** Extend `03_isolation` to cover it. *[feature]*
 - **A Sphinx site.** *[feature]*
@@ -115,11 +85,11 @@ Will be released to PyPI.
 **Source and generator extensions.** Data-source work, not engine work. Clusters stay
 fixed, read-only input to the engine.
 
-### Added
+### Will be Added
 
 - **Repliclust.** It generates clusters from prompts. *[feature]*
 
-### Fixed
+### Will be Fixed
 
 - **The `clustbench` registries disagree.** `SOURCE_METADATA` and
   `CLUSTBENCH_DATASETS` list different batteries. `batteries: all` uses the larger
@@ -128,8 +98,6 @@ fixed, read-only input to the engine.
 ## 0.7.8 and 0.7.9
 
 **Python 3.15 support**
-
-### Added
 
 - `requires-python` becomes `>=3.12,<3.16`. Add the 3.15 classifier and CI
   interpreter. Ships once Python 3.15 is released and tested. *[feature]*
@@ -167,6 +135,12 @@ and a CLMSynth GUI are planned.
 - **Integer network flow.** Rounding happens at three independent sites. Their
   errors do not cancel. A transportation formulation gives integer counts in one
   exact solve. *[improvement]*
+
+- **Automatic assignment for a target metric.** An explicit opt-in such as
+  `assignment_matrix: auto` would let the engine choose the label-to-cluster
+  pairing (label i to cluster i, or matched by size) and solve the target over
+  it. An empty or valueless matrix stays an error: the pairing changes the
+  result, so it is not guessed. *[feature]*
 
 - **Label opt-out from spillover.** `scope: pair` resizes the target label and pins
   its recall. *[feature]*

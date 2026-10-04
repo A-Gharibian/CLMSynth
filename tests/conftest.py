@@ -11,10 +11,13 @@ import pytest
 matplotlib.use("Agg")
 
 # Must follow the backend selection above.
-import clmsynth.main  # noqa: I001
+import clmsynth.visualization
+
 
 @pytest.fixture
 def no_plots(monkeypatch):
     """Stop `run_pipeline` from rendering anything, returns True.
+
+    Patched on `clmsynth.visualization`: `main` imports it per call.
     """
-    monkeypatch.setattr(clmsynth.main, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)

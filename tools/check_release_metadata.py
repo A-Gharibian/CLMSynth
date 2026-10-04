@@ -1,19 +1,6 @@
 #!/usr/bin/env python
-"""Every declaration of the version and the release date has to agree.
+"""Every declaration of the version and the release date has to agree."""
 
-Six fixed declarations carry the version (codemeta three times over, in
-`version`, `softwareVersion` and the downloadUrl tag), plus every
-docs/**/*.tex carrying a `% !CLMSynth-version` banner. Three carry the date.
-The date is the half that survives a version bump untouched, so nothing else
-would catch it. codemeta's declared requirements are checked against
-pyproject's dependencies for the same reason: two copies of one fact.
-
-    python tools/check_release_metadata.py              # cross-file agreement
-    python tools/check_release_metadata.py --tag v0.7.0 # and the tag being released
-
-The tag check is the release workflow's precondition: it is local arithmetic, so
-it has to exist before the first upload rather than after it.
-"""
 from __future__ import annotations
 
 import argparse
@@ -23,8 +10,12 @@ import re
 import sys
 import tomllib
 
-REPO = pathlib.Path(__file__).resolve().parents[1]
+import yaml
 
+# The repository root is the nearest folder above this script holding
+# pyproject.toml, so the script keeps working wherever it is moved.
+REPO = next(p for p in pathlib.Path(__file__).resolve().parents
+            if (p / "pyproject.toml").is_file())
 
 def _capture(pattern: str, text: str, flags: int = 0) -> str:
     """sentinel"""
@@ -41,8 +32,10 @@ def collect() -> tuple:
     init = (REPO / "src/clmsynth/__init__.py").read_text(encoding="utf-8")
     found["__init__.py"] = _capture(r'__version__\s*=\s*"([^"]+)"', init)
 
-    cff = (REPO / "CITATION.cff").read_text(encoding="utf-8")
-    found["CITATION.cff"] = _capture(r"^version:\s*(\S+)", cff, re.M)
+    # Read as YAML, not line by line: a quoted value ('2026-09-17') or a DOI
+    # under `identifiers` is the same fact as its plain or top-level form.
+    cff = yaml.safe_load((REPO / "CITATION.cff").read_text(encoding="utf-8")) or {}
+    found["CITATION.cff"] = str(cff.get("version", "(absent)"))
 
     codemeta = json.loads((REPO / "codemeta.json").read_text(encoding="utf-8"))
     found["codemeta.json"] = codemeta.get("version", "(absent)")
@@ -50,34 +43,32 @@ def collect() -> tuple:
     tag = re.search(r"/v([^/]+)\.tar\.gz$", codemeta.get("downloadUrl", ""))
     found["codemeta.json downloadUrl"] = tag.group(1) if tag else "(unparsable)"
 
-    # codemeta.softwareRequirements restates pyproject.dependencies, so it can
-    # go stale the moment a dependency moves. Extra entries are fine: the two
-    # optional dependencies are declared there and nowhere machine-readable else.
+    # codemeta.softwareRequirements restates pyproject.
     declared = {}
     for entry in codemeta.get("softwareRequirements", []):
         if isinstance(entry, dict) and entry.get("name"):
             declared[entry["name"]] = entry.get("version", "")
-    # The software DOI is declared twice. It must be the SOFTWARE record, not a
-    # version record and not the validation-data record, which is a distinct
-    # deposit with its own DOI and lives in codemeta's `citation` instead.
-    cff_doi = _capture(r"^doi:\s*(\S+)", cff, re.M)
+    # The software DOI is declared twice.
+    # In CITATION.cff it sits under `identifiers` (type: doi) or at the top level;
+    # preferred-citation.doi is the article's, never the software's.
+    cff_dois = [i.get("value") for i in cff.get("identifiers") or []
+                if isinstance(i, dict) and i.get("type") == "doi"]
+    cff_doi = str(cff_dois[0] if cff_dois else cff.get("doi", "(absent)"))
     cm_doi = codemeta.get("identifier", "(absent)")
     doi_faults = []
     if cff_doi != cm_doi:
-        doi_faults.append(
-            f"CITATION.cff declares {cff_doi}, codemeta.json declares {cm_doi}")
+        doi_faults.append(f"CITATION.cff declares {cff_doi}, codemeta.json declares {cm_doi}")
     if not cm_doi.startswith("10."):
         doi_faults.append(f"codemeta.json identifier {cm_doi!r} is not a bare DOI")
 
     dep_faults = []
     for spec in project.get("dependencies", []):
         name = re.split(r"[<>=!~\[]", spec, maxsplit=1)[0].strip()
-        want = spec[len(name):].strip()
+        want = spec[len(name) :].strip()
         if name not in declared:
             dep_faults.append(f"{name} is a dependency but codemeta does not declare it")
         elif declared[name] != want:
-            dep_faults.append(
-                f"{name}: pyproject says {want!r}, codemeta says {declared[name]!r}")
+            dep_faults.append(f"{name}: pyproject says {want!r}, codemeta says {declared[name]!r}")
 
     for tex in sorted((REPO / "docs").rglob("*.tex")):
         head = tex.read_text(encoding="utf-8", errors="replace")[:2000]
@@ -91,11 +82,18 @@ def collect() -> tuple:
     dates = None
     if dated:
         dates = {
-            "CITATION.cff date-released": _capture(r"^date-released:\s*(\S+)", cff, re.M),
+            # str(): unquoted, YAML reads it as a date object; quoted, as a string.
+            "CITATION.cff date-released": str(cff.get("date-released", "(absent)")),
             "codemeta.json dateModified": codemeta.get("dateModified", "(absent)"),
         }
-    return (version, found, dates, dated.group(1) if dated else None,
-            dep_faults + doi_faults, cff_doi)
+    return (
+        version,
+        found,
+        dates,
+        dated.group(1) if dated else None,
+        dep_faults + doi_faults,
+        cff_doi,
+    )
 
 
 def main() -> int:
@@ -141,8 +139,7 @@ def main() -> int:
         if tag_wrong:
             print(f"\ntag {args.tag} does not match the declared version {version}")
 
-    return 1 if (disagree or release_date is None or stale or tag_wrong
-                 or dep_faults) else 0
+    return 1 if (disagree or release_date is None or stale or tag_wrong or dep_faults) else 0
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ triggers it, runs the pipeline, captures the log, and asserts the expected code
 actually appears. Output is grouped one folder per main table:
 
     troubleshooting_catalog/
-        ValueError_1xx/            101..131   fatal, aborts the run (exit 2)
+        ValueError_1xx/            101..134   fatal, aborts the run (exit 2)
         InfeasibleAllocation_15x/  150..153   per-dataset skip (exit 0)
         KeyError_2xx/              201..209   per-dataset skip (exit 0)
         Warnings_3xx/              301..310   non-fatal, run succeeds (exit 0)
@@ -105,14 +105,17 @@ def base():
     }
 
 
-def byoc(stem, n_clusters=65, n_per=3, string_ids=False):
-    """Write a byoc CSV and return a config pointing at it."""
+def byoc(stem, n_clusters=65, n_per=3, string_ids=False, blank_ids=0):
+    """Write a byoc CSV and return a config pointing at it. `blank_ids` empties the
+    cluster cell of that many rows, one per cluster from the first."""
     DATA.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(42)
     rows = []
     for k in range(n_clusters):
-        for _ in range(n_per):
+        for i in range(n_per):
             cid = f"C{k}" if string_ids else k
+            if i == 0 and k < blank_ids:
+                cid = ""
             rows.append([float(rng.normal(k, 0.3)), float(rng.normal(k, 0.3)), cid])
     with open(DATA / f"{stem}.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
@@ -172,12 +175,10 @@ CASES = [
     # ---- 1xx : ValueError, fatal, aborts the run ------------------------
     ("1xx", 101, "matching_mode is not one of the four modes",
      lambda: c(matching_mode="bogus_mode")),
-    # balance='balanced' with no proportions: otherwise base()'s four-entry
-    # proportions against num_classes=3 trips [CLM-121] first, which is a
-    # different code and masks this one entirely.
+    # base()'s four-entry proportions stay in: 'perfect' does not read them, and
+    # [CLM-102] is checked before any label sizing (it used to lose to [CLM-121]).
     ("1xx", 102, "perfect with M != K",
-     lambda: c(matching_mode="perfect", num_classes=3, assignment_matrix=None,
-               proportions=None, balance="balanced")),
+     lambda: c(matching_mode="perfect", num_classes=3, assignment_matrix=None)),
     ("1xx", 103, "single with M < 2",
      lambda: c(matching_mode="single", num_classes=1, proportions=[1.0],
                single_match={"cluster": 0, "label": 0}, assignment_matrix=None)),
@@ -267,6 +268,20 @@ CASES = [
     # engine's own normalization divides by their sum.
     ("1xx", 131, "skew_params out of range for the chosen skew_rule",
      lambda: c(proportions=None, skew_rule="dirichlet", skew_params={"alpha": 0.0})),
+    # A case typo of the default: read as 'unbalanced' before [CLM-132], which
+    # delivered base()'s proportions instead of ignoring them.
+    ("1xx", 132, "balance is not 'balanced' or 'unbalanced'",
+     lambda: c(balance="Balanced")),
+    # byoc reports blank cluster cells as [CLM-133] and skips the dataset, the
+    # same verdict the engine gives missing ids through the Python API. Mixed id
+    # types and a coords row mismatch cannot come from a file: byoc reads one
+    # column as one type and builds coords from the same rows.
+    ("1xx", 133, "the dataset has missing cluster ids (byoc, blank cluster cells)",
+     lambda: byoc("missing_cluster_ids", n_clusters=4, n_per=10, blank_ids=2)),
+    # A quoted "false" is a non-empty string: before [CLM-134] it switched
+    # placement on.
+    ("1xx", 134, "a value of the wrong type (centroid_dependence.enabled quoted)",
+     lambda: c(centroid_dependence={"enabled": "false", "profile": "linear", "favors": "core"})),
 
     # ---- 15x : InfeasibleAllocationError, per-dataset skip ---------------
     ("15x", 150, "one rule's budget exceeds its clusters' capacity",
@@ -306,12 +321,18 @@ CASES = [
     # ---- 3xx : warnings, run succeeds ------------------------------------
     ("3xx", 301, "balance balanced with explicit proportions",
      lambda: c(balance="balanced")),
-    ("3xx", 302, "perfect ignores proportions/balance/skew_rule",
+    ("3xx", 302, "perfect ignores proportions/balance/skew_rule/skew_params",
      lambda: c(matching_mode="perfect", assignment_matrix=None)),
     ("3xx", 303, "target_metric present with per-rule recall_target",
      lambda: c(target_metric={"type": "mcc", "value": 0.5, "tolerance": 0.2})),
-    ("3xx", 304, "competing_noise active (counts deviate from proportions)",
-     lambda: c(competing_noise=[{"cluster": 0, "label": 1, "share": 0.5, "favors": "boundary"}])),
+    # Label 1 already fills all 200 points of cluster 1, so the 20 noise points in
+    # cluster 0 take it past its target. Under proportional_to_marginal, noise on
+    # a label with room left only displaces spillover and the counts stay exact.
+    ("3xx", 304, "competing_noise gives a label more points than its target",
+     lambda: c(assignment_matrix=[
+         {"clusters": [i], "label": i, "recall_target": 1.0 if i == 1 else 0.8}
+         for i in range(4)],
+         competing_noise=[{"cluster": 0, "label": 1, "share": 0.5, "favors": "boundary"}])),
     ("3xx", 305, "competing_noise on a cluster with no unclaimed points",
      lambda: c(assignment_matrix=[{"clusters": [0], "label": 0, "recall_target": 1.0}],
                proportions=[0.25, 0.25, 0.25, 0.25],
@@ -417,9 +438,12 @@ def main():
               "re-register the code.\n")
 
 
+    # Only the generated folders: hand-written files next to them
+    # (engine_internals.md) must survive a regeneration.
     # ignore_errors: on Windows the folder can be held open by a shell sitting in
     # it, and failing the whole run over that is not worth it.
-    _checked_rmtree(OUT, ignore_errors=True)
+    for name in (*TABLES.values(), DATA_REL, SCRATCH_REL):
+        _checked_rmtree(OUT / name, ignore_errors=True)
     OUT.mkdir(parents=True, exist_ok=True)
     results = []
     for case in CASES:

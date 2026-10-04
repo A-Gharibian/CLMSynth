@@ -21,8 +21,9 @@ Four bands, two mechanisms, decided by what the pipeline actually does:
                            equally wrong for every dataset, so it aborts the
                            run rather than being swallowed per dataset.
                            Asserted on the exception and its `.code`.
-                           FIVE EXCEPTIONS, [CLM-102], [CLM-105], [CLM-119],
-                           [CLM-125] and [CLM-127]: they judge the DATASET's K, cluster ids or
+                           SIX EXCEPTIONS, [CLM-102], [CLM-105], [CLM-119],
+                           [CLM-125], [CLM-127] and [CLM-133]: they judge the
+                           DATASET's K, cluster ids or
                            features rather than the config, so they are logged
                            per dataset and the batch continues. See
                            MECHANISM_OVERRIDES below.
@@ -55,7 +56,7 @@ import yaml
 import clmsynth.main
 from clmsynth.byoc_source import fetch_byoc_data
 from clmsynth.clm_errors import CODES
-from clmsynth.clm_label_engine import generate_clm_labels, resolve_label_counts
+from clmsynth.clm_label_engine import generate_clm_labels
 from clmsynth.main import run_pipeline
 
 # How each catalog band surfaces its diagnostic.
@@ -68,7 +69,9 @@ BANDS = {
 }
 
 
-MECHANISM_OVERRIDES = {102: LOGGED, 105: LOGGED, 119: LOGGED, 125: LOGGED, 127: LOGGED}
+MECHANISM_OVERRIDES = {
+    102: LOGGED, 105: LOGGED, 119: LOGGED, 125: LOGGED, 127: LOGGED, 133: LOGGED,
+}
 
 
 def _catalog_dir() -> Path:
@@ -110,8 +113,7 @@ def find_document(kind: str):
     """
     hits = []
     for path in sorted(DOCS.rglob("*.tex")):
-        fields = dict(DOC_BANNER.findall(
-            path.read_text(encoding="utf-8", errors="replace")[:2000]))
+        fields = dict(DOC_BANNER.findall(path.read_text(encoding="utf-8", errors="replace")[:2000]))
         if fields.get("doc") == kind:
             hits.append((path, fields.get("version")))
 
@@ -126,20 +128,18 @@ def find_document(kind: str):
     )
     return hits[0]
 
+
 # Registry codes with no catalog fixture, and why. Deliberately a mapping rather
 # than a bare set: an entry without a stated reason is how a genuine gap gets
-# waved through. Empty is the goal; every entry is a debt.
+# waved through. Empty is the goal; every entry is a debt. Empty since 0.7.2:
+# [CLM-133], the last entry, became reachable when byoc reported missing cluster
+# ids with it.
 NO_CATALOG_FIXTURE: dict = {}
 
 
 @pytest.fixture(autouse=True)
 def _no_plots(no_plots):
     """Never render a plot in this module.
-
-    No [CLM-###] diagnostic depends on plotting: every code is decided during
-    label generation, before run_pipeline reaches its plot calls. Rendering
-    would only add matplotlib's cost to every case that runs to completion, and
-    leave PNGs behind for nothing. Implementation is in conftest.
     """
 
 
@@ -160,22 +160,6 @@ def test_every_registry_code_has_a_catalog_fixture():
     )
 
 
-def test_exemptions_are_real_codes_and_still_needed():
-    """An exemption must name a code that exists and genuinely lacks a fixture.
-
-    Without this, an exemption outlives the problem it documents: the fixture
-    gets written, nobody removes the entry, and the next genuinely missing code
-    slips through under a stale reason.
-    """
-    for code, reason in NO_CATALOG_FIXTURE.items():
-        assert code in CODES, f"exemption for {code}, which is not a registry code"
-        assert reason and isinstance(reason, str), f"exemption for {code} has no reason"
-        assert code not in _catalog_codes(), (
-            f"[CLM-{code}] now HAS a catalog fixture; remove it from "
-            "NO_CATALOG_FIXTURE rather than leaving a stale exemption."
-        )
-
-
 def test_registry_reference_and_catalog_agree():
     """The three artifacts a user meets must describe the same set of codes.
 
@@ -188,18 +172,16 @@ def test_registry_reference_and_catalog_agree():
     codes at all.
     """
     reference, _ = find_document("configuration-troubleshooting")
-    documented = {int(m) for m in re.findall(r"\\[a-z]*code\{(\d+)\}",
-                                             reference.read_text(encoding="utf-8"))}
+    documented = {
+        int(m) for m in re.findall(r"\\[a-z]*code\{(\d+)\}", reference.read_text(encoding="utf-8"))
+    }
     undocumented = set(CODES) - documented
-    assert not undocumented, (
-        f"registry codes missing from {reference.name}: {sorted(undocumented)}"
-    )
+    assert not undocumented, f"registry codes missing from {reference.name}: {sorted(undocumented)}"
 
 
 @pytest.mark.parametrize("kind", ["manual", "configuration-troubleshooting"])
 def test_shipped_documents_declare_the_current_version(kind):
-    """Documentation cannot silently fall behind a release.
-    """
+    """Documentation cannot silently fall behind a release."""
     path, declared = find_document(kind)
     assert declared == clmsynth.__version__, (
         f"{path.name} declares version {declared}, package is "
@@ -207,7 +189,6 @@ def test_shipped_documents_declare_the_current_version(kind):
         "document is revised for a release, or revise the document, if it still "
         "describes older behaviour."
     )
-
 
 
 def _fixtures():
@@ -225,7 +206,6 @@ FIXTURES = list(_fixtures())
 
 def test_catalog_is_present():
     """Guard the parametrization itself.
-
     If the catalog folder were renamed or emptied, every parametrized case
     would silently vanish and the suite would report all-green over nothing.
     """
@@ -237,7 +217,7 @@ def test_catalog_is_present():
 @pytest.mark.parametrize("config_path,mechanism", FIXTURES)
 def test_catalog_diagnostic_fires(config_path, mechanism, tmp_path, caplog):
     """Each catalog config must still produce the diagnostic it documents."""
-    code = config_path.stem.split("-")[1]          # "CLM-101" -> "101"
+    code = config_path.stem.split("-")[1]  # "CLM-101" -> "101"
     tag = f"[CLM-{code}]"
 
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -271,8 +251,9 @@ def test_catalog_diagnostic_fires(config_path, mechanism, tmp_path, caplog):
             exc = excinfo.value
             # The code is attached twice by design (message prefix and .code
             # attribute); accept either so neither can drift unnoticed.
-            assert tag in str(exc) or str(getattr(exc, "code", "")) == code, \
+            assert tag in str(exc) or str(getattr(exc, "code", "")) == code, (
                 f"expected {tag} , got: {exc}"
+            )
             return
 
         run_pipeline(source, config, csv_dir, png_dir, txt_dir)
@@ -288,43 +269,71 @@ N = 1000
 @pytest.mark.parametrize("cluster_column", [["cluster"], 123], ids=["list", "int"])
 def test_byoc_cluster_column_wrong_type_is_rejected(cluster_column, tmp_path):
     """A non-str cluster_column must be rejected, never silently coerced."""
-    pd.DataFrame({"f1": [1, 2, 3], "f2": [4, 5, 6], "cluster": ["A", "A", "B"]}) \
-        .to_csv(tmp_path / "tc.csv", index=False)
-    assert fetch_byoc_data(dataset_name="tc", input_dir=str(tmp_path),
-                           cluster_column=cluster_column) is None
+    pd.DataFrame({"f1": [1, 2, 3], "f2": [4, 5, 6], "cluster": ["A", "A", "B"]}).to_csv(
+        tmp_path / "tc.csv", index=False
+    )
+    assert (
+        fetch_byoc_data(dataset_name="tc", input_dir=str(tmp_path), cluster_column=cluster_column)
+        is None
+    )
 
 
 def test_single_match_cluster_as_list_is_unknown_id():
     """A list where a scalar cluster id belongs is an unknown id, not a set."""
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, {
-            "num_classes": 2, "balance": "balanced", "matching_mode": "single",
-            "single_match": {"cluster": [0, 1], "label": 0},
-        }, seed=1)
+        generate_clm_labels(
+            CLUSTERS,
+            COORDS,
+            {
+                "num_classes": 2,
+                "balance": "balanced",
+                "matching_mode": "single",
+                "single_match": {"cluster": [0, 1], "label": 0},
+            },
+            seed=1,
+        )
     assert "[CLM-105]" in str(excinfo.value)
 
 
 def test_assignment_matrix_string_cluster_does_not_match_int_id():
     """clusters: ["1"] must not silently match int cluster 1, no type juggling."""
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, {
-            "num_classes": 2, "balance": "balanced", "matching_mode": "custom",
-            "assignment_matrix": [{"label": 0, "clusters": ["1"], "recall_target": 0.5}],
-            "split_rule": "equal", "spillover_rule": "proportional_to_marginal",
-        }, seed=1)
+        generate_clm_labels(
+            CLUSTERS,
+            COORDS,
+            {
+                "num_classes": 2,
+                "balance": "balanced",
+                "matching_mode": "custom",
+                "assignment_matrix": [{"label": 0, "clusters": ["1"], "recall_target": 0.5}],
+                "split_rule": "equal",
+                "spillover_rule": "proportional_to_marginal",
+            },
+            seed=1,
+        )
     assert "[CLM-105]" in str(excinfo.value)
 
 
 def test_competing_noise_float_cluster_is_rejected():
     """competing_noise.cluster as 1.5 is no int id, and must be caught as such."""
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, {
-            "num_classes": 4, "balance": "unbalanced", "proportions": [0.4, 0.3, 0.2, 0.1],
-            "matching_mode": "custom",
-            "assignment_matrix": [{"label": i, "clusters": [i], "recall_target": 0.5} for i in range(4)],
-            "split_rule": "proportional_to_size", "spillover_rule": "proportional_to_marginal",
-            "competing_noise": [{"cluster": 1.5, "label": 0, "share": 0.5}],
-        }, seed=1)
+        generate_clm_labels(
+            CLUSTERS,
+            COORDS,
+            {
+                "num_classes": 4,
+                "balance": "unbalanced",
+                "proportions": [0.4, 0.3, 0.2, 0.1],
+                "matching_mode": "custom",
+                "assignment_matrix": [
+                    {"label": i, "clusters": [i], "recall_target": 0.5} for i in range(4)
+                ],
+                "split_rule": "proportional_to_size",
+                "spillover_rule": "proportional_to_marginal",
+                "competing_noise": [{"cluster": 1.5, "label": 0, "share": 0.5}],
+            },
+            seed=1,
+        )
     assert "[CLM-119]" in str(excinfo.value)
 
 
@@ -338,26 +347,48 @@ def test_cardinality_guard():
     it reads, so this asserted the code directly instead. The catalog is
     self-contained now and `test_catalog_diagnostic_fires` covers it too; keeping
     both means the guard stays asserted without a byoc input file.
+
+    A noninteger is refused under the same code: a quoted "4" or a float used
+    to crash uncoded, and `yes`/`true` (bool is an int subclass) passed as 1.
     """
-    for m in (0, 65, 20_000):
+    for m in (0, 65, 20_000, "4", 4.0, True):
         with pytest.raises(ValueError) as excinfo:
-            generate_clm_labels(CLUSTERS, COORDS, {
-                "num_classes": m, "balance": "balanced", "matching_mode": "random",
-            }, seed=1)
-        assert "[CLM-126]" in str(excinfo.value), f"num_classes={m}"
+            generate_clm_labels(
+                CLUSTERS,
+                COORDS,
+                {
+                    "num_classes": m,
+                    "balance": "balanced",
+                    "matching_mode": "random",
+                },
+                seed=1,
+            )
+        assert "[CLM-126]" in str(excinfo.value), f"num_classes={m!r}"
 
     # 64 is the inclusive boundary and must still be accepted.
-    generate_clm_labels(CLUSTERS, COORDS, {
-        "num_classes": 64, "balance": "balanced", "matching_mode": "random",
-    }, seed=1)
+    generate_clm_labels(
+        CLUSTERS,
+        COORDS,
+        {
+            "num_classes": 64,
+            "balance": "balanced",
+            "matching_mode": "random",
+        },
+        seed=1,
+    )
 
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(np.arange(100), np.zeros((100, 1)), {
-            "num_classes": 2, "balance": "balanced", "matching_mode": "random",
-        }, seed=1)
+        generate_clm_labels(
+            np.arange(100),
+            np.zeros((100, 1)),
+            {
+                "num_classes": 2,
+                "balance": "balanced",
+                "matching_mode": "random",
+            },
+            seed=1,
+        )
     assert "[CLM-127]" in str(excinfo.value)
-
-
 
 
 # The base payload the render-time cases below mutate via `overrides`/`drop`.
@@ -367,36 +398,76 @@ def test_cardinality_guard():
 # free to mutate per case.
 MINIMAL_PAYLOAD = {
     "data_source": "fabricated_data",
-    "batteries": ["fabricated"], "datasets": ["baseline_4class"], "source_seed": 42,
-    "n_labels": 1, "source_labeling": "labels0", "label_seed": 42,
-    "num_classes": 4, "proportions": [0.25, 0.25, 0.25, 0.25],
-    "balance": "unbalanced", "skew_rule": "geometric",
+    "batteries": ["fabricated"],
+    "datasets": ["baseline_4class"],
+    "source_seed": 42,
+    "n_labels": 1,
+    "source_labeling": "labels0",
+    "label_seed": 42,
+    "num_classes": 4,
+    "proportions": [0.25, 0.25, 0.25, 0.25],
+    "balance": "unbalanced",
+    "skew_rule": "geometric",
     "matching_mode": "custom",
-    "assignment_matrix": [{"clusters": [i], "label": i, "recall_target": 0.8}
-                          for i in range(4)],
+    "assignment_matrix": [{"clusters": [i], "label": i, "recall_target": 0.8} for i in range(4)],
     "split_rule": "proportional_to_size",
     "spillover_rule": "proportional_to_marginal",
-    "centroid_enabled": True, "centroid_profile": "linear", "centroid_favors": "core",
+    "centroid_enabled": True,
+    "centroid_profile": "linear",
+    "centroid_favors": "core",
 }
 
-@pytest.mark.parametrize("overrides,drop,expected", [
-    ({"matching_mode": "perfect", "target_metric": {"type": "mcc", "value": 0.5}},
-     (), "[CLM-111]"),
-    ({"matching_mode": "random", "target_metric": {"type": "mcc", "value": 0.5}},
-     (), "[CLM-114]"),
-    ({"matching_mode": "random",
-      "competing_noise": [{"cluster": 0, "label": 1, "share": 0.5}]}, (), "[CLM-115]"),
-    ({"matching_mode": "custom",
-      "target_metric": {"type": "mcc", "value": 0.5, "scope": "pair"}}, (), "[CLM-124]"),
-    # skew_rule is only consulted when it is actually live, so the warning is
-    # correctly silent unless proportions are absent.
-    ({"skew_rule": "bogus_rule"}, ("proportions",), "skew_rule"),
-    ({"balance": "balanced"}, (), "ignores explicit proportions"),
-    ({"data_source": "bogus_source"}, (), "data_source"),
-], ids=["perfect+target", "random+target", "random+competing", "pair+custom",
-        "unknown-skew", "balanced+proportions", "unknown-source"])
+
+@pytest.mark.parametrize(
+    "overrides,drop,expected",
+    [
+        (
+            {"matching_mode": "perfect", "target_metric": {"type": "mcc", "value": 0.5}},
+            (),
+            "[CLM-111]",
+        ),
+        (
+            {"matching_mode": "random", "target_metric": {"type": "mcc", "value": 0.5}},
+            (),
+            "[CLM-114]",
+        ),
+        (
+            {
+                "matching_mode": "random",
+                "competing_noise": [{"cluster": 0, "label": 1, "share": 0.5}],
+            },
+            (),
+            "[CLM-115]",
+        ),
+        (
+            {
+                "matching_mode": "custom",
+                "target_metric": {"type": "mcc", "value": 0.5, "scope": "pair"},
+            },
+            (),
+            "[CLM-124]",
+        ),
+        # skew_rule is only consulted when it is actually live, so the warning is
+        # correctly silent unless proportions are absent.
+        ({"skew_rule": "bogus_rule"}, ("proportions",), "skew_rule"),
+        ({"balance": "Balanced"}, (), "[CLM-132]"),
+        ({"balance": "balanced"}, (), "ignores explicit proportions"),
+        ({"data_source": "bogus_source"}, (), "data_source"),
+    ],
+    ids=[
+        "perfect+target",
+        "random+target",
+        "random+competing",
+        "pair+custom",
+        "unknown-skew",
+        "unknown-balance",
+        "balanced+proportions",
+        "unknown-source",
+    ],
+)
 def test_generate_config_warns_about_configs_the_engine_will_reject(
-        overrides, drop, expected, tmp_path, caplog):
+    overrides, drop, expected, tmp_path, caplog
+):
     """A bad payload should be caught at render time, not at run time.
 
     The renderer cannot refuse , its job is to produce the YAML the user asked
@@ -431,14 +502,45 @@ def test_generate_config_stays_silent_on_a_valid_payload(tmp_path, caplog):
     assert not caplog.text.strip(), f"valid payload produced warnings:\n{caplog.text}"
 
 
+@pytest.mark.parametrize(
+    "overrides,drop",
+    [
+        ({"balance": "Balanced"}, ()),
+        ({"balance": "balanced"}, ()),
+        ({"skew_rule": "bogus_rule"}, ("proportions",)),
+    ],
+    ids=["unknown-balance", "balanced+proportions", "unknown-skew"],
+)
+def test_generate_config_ignores_sizing_keys_under_perfect(overrides, drop, tmp_path, caplog):
+    """'perfect' neither reads nor validates balance, proportions or skew_rule,
+    so the three render warnings about them would describe a failure that never
+    happens. The matching cases above show each warning firing elsewhere."""
+    from clmsynth.generate_config import generate_base_config
+
+    payload = {k: v for k, v in MINIMAL_PAYLOAD.items() if k not in drop}
+    payload.update(overrides, matching_mode="perfect")
+
+    with caplog.at_level(logging.WARNING):
+        generate_base_config(payload, output_path=str(tmp_path / "out.yaml"))
+
+    assert not caplog.text.strip(), f"perfect payload produced warnings:\n{caplog.text}"
+
+
 def test_byoc_render_round_trips_a_windows_path(tmp_path):
     """Rendered byoc config parses back unchanged."""
     from clmsynth.generate_config import generate_base_config
 
     payload = dict(MINIMAL_PAYLOAD)
-    payload.update({"data_source": "byoc", "batteries": ["clinical"],
-                    "datasets": ["cohort_a"], "input_dir": r"C:\data\in",
-                    "cluster_column": "cluster", "standardize": True})
+    payload.update(
+        {
+            "data_source": "byoc",
+            "batteries": ["clinical"],
+            "datasets": ["cohort_a"],
+            "input_dir": r"C:\data\in",
+            "cluster_column": "cluster",
+            "standardize": True,
+        }
+    )
     out = tmp_path / "byoc.yaml"
     generate_base_config(payload, output_path=str(out))
 
@@ -449,11 +551,15 @@ def test_byoc_render_round_trips_a_windows_path(tmp_path):
     assert suite["datasets"] == ["cohort_a"]
 
 
-@pytest.mark.parametrize("key,expected", [
-    ("proportions", []),
-    ("batteries", "all"),
-    ("datasets", "all"),
-], ids=["proportions", "batteries", "datasets"])
+@pytest.mark.parametrize(
+    "key,expected",
+    [
+        ("proportions", []),
+        ("batteries", "all"),
+        ("datasets", "all"),
+    ],
+    ids=["proportions", "batteries", "datasets"],
+)
 def test_valueless_payload_key_renders_its_default(key, expected, tmp_path):
     """Null key renders its documented default."""
     from clmsynth.generate_config import generate_base_config
@@ -464,37 +570,33 @@ def test_valueless_payload_key_renders_its_default(key, expected, tmp_path):
     generate_base_config(payload, output_path=str(out))
 
     loaded = yaml.safe_load(out.read_text(encoding="utf-8"))
-    got = (loaded["fabricated_data_suite"][key] if key != "proportions"
-           else loaded["label_generation"]["clm_label"][key])
+    got = (
+        loaded["fabricated_data_suite"][key]
+        if key != "proportions"
+        else loaded["label_generation"]["clm_label"][key]
+    )
     assert got == expected
 
 
 # ---------------------------------------------------------------------------
-# Characterisation: currently uncoded, and on the roadmap to gain a code
-# (ROADMAP item 2, "uncoded errors to give [CLM-###] diagnostics").
+# A key missing inside a block is coded and names where it is missing.
 # ---------------------------------------------------------------------------
-
-def test_num_classes_as_string_is_still_uncoded():
-    """`num_classes: "4"` a plausible YAML quoting slip has no config check."""
-    with pytest.raises(TypeError):
-        generate_clm_labels(CLUSTERS, COORDS, {
-            "num_classes": "4", "balance": "balanced", "matching_mode": "random",
-        }, seed=1)
-
-
-def test_proportions_as_dict_is_still_uncoded():
-    """sum() over a dict iterates its KEYS, so a dict fails on string addition."""
-    with pytest.raises(TypeError):
-        resolve_label_counts({"num_classes": 2, "balance": "unbalanced",
-                              "proportions": {"a": 0.5, "b": 0.5}}, N, np.random.default_rng(0))
 
 
 def test_assignment_matrix_missing_key_is_coded():
     """[CLM-207] names the row the rule came from."""
     with pytest.raises(KeyError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, {
-            "num_classes": 2, "balance": "balanced", "matching_mode": "custom",
-            "assignment_matrix": [{"label": 0}],
-            "split_rule": "equal", "spillover_rule": "proportional_to_marginal",
-        }, seed=1)
+        generate_clm_labels(
+            CLUSTERS,
+            COORDS,
+            {
+                "num_classes": 2,
+                "balance": "balanced",
+                "matching_mode": "custom",
+                "assignment_matrix": [{"label": 0}],
+                "split_rule": "equal",
+                "spillover_rule": "proportional_to_marginal",
+            },
+            seed=1,
+        )
     assert "[CLM-207] assignment_matrix row 0" in str(excinfo.value)

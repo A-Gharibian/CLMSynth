@@ -1,5 +1,5 @@
 % !CLMSynth-doc = manual
-% !CLMSynth-version = 0.7.1
+% !CLMSynth-version = 0.7.2
 % These two lines are a machine-readable marker, so the
 % file can be renamed freely, and checks the version above against the
 % package version so documentation cannot silently fall behind a release.
@@ -50,7 +50,7 @@
 \lstset{style=mystyle}
 
 % Names the release documented, not the candidate. Banner above tracks the build.
-\title{CLMSynth v0.7.1}
+\title{CLMSynth v0.7.2}
 \author{Arootin Gharibian}
 \date{\today}
 
@@ -71,7 +71,7 @@ CLMSynth Documentation is licensed under \href{https://creativecommons.org/licen
 Existing synthetic datasets for clustering performance measurement assume equivalence between latent cluster structure and assigned class labels. The CLM dataset synthesizer addresses the natural occurrence of classes within latent clusters by treating cluster generation and class assignment as independent, configurable, and target-matched for a specific cluster-label matching. This design supports multiple benchmarks, including non-clusterable data with strong class separability, well-defined clusters with randomly assigned classes, and both balanced and imbalanced clusters. For each configuration, the output is a dataset of labels attached to the cluster membership, along with summary diagnostics characterizing cluster-label matching (CLM) measures. By generating and systematically comparing reproducible CLM scenarios, this resource complements existing clustering benchmarks and supports the evaluation of methods that study the relationships between the clustering structure and class labels.
 
 \subsection{Scientific Objectives}
-Cluster-label matching (CLM) is measured as the feature subset's effectiveness in predicting ground-truth class labels, the degree to which a feature subset supports known classes or labels regardless of clustering performance. The performance and quality outcomes associated with a selected subset of features, evaluated in terms of its ability to detect structures (clusters) and its alignment with class labels, are independent. Different algorithms and measures can optimize the selection of a given subset of features and assess how it performs in clustering, classification, and cluster-label matching. The objective of this program is to create datasets that give a user granular control over labels and match specific cluster-label matching targets, independent of the clustering, so that an algorithm or measure can reproduce specific CLM targets. CLMSynth replaces a single test with a set of data with known answers.
+Cluster-label matching (CLM) is measured as the feature subset's effectiveness in predicting ground-truth class labels, the degree to which a feature subset supports known classes or labels regardless of clustering performance. The performance and quality outcomes associated with a selected subset of features, evaluated in terms of its ability to detect structures (clusters) and its alignment with class labels, are independent. Different algorithms and measures can optimize the selection of a given subset of features and assess how it performs in clustering, classification, and cluster-label matching. The objective of this program is to create datasets that give a user granular control over labels and match specific cluster-label matching targets, independent of the clustering, so that an algorithm or measure can reproduce specific CLM targets.
 
 \subsection{Implementation}
 The implementation in Python, together with the pipeline scripts, configuration templates, and working examples, is maintained in the \href{https://github.com/A-Gharibian/CLMSynth}{project repository}. The source code is the authoritative description of the implementation; this manual is intended for software users and includes the definition of the configuration schema and the troubleshooting reference.
@@ -80,32 +80,32 @@ The implementation in Python, together with the pipeline scripts, configuration 
 \section{Implementation Details}
 \subsection{Label generator}
 \begin{enumerate}
-    \item \textbf{Validate}, structural checks fail fast: \texttt{num\_classes} and the data's own cluster count $K$ must each lie in $[1,64]$, a coarse backstop rather than a reliability boundary); \texttt{perfect} requires $M = K$; \texttt{single} requires \texttt{single\_match}, $M \ge 2$, $K \ge 2$; \texttt{target\_metric} is only compatible with \texttt{single}/\texttt{custom}, and \texttt{scope: pair} additionally requires \texttt{type: mcc} and \texttt{matching\_mode: single}; any requested spatial placement requires per-point coordinates; unknown modes raise errors.
-    \item \textbf{Resolve proportions} $p$ are uniform if \texttt{balanced}; otherwise, explicit \texttt{proportions} take precedence, with \texttt{skew\_rule} as a fallback. Converted to integer counts by the largest-remainder rounding.
+    \item \textbf{Validate}, structural checks fail fast, before any label sizing: the label count \texttt{num\_classes} must lie in $[1,64]$; \texttt{matching\_mode} must be one of the four modes, checked before every other key because the mode decides which keys are read; any requested spatial placement requires per-point coordinates; the data's own cluster count $K$ must lie in $[1,64]$ (a coarse backstop rather than a reliability boundary); \texttt{perfect} requires $M = K$. Outside \texttt{perfect}, \texttt{balance} must be exactly \texttt{balanced} or \texttt{unbalanced}, and \texttt{skew\_params} must be in range for the rule that reads them. The mode's own keys are checked once the counts are resolved: \texttt{single} requires \texttt{single\_match}, $M \ge 2$, $K \ge 2$; \texttt{target\_metric} is only compatible with \texttt{single}/\texttt{custom}, and \texttt{scope: pair} additionally requires \texttt{type: mcc} and \texttt{matching\_mode: single}.
+    \item \textbf{Resolve proportions} $p$ are uniform if \texttt{balanced} (the default when \texttt{balance} is absent), and skipped under \texttt{perfect}, whose counts are the cluster sizes; otherwise, \texttt{proportions} take precedence, with \texttt{skew\_rule} as a fallback.
     \item \textbf{Matching mode} $\to$ alignment rules:
     \begin{itemize}
-        \item \texttt{random}, a random permutation of the fixed multiset holding each label $\ell_i$ exactly $m_i$ times, rather than an independent draw from $p$ per point: the realized counts equal $m_i$, and the permutation consults neither $c(x)$ nor position, so the independence from $c(x)$ holds by construction rather than expectation.
+        \item \texttt{random}, a random permutation of the fixed multiset holding each label $\ell_i$ exactly $m_i$ times, rather than an independent draw from $p$ per point: the realized counts equal $m_i$, and the permutation consults neither $c(x)$ nor position.
         \item \texttt{perfect}, bijection $\pi: \text{cluster} \to \text{label}$ in sorted order; label counts are assigned to the paired cluster sizes; $L(x) = \pi(c(x))$.
         \item \texttt{single}, one target pair $(k^*, \ell^*)$ aligned at full recall; all other points are assigned by spillover.
         \item \texttt{custom}, an \texttt{assignment\_matrix} of rules, each a \texttt{recall\_target} fraction of one label's point budget into a chosen set of clusters (enabling surjective, partial, and overlapping).
     \end{itemize}
-    \item \textbf{Allocation \& feasibility}, each rule is divided into its clusters (\texttt{split\_rule}); exceeding the cluster capacity raises an infeasibility error stating the maximum feasible recall. The remaining cluster capacity is filled by \texttt{spillover\_rule}. (\texttt{proportional\_to\_marginal} preserves the target proportions).
+    \item \textbf{Allocation \& feasibility}, each rule is divided into its clusters (\texttt{split\_rule}); exceeding the cluster capacity raises an infeasibility error stating the maximum feasible recall (under \texttt{single}, the most points the label can have) and the setting the label's size comes from. The remaining cluster capacity is filled by \texttt{spillover\_rule}. (\texttt{proportional\_to\_marginal} preserves the target proportions).
     
     \item \textbf{Target metric}: the target metric and the solver vary only the recall level; every setting above is held fixed across probes, so the noise structure changes the solved recall rather than being applied after it.
 
-With \texttt{scope: global} (the default), one recall level is solved for the whole partition by a coarse grid scan; with \texttt{scope: pair}, the single-pair MCC of the \texttt{single\_match} pair is inverted in closed form and no search runs. A target above the configuration's reachable ceiling terminates at the closest achievable value, and a target below its floor terminates against that in the same way. Because $R_K$ is a maximum over matching, and the mean of $R_K$ over all relabeling is exactly $0$, the matched value is never negative and its expectation under independent labeling is strictly positive. Therefore, a requested $0.0$ is not null.
-
-The engine measures CLM, and a solution that converged internally can still land outside the tolerance, most visible at small $N$, where the placement of spillovers is a large part of the result.
+With \texttt{scope: global} (the default), one recall level is solved for the whole partition by a coarse grid scan; with \texttt{scope: pair}, the single-pair MCC of the \texttt{single\_match} pair is inverted in closed form and no search runs. A target above the configuration's reachable ceiling or below its floor terminates at the closest achievable value. Because $R_K$ is a maximum over matching, and the mean of $R_K$ over all relabeling is exactly $0$, the matched value is never negative and its expectation under independent labeling is strictly positive. 
     
-Currently, three CLM measures are available: \texttt{clustering\_mcc} is the permutation-invariant \texttt{scikit-learn} implementation of Gorodkin's  $R_K$, which is a one-to-one matching of the cluster--label contingency table that maximizes $R_K$ as the value solved for.\\
-\texttt{scope: global}. \texttt{clustering\_mcc\_pair} is the $2\times2$ Matthews $\phi$ of a cluster against a label, which does not need matching.\\
-\texttt{clustering\_ari} is solved for the adjusted Rand inde (ARI): The ARI measures the agreement over \emph{pairs} of points rather than through any correspondence between the label and cluster identifiers, and is chance-corrected so that independent partitions score $0$. Because it is a function of the cell of the contingency table and the marginal pair counts alone, it does not need an alignment step: permuting the values of the generated label leaves it unchanged, it is symmetric in its two arguments, and it is defined for any $M$ and $K$. This is what distinguishes it from $R_K$, which is meaningful only after the Hungarian alignment.
-    
-    \item \textbf{Spatial placement} Configures optionally, within each cluster, \emph{which} points receive each label is chosen by weighted sampling without replacement, with weights derived from normalized distance to the cluster centroid, with\texttt{profile}: \texttt{linear}/\texttt{step}/\texttt{exponential}; and \texttt{favors}: \texttt{steepness} for exponential or \texttt{core}/\texttt{boundary} for other profiles. The contingency table, and therefore the target CLM outcome, is fixed by stages 2--4, so spatial structure can be varied at a constant metric value.
+Currently, three CLM measures are available: 
 
+\texttt{clustering\_mcc\_pair} is the $2\times2$ Matthews $\phi$ of a cluster against a label, which does not need matching. \texttt{clustering\_mcc} is the permutation-invariant \texttt{scikit-learn} implementation of Gorodkin's  $R_K$, which is a one-to-one matching of the cluster--label contingency table that maximizes $R_K$ as the value solved for. A solution that converged internally can still land outside the tolerance, most visible at small $N$, where the placement of spillovers is a large part of the result.
+
+\texttt{clustering\_ari} is solved for the adjusted Rand index (ARI): The ARI measures the agreement over \emph{pairs} of points rather than through any correspondence between the label and cluster identifiers, and is chance-corrected so that independent partitions score $0$. Because it is a function of the cell of the contingency table and the marginal pair counts alone, it does not need an alignment step: permuting the values of the generated label leaves it unchanged, it is symmetric in its two arguments, and it is defined for any $M$ and $K$.
+    
+    \item \textbf{Spatial placement} Configures optionally, within each cluster, \emph{which} points receive each label is chosen by weighted sampling without replacement, with weights derived from normalized distance to the cluster centroid, with\texttt{profile}: \texttt{linear}/\texttt{step}/\texttt{exponential}; and \texttt{favors}: \texttt{steepness} for exponential or \texttt{core}/\texttt{boundary} for other profiles. The target CLM outcome is fixed by stages 2--4, so spatial structure can be varied at a constant metric value.
+    
 \end{enumerate}
 
-\noindent\textbf{Note on multi-class multi-label measurement:} Releases of up to 0.6.9 were matched on the grid-search to maximize precision, and thus reported the $R_K$ of accuracy-optimal matching. The two agree where the rules impose real alignment and differ only near the lower end of the target metric, specifically for unbalanced datasets.
+\noindent\textbf{Note on multi-class multi-label measurement:} Releases of up to 0.6.9 were matched on the grid-search to maximize precision, and thus reported the $R_K$ of accuracy-optimal matching. The difference is only near the lower end of the target metric, visible for unbalanced datasets.
 \newpage
 
 \subsection{Configuration file definition}
@@ -114,7 +114,10 @@ Currently, three CLM measures are available: \texttt{clustering\_mcc} is the per
 clm_label:
   num_classes: M                   # 1 <= M <= 64; the data's own K is capped the
                                    # same way (CLM-126 / CLM-127)
-  balance: balanced | unbalanced   # balanced: uniform 1/M, proportions ignored
+  balance: balanced | unbalanced   # balanced: uniform 1/M, proportions ignored.
+                                   # Exactly one of the two, case-sensitive
+                                   # (CLM-132); absent = balanced. perfect reads
+                                   # none of balance/proportions/skew_* (CLM-302)
   proportions: [...]               # unbalanced: used directly when given. Must have
                                    # exactly M entries (CLM-121) summing to 1 (CLM-106)
   skew_rule: geometric | dominant_minority | dirichlet
@@ -254,9 +257,8 @@ D1 & single (cluster 1, $M{=}2$) & fills cluster exactly; MCC $\approx 1$ & MCC 
   \vhEntry{0.7.0rc2}{2026-09-01}{AG}{Documentation corrections: \texttt{[CLM-309]}' and \texttt{scope: pair} description.}
   \vhEntry{0.7.0}{2026-09-01}{AG}{Release on PyPI. SoftwareX Article Version.}
   \vhEntry{0.7.1}{2026-09-17}{AG}{Patch release: negative \texttt{proportions}, \texttt{recall\_target}, \texttt{tolerance} and \texttt{steepness} are rejected; \texttt{[CLM-205]}/\texttt{[CLM-207]} report a missing \texttt{label}.}
+  \vhEntry{0.7.2}{2026-10-04}{AG}{Patch release: \texttt{[CLM-132]} refuses other than \texttt{balanced}/\texttt{unbalanced}; \texttt{matching\_mode}; \texttt{num\_classes} must be an integer (\texttt{[CLM-126]}); \texttt{[CLM-133]} rejects if dataset's cluster ids or \texttt{coords} are unusable; \texttt{[CLM-134]} refuses a value of the wrong type. This release is the final release that matches the SoftwareX version, changes from this release can diverge from the published article.}
 \end{versionhistory}
-
-\noindent The full change log is available in the project's GitHub repository.
 \newpage
 % \section*{License}
 

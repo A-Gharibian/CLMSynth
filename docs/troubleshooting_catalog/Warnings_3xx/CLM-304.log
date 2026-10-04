@@ -10,8 +10,8 @@ INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed
 INFO - Generating synthetic data (Seed: 42)...
 INFO - Applying perfect separation ground truth to categorical labels...
 INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
-WARNING - [CLM-304] competing_noise active: achieved label counts are no longer held to the target proportions, structured noise bypasses the marginal. Exact counts are delivered only by spillover_rule 'proportional_to_marginal' with no competing_noise.
-INFO - CLM labels generated. Target counts: [200, 200, 200, 200], achieved: [200, 200, 200, 200].
+INFO - CLM labels generated. Target counts: [200, 200, 200, 200], achieved: [191, 220, 193, 196].
+WARNING - [CLM-304] competing_noise: the delivered label counts [191, 220, 193, 196] differ from their targets [200, 200, 200, 200]. spillover_rule 'proportional_to_marginal' refills every label to its target; 'uniform' and 'concentrated' do not, and competing_noise moves the counts when it gives a label more points than its target.
 INFO - [fabricated_data/fabricated/baseline_4class] Attached generated label 'Label_0'.
 INFO - Saved: _scratch/CLM-304/{run}/csv/fabricated_data__fabricated__baseline_4class.csv
 INFO - Saved summary: _scratch/CLM-304/{run}/txt/fabricated_data__fabricated__baseline_4class.txt

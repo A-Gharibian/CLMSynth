@@ -25,7 +25,7 @@ Requires Python 3.12 or newer.
 pip install clmsynth
 ```
 
-That pulls the dependencies (compatible version ranges) and installs the console
+This pulls the dependencies (compatible version ranges) and installs the console
 scripts `clmsynth`, `clmsynth-config`, and `clmsynth-wizard`.
 
 **Start with the wizard.** `clmsynth-wizard` asks a question per setting and
@@ -65,11 +65,11 @@ pip install git+https://github.com/CN-TU/mdcgenpy    # only needed for data_sour
 
 ## Use directly 
 
-**CLMSynth** integrates with both downstream and upstream python pipelines,
+**CLMSynth** integrates with both downstream and upstream Python pipelines,
 and can run without a config or YAML file (`load_config` is the only thing that reads YAML).
 For example, you can run: `your algorithm → CLMSynth → measure → tune the
-algorithm`; The engine is one pure function of two arrays, a dict and a seed.
-The `dict` below (from the `clm_label` documented in the manual) runs directly:
+algorithm`; The engine is one pure function of two arrays, a dictionary, and a seed.
+The dictionary below (from the `clm_label` documented in the manual) runs directly:
 
 
 ```python
@@ -96,26 +96,26 @@ for target in (0.2, 0.4, 0.6, 0.8):
 For several labels attached to one dataset rather than one label per call, the route
 is `build_context` → `generate_additional_labels` → `DatasetContext.to_dataframe`,
 which ends in a frame of features, `Cluster_n` and `Label_n` columns. A fetcher's
-frame is only a `DataFrame` carrying a `GroundTruth_*` column, so you can build a
-local array without going through the datasource route.
+frame is only a `DataFrame` carrying a `GroundTruth_*` column so that a
+local array can be built without going through the datasource route.
 
 ### Diagnostics
 Every error and warning the engine raises carries a `[CLM-###]` code
-(`1xx` config `ValueError`, `15x` `InfeasibleAllocationError`, `2xx` `Key Error ` and `3xx` warnings),
-defined once in `clm_errors.py`. The full catalogue is available in the CLMSynth
+(`1xx` config `ValueError`, `15x` `InfeasibleAllocationError`, `2xx` `KeyError`, and `3xx` Warnings),
+defined once in `clm_errors.py`. The full catalog is available in the CLMSynth
 User Manual under the *Configuration Troubleshooting Reference* section.
 
 An invalid configuration 1xx error aborts the whole run for every dataset except:
-[CLM-102/105/125/127], which are raised against each dataset's own cluster count,
-cluster ids or feature columns, so a failure of configuration for one dataset does not apply to a batch of datasets.
+[CLM-102/105/119/125/127/133], which are raised against each dataset's own cluster count,
+cluster IDs or feature columns, so a failure of configuration for one dataset does not apply to a batch of datasets.
 For byoc, [CLM-104] and [CLM-105] are additionally checked across the whole batch before
-any work begins, so an id mismatch refuses the run before a file is written and names
-every erroneous dataset; everything else is reported per dataset and the run continues.
+any work begins, so an ID mismatch refuses the run before a file is written and names
+every erroneous dataset; everything else is reported per dataset, and the run continues.
 
-**Diagnostics are either exceptions, or logged (but not returned).** 
+**Diagnostics are either exceptions or logged (but not returned).** 
 For example, requesting `mcc: 0.9` against clusters of 300/200/100 returns an ordinary `Series` of the right
 length with the right label counts but with the achieved MCC of `0.5196`, which is
-same solution if `0.6` was requested as a target. The achieved target is reported in the result logs and plots.
+the same solution if `0.6` was requested as a target. The result logs and plots report the achieved target.
 
 | band                                | is           | how you read the code                             |
 |-------------------------------------|--------------|---------------------------------------------------|
@@ -143,6 +143,7 @@ alone; the wizard helps to *create* one.
    ```bash
    python -m clmsynth.main                   # reads test_data_config.yaml
    python -m clmsynth.main my_config.yaml    # or an explicit config path
+   python -m clmsynth.main my_config.yaml --no-viz   # skip the plots; matplotlib is never imported
    ```
 
 ## Output
@@ -155,7 +156,7 @@ OUTPUT/{DDMMYY}_{Source}_{HHMMSS}/
 ├── csv/{source}__{battery}__{dataset}.csv     # features + Cluster_n + Label_n
 ├── png/{source}__{battery}__{dataset}__Cluster_0.png
 ├── png/{source}__{battery}__{dataset}__Label_0.png   # one per generated label
-└── txt/{source}__{battery}__{dataset}.txt     # config + MCC/ARI (as shown on plots)
+└── txt/{source}__{battery}__{dataset}.txt     # seeds + config + MCC/ARI (as shown on plots)
 ```
 
 - `{Source}` is the human-facing generator name: `clustbench` → **Gagolewski's framework**,
@@ -174,11 +175,11 @@ OUTPUT/{DDMMYY}_{Source}_{HHMMSS}/
   [[1]](#references), whose Python API is imported as `clustbench` and which supplies this source's config key. 
   Every available reference labeling (`labels0`, `labels1`, …) is fetched.
 - **`mdcgen`**, fully synthetic geometries via `mdcgenpy` [[2]](#references).
-  Use when specific properties (dimensionality, overlap, outliers) is needed that the clustering-benchmarks datasets
+  Use when specific properties (dimensionality, overlap, outliers) are needed that the clustering-benchmarks datasets
   may not cover.
 - **`fabricated_data`**, offline fallback. Cluster IDs are integers `0..K-1`, as in the other generated sources;
   the generator's readable class names are mapped to codes on import. The `labels_only_4class` preset emits 
-  **cluster ids with no feature columns at all**, a valid CLM run, since recall, balance, allocation and spillover
+  **cluster IDs with no feature columns at all**, a valid CLM run, since recall, balance, allocation, and spillover
   do not need feature values.
 - **`byoc`**, bring-your-own-clusters: your own CSV with feature columns and one cluster-id column (see below).
 
@@ -214,17 +215,18 @@ label_generation:
 - **`tag_columns`** lists columns that travel with the data without entering the CLM matching: an outcome variable,
   a second labeling from another method, an identifier. They are copied to the output CSV unchanged, are excluded from
   the geometry and from `standardize`, and need not be numeric.
-- One `cluster_column` is required, the run is **rejected** (logged, dataset skipped) if it is missing or names
+- One `cluster_column` is required; the run is **rejected** (logged, dataset skipped) if it is missing or names
   more than one column.
 - `standardize: true` min-max rescales the features to `[0, 1]` at import, applied once, before both the
    geometry/centroid math and the written CSV. Off by default.
-- Cluster ids may be integers or strings; if you use `single_match`/`assignment_matrix`, match that id type.
+- Cluster IDs may be integers or strings; if you use `single_match`/`assignment_matrix`, match that ID type.
 
 ### `matching_mode` reference
 
 - `perfect`, fixed cluster↔label bijection; label counts are forced to the paired cluster sizes. 
-   Requires `num_classes == K`. Proportions/balance/skew_rule are ignored.
-- `single`, routes label `l*`'s point budget into cluster `k*`. 
+   Requires `num_classes == K`. `balance`, `proportions`, `skew_rule` and `skew_params` are
+   neither read nor validated (`[CLM-302]` warns when any is set).
+- `single` routes label `l*`'s point budget into cluster `k*`. 
    **Note:** the current implementation places up to `recall_target × m_{l*}` points of `l*` into `k*`,
    so it requires `|k*| ≥ m_{l*}` (see Known limitations).
 - `random`, labels drawn from the resolved proportions, ignoring cluster structure entirely.
@@ -250,7 +252,8 @@ applied after it.
   of the `single_match` cluster/label pair (that cluster vs. the rest against
   that label vs. the rest). This inverts in **closed form**, so it is an
   exact solve, and the delivered pair MCC is measured afterward and reported as achieved
-  (refer to the article for more information).
+  (see Section 2.2.2, Generative conditions, of the
+  [article](https://doi.org/10.1016/j.softx.2026.103077)).
   The whole-partition `R_K` and ARI reported on the plots then serve as
   independent views of the same labeling.
 
@@ -273,16 +276,24 @@ applied after it.
 
 - **`single` mode is budget-into-`k*`, not drain-`k*`-into-`l*`**. 
 It tries to place label `l*`'s full budget `m_{l*}` inside cluster `k*`, so without a
-  `target_metric` it raises `InfeasibleAllocationError` whenever `|k*| < m_{l*}`,
+  `target_metric` it raises `InfeasibleAllocationError` (`[CLM-150]`, naming the setting
+  `m_{l*}` comes from) whenever `|k*| < m_{l*}`,
   e.g. pointing `single_match` at the *smallest* cluster with a large budget.
 - **Target metric can be unreachable (structural ceiling)**, but the engine does not yet compute or report the ceiling value. *(planned for 0.7.5)*
-- **Proportions are only possible with `spillover_rule: proportional_to_marginal`.**
-  `uniform`/`concentrated` deliberately do not preserve the target label counts.
-  - **`competing_noise` also breaks proportions**, Each entry converts
-    leftover points of one cluster into one specific competing label,
-    so achieved label counts are no longer held to `proportions`,
-    and the achieved MCC/ARI differs from random-spillover noise.
+- **Under `single`/`custom`, exact proportions need `spillover_rule: proportional_to_marginal`.**
+  `uniform`/`concentrated` deliberately do not preserve the target label counts, and
+  `[CLM-304]` reports the delivered counts when they differ from their targets.
+  (`random` always delivers the counts exactly; `perfect` uses the cluster sizes.)
+  - **`competing_noise` can also break proportions**. Each entry converts
+    leftover points of one cluster into one specific competing label. Under
+    `proportional_to_marginal` this only displaces spillover and the counts stay
+    exact, unless an entry gives a label more points than its target (`[CLM-304]`).
+    Either way, the achieved MCC/ARI differs from random-spillover noise.
   - **`balance: balanced` also ignores `proportions`** (enforces uniform 1/M) and warns.
+    It is the default when `balance` is absent. Any value other than `balanced` or
+    `unbalanced`, including a case slip such as `Balanced`, is refused (`[CLM-132]`).
+    An unread `skew_rule`/`skew_params` (under `balanced`, or beside `proportions`) is
+    ignored without a warning.
 - **Reachable `scope: pair` values are a coarse ladder near the bottom of the
   range.** The target label is sized to an integer number of points, so only a
   discrete set of pair-MCC values is reachable. `[CLM-307]` warns only when a request falls
@@ -294,6 +305,16 @@ It tries to place label `l*`'s full budget `m_{l*}` inside cluster `k*`, so with
   true feasibility boundary is never explored. *(planned for 0.7.5)*
 - **`plot_feature_scatter` is not thread-safe.** *(planned for 0.7.5)*
 
+## Citing
+
+If you use this software as a benchmark, you can export the citation file from the
+project information panel and cite the software itself. Sharing the results in Zenodo
+and linking it to the software repository there is encouraged, so that results from
+different studies can be compared. The software has been published in SoftwareX; however,
+cite the paper only if you directly discuss cluster-label matching, target-metric solution,
+or general benchmarking solution in clustering and classification, and CLMSynth is relevant
+to your discussion.
+
 ## References
 
 1. Gagolewski, M. (2022). A framework for benchmarking clustering algorithms.
@@ -304,4 +325,3 @@ It tries to place label `l*`'s full budget `m_{l*}` inside cluster `k*`, so with
 3. Gorodkin, J. (2004). Comparing two K-category assignments by a K-category
    correlation coefficient. *Computational Biology and Chemistry*, 28(5–6),
    367–374.
-
