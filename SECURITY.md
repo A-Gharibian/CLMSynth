@@ -92,11 +92,6 @@ fresh with `mkdir(exist_ok=False)`, so no existing file can be overwritten.
 
 This alert therefore stays **dismissed** rather than becoming closeable.
 
-### `B310` — `urlopen` with a configurable base URL
-
-bandit flags `dataset_sources.py`'s `urlopen`, because `base_url` comes from the
-configuration and a `file://` scheme would read a local file.
-
 
 ## What would change this document
 

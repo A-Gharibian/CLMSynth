@@ -5,17 +5,19 @@ triggers it, runs the pipeline, captures the log, and asserts the expected code
 actually appears. Output is grouped one folder per main table:
 
     troubleshooting_catalog/
-        ValueError_1xx/            101..134   fatal, aborts the run (exit 2)
+        ValueError_1xx/            101..134   fatal, aborts the run (exit 2), except
+                                              the codes in EXPECTED_EXIT_BY_CODE
         InfeasibleAllocation_15x/  150..153   per-dataset skip (exit 0)
         KeyError_2xx/              201..209   per-dataset skip (exit 0)
         Warnings_3xx/              301..310   non-fatal, run succeeds (exit 0)
+        _data/                     byoc input CSVs for 127 and 133, kept so they rerun
 
 A shipped item is a reproducible case of the troubleshooting manual:
 
     cd docs/troubleshooting_catalog
-    python -m clmsynth.main ValueError_1xx/CLM-150.yaml
+    python -m clmsynth.main InfeasibleAllocation_15x/CLM-150.yaml
 
-Captured logs are without timestamps to regenerate a byte-identical log whenever the
+Captured logs carry no timestamps, so they regenerate byte-identical whenever the
 behavior is unchanged, and a diff shows only what actually changed.
 
 Usage (project interpreter, any working directory):
@@ -23,7 +25,9 @@ Usage (project interpreter, any working directory):
     python tools/CLM_catalog_gen.py [OUT_DIR]
 
 OUT_DIR defaults to docs/troubleshooting_catalog. Pass a different one to
-generate a candidate catalog for comparison before filing an issue.
+generate a candidate catalog for comparison before filing an issue. It must be
+absent, empty, or a catalog from an earlier run; anything else is refused before
+a file is touched.
 """
 
 import csv
@@ -38,11 +42,11 @@ import yaml
 
 from clmsynth.clm_errors import CODES
 
-ROOT = Path(__file__).resolve().parent
+# ROOT = Path(__file__).resolve().parent
 REPO = Path(__file__).resolve().parents[1]
 OUT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else REPO / "docs" / "troubleshooting_catalog"
 DATA_REL = "_data"            # byoc inputs, relative to OUT
-SCRATCH_REL = "_scratch"      # per-case run output, deleted at the end
+SCRATCH_REL = "_scratch"      # per-case run output, folder deleted at the end
 DATA = OUT / DATA_REL
 SCRATCH = OUT / SCRATCH_REL
 
@@ -54,21 +58,38 @@ TABLES = {
 }
 
 
-def _checked_rmtree(target: Path, **kwargs) -> None:
-    """Refuse to delete a non-catalog target."""
+def _check_out_dir() -> None:
+    """Refuse an OUT_DIR that is a file, or a folder holding no catalog.
+
+    Checked on OUT itself whatever the target: a run only ever empties
+    OUT/<name>, so a check keyed on being handed OUT never ran, and
+    `CLM_catalog_gen.py .` emptied the working tree's own `_data/`.
+    """
+    if not OUT.exists():
+        return
+    if not OUT.is_dir():
+        raise SystemExit(f"refusing to delete '{OUT}': it is not a directory")
+    if any(OUT.iterdir()) and not any((OUT / name).is_dir() for name in TABLES.values()):
+        raise SystemExit(
+            f"refusing to delete '{OUT}': it holds no catalog. Expected one of "
+            f"{', '.join(sorted(TABLES.values()))} inside it. "
+            "Pass an empty or non-existent OUT_DIR to build a new catalog.")
+
+
+def _checked_rmtree(target: Path) -> None:
+    """Empty a catalog folder, keeping the folder itself. Refuse a non-catalog target."""
     if not target.exists():
         return
     if target != OUT and OUT not in target.parents:
         raise SystemExit(f"refusing to delete '{target}': it is outside '{OUT}'")
     if not target.is_dir():
         raise SystemExit(f"refusing to delete '{target}': it is not a directory")
-    if (target == OUT and any(OUT.iterdir())
-            and not any((OUT / name).is_dir() for name in TABLES.values())):
-        raise SystemExit(
-            f"refusing to delete '{OUT}': it holds no catalog. Expected one of "
-            f"{', '.join(sorted(TABLES.values()))} inside it. "
-            "Pass an empty or non-existent OUT_DIR to build a new catalog.")
-    shutil.rmtree(target, **kwargs)
+    _check_out_dir()
+    for child in target.iterdir():
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
 
 
 # --------------------------------------------------------------------------
@@ -105,9 +126,13 @@ def base():
     }
 
 
-def byoc(stem, n_clusters=65, n_per=3, string_ids=False, blank_ids=0):
+def byoc(code, name, n_clusters=65, n_per=3, string_ids=False, blank_ids=0):
     """Write a byoc CSV and return a config pointing at it. `blank_ids` empties the
-    cluster cell of that many rows, one per cluster from the first."""
+    cluster cell of that many rows, one per cluster from the first.
+
+    The file is named `<code>_<name>.csv`, so every input in _data/ names the
+    diagnostic that reads it."""
+    stem = f"{code}_{name}"
     DATA.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(42)
     rows = []
@@ -163,7 +188,7 @@ def single(**patch):
 def labels_only(**patch):
     """Base config over the zero-feature preset: cluster ids, no geometry.
 
-    A dataset in with no feature columns, so the
+    A dataset with no feature columns, so the
     config can reach the [CLM-125] placement guard.
     """
     cfg = c(**patch)
@@ -172,7 +197,7 @@ def labels_only(**patch):
 
 
 CASES = [
-    # ---- 1xx : ValueError, fatal, aborts the run ------------------------
+    # ---- 1xx : ValueError, fatal, aborts the run (except EXPECTED_EXIT_BY_CODE)
     ("1xx", 101, "matching_mode is not one of the four modes",
      lambda: c(matching_mode="bogus_mode")),
     # base()'s four-entry proportions stay in: 'perfect' does not read them, and
@@ -222,7 +247,11 @@ CASES = [
     # competing_noise entries then over-claim it regardless of the recall level,
     # which is what makes every probed alpha infeasible. (Putting the noise on a
     # rule-claimed cluster does not work: at alpha=1 the rule fills it, leaving
-    # nothing to claim, so the entries degrade to a [CLM-305] and that alpha stays feasible.)
+    # nothing to claim, so the entries have no effect, the [CLM-305] case, and that
+    # alpha stays feasible.) The log names the [CLM-152] that blocked the levels
+    # before the [CLM-120]. The verdict holds for this dataset's cluster sizes
+    # only, so the label is left out and the dataset is still written: exit 0,
+    # see EXPECTED_EXIT_BY_CODE.
     ("1xx", 120, "target_metric: no feasible alpha at any recall level",
      lambda: c(target_metric={"type": "mcc", "value": 0.5},
                assignment_matrix=[{"clusters": [i], "label": i, "recall_target": 0.8}
@@ -255,7 +284,7 @@ CASES = [
     ("1xx", 126, "num_classes outside [1, 64]",
      lambda: c(num_classes=100, proportions=None, balance="balanced")),
     ("1xx", 127, "dataset cluster count K > 64 (byoc, 65 clusters)",
-     lambda: byoc("k65_clusters", n_clusters=65)),
+     lambda: byoc(127, "65_clusters", n_clusters=65)),
     ("1xx", 128, "concentrated_labels holds an id outside 0..M-1",
      lambda: c(spillover_rule="concentrated", concentrated_labels=[99])),
     ("1xx", 129, ("centroid_dependence.favors not core/boundary "
@@ -277,7 +306,7 @@ CASES = [
     # types and a coords row mismatch cannot come from a file: byoc reads one
     # column as one type and builds coords from the same rows.
     ("1xx", 133, "the dataset has missing cluster ids (byoc, blank cluster cells)",
-     lambda: byoc("missing_cluster_ids", n_clusters=4, n_per=10, blank_ids=2)),
+     lambda: byoc(133, "missing_cluster_ids", n_clusters=4, n_per=10, blank_ids=2)),
     # A quoted "false" is a non-empty string: before [CLM-134] it switched
     # placement on.
     ("1xx", 134, "a value of the wrong type (centroid_dependence.enabled quoted)",
@@ -291,14 +320,14 @@ CASES = [
          {"clusters": [0], "label": 0, "recall_target": 0.8},
          {"clusters": [0], "label": 1, "recall_target": 0.8},
      ])),
-    ("15x", 153, "two assignment_matrix rules name the same label and over-claim it",
-     lambda: c(assignment_matrix=[{"clusters": [0], "label": 0, "recall_target": 0.6},
-                                  {"clusters": [1], "label": 0, "recall_target": 0.6}])),
     ("15x", 152, "competing_noise entries over-claim one cluster's leftovers",
      lambda: c(competing_noise=[
          {"cluster": 0, "label": 1, "share": 0.7, "favors": "random"},
          {"cluster": 0, "label": 2, "share": 0.7, "favors": "random"},
      ])),
+    ("15x", 153, "two assignment_matrix rules name the same label and over-claim it",
+     lambda: c(assignment_matrix=[{"clusters": [0], "label": 0, "recall_target": 0.6},
+                                  {"clusters": [1], "label": 0, "recall_target": 0.6}])),
 
     # ---- 2xx : MissingConfigKey, per-dataset skip, exit 0 ----------------
     ("2xx", 201, "num_classes missing", lambda: c(num_classes=None)),
@@ -346,9 +375,20 @@ CASES = [
      lambda: single(target_metric={"type": "mcc", "value": 0.01, "scope": "pair"})),
     ("3xx", 308, "scope pair resizes the target label",
      lambda: single(target_metric={"type": "mcc", "value": 0.6, "scope": "pair"})),
-    ("3xx", 309, "delivered target_metric outside tolerance",
-     lambda: c(target_metric={"type": "mcc", "value": 0.5, "tolerance": 0.0001})),
-    # The pair counterpart of 309. The target label is sized to an integer number
+    # The search scores its probes on target_metric.probe_seed; the delivered
+    # labeling is generated on the run seed (label_generation.seed, 42 here).
+    # Without probe_seed the two are one stream, the search scores exactly what
+    # is delivered, and a missed target is [CLM-306] alone. An explicit
+    # probe_seed other than the run seed opens the gap 309 reports: here the
+    # search meets the tolerance on its own stream (mcc 0.5000) while the
+    # delivered labeling lands outside it (0.4750), so the log shows [CLM-309]
+    # without [CLM-306].
+    ("3xx", 309, ("explicit probe_seed: the delivered target_metric misses the "
+                  "tolerance the search met"),
+     lambda: c(target_metric={"type": "mcc", "value": 0.5, "tolerance": 0.01,
+                              "probe_seed": 10})),
+    # The pair scope's check of the delivered value. Unlike 309 there is no search
+    # whose stream could differ: the target label is sized to an integer number
     # of points, so the achieved coefficient lands on a discrete ladder and
     # essentially never equals the request exactly; tolerance 0 makes that
     # visible. Before 0.6.3 this key was ignored on the pair path and the check
@@ -357,6 +397,19 @@ CASES = [
      lambda: single(target_metric={"type": "mcc", "value": 0.6, "scope": "pair",
                                     "tolerance": 0.0})),
 ]
+
+
+# Exit code the shipped logs record for each table. Within 1xx, 2 is a fatal abort
+# and 1 is a run whose only dataset was skipped, so those codes are listed apart.
+# 0 is a run whose only dataset was written without its label: [CLM-120] is
+# judged against that dataset's cluster sizes and leaves out only the label, as
+# the 15x and 2xx codes do.
+EXPECTED_EXIT = {"1xx": 2, "15x": 0, "2xx": 0, "3xx": 0}
+EXPECTED_EXIT_BY_CODE = {102: 1, 105: 1, 119: 1, 120: 0, 125: 1, 127: 1, 133: 1}
+
+
+def expected_exit(table, code):
+    return EXPECTED_EXIT_BY_CODE.get(code, EXPECTED_EXIT[table])
 
 
 _TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} - ", re.M)
@@ -402,7 +455,7 @@ def run_case(table, code, desc, builder, expect):
         f"$ python -m clmsynth.main {rel_cfg}\n"
         f"# exit code: {proc.returncode}\n\n{log}", encoding="utf-8")
 
-    # Default expectation is the BRACKETED form the engine emits. A bare
+    # The expectation is the BRACKETED form the engine emits. A bare
     # "CLM-123" also occurs in the config filename and the scratch output path,
     # which produced false positives on the first pass.
     return (expect in log), proc.returncode, log
@@ -431,43 +484,49 @@ def main():
         return 1
     print(f"builder coverage: {len(CODES)} registry codes, all built.\n")
     if built_without_code:
-        # Add --strict here to return 1 instead.
+        # There is no --strict flag; return 1 here to make this fatal.
         print(f"WARNING: {len(built_without_code)} builder(s) have no registry code "
               f"({built_without_code}). Regenerating writes a shipped fixture for a "
               "diagnostic the engine can no longer emit. Drop the CASES entry, or "
               "re-register the code.\n")
 
+    # Before anything is written, not only before something is emptied: a
+    # catalog generated into a non-empty folder scatters its files there.
+    _check_out_dir()
 
-    # Only the generated folders: hand-written files next to them
+    # Only the generated folders: handwritten files next to them
     # (engine_internals.md) must survive a regeneration.
-    # ignore_errors: on Windows the folder can be held open by a shell sitting in
-    # it, and failing the whole run over that is not worth it.
     for name in (*TABLES.values(), DATA_REL, SCRATCH_REL):
-        _checked_rmtree(OUT / name, ignore_errors=True)
+        _checked_rmtree(OUT / name)
     OUT.mkdir(parents=True, exist_ok=True)
     results = []
-    for case in CASES:
-        table, code, desc, builder = case[:4]
-        expect = case[4] if len(case) > 4 else f"[CLM-{code}]"
+    for table, code, desc, builder in CASES:
+        expect = f"[CLM-{code}]"
         try:
             hit, rc, _log = run_case(table, code, desc, builder, expect)
         except Exception as exc:                     # broad by design: reporting
-            results.append((table, code, "BUILD-ERROR", "-", f"{type(exc).__name__}: {exc}"))
+            results.append((table, code, "BUILD-ERROR", f"{type(exc).__name__}: {exc}",
+                            f"- (expected {expected_exit(table, code)})"))
             continue
         note = f"matched {expect!r}" if hit else f"EXPECTED {expect!r} NOT FOUND"
-        results.append((table, code, "ok" if hit else "MISS", rc, note))
+        want = expected_exit(table, code)
+        status = "MISS" if not hit else ("ok" if rc == want else "BAD-EXIT")
+        results.append((table, code, status, note, f"{rc} (expected {want})"))
 
     _checked_rmtree(SCRATCH)
+    if SCRATCH.exists():
+        SCRATCH.rmdir()
 
-    print(f"{'table':<6}{'code':<7}{'status':<9}{'exit':<6}note")
-    print("-" * 72)
+    print(f"{'table':<6}{'code':<7}{'status':<12}{'note':<40}exit")
+    print("-" * 84)
     miss = 0
-    for table, code, status, rc, note in results:
+    for table, code, status, note, exit_col in results:
         if status != "ok":
             miss += 1
-        print(f"{table:<6}{code:<7}{status:<9}{rc!s:<6}{note}")
-    print("-" * 72)
-    print(f"{len(results) - miss}/{len(results)} produced their expected diagnostic")
+        print(f"{table:<6}{code:<7}{status:<12}{note:<40}{exit_col}")
+    print("-" * 84)
+    print(f"{len(results) - miss}/{len(results)} produced their expected diagnostic "
+          "with the expected exit code")
     return 1 if miss else 0
 
 

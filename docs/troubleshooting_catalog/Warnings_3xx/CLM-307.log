@@ -10,6 +10,7 @@ INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed
 INFO - Generating synthetic data (Seed: 42)...
 INFO - Applying perfect separation ground truth to categorical labels...
 INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
+INFO - target_metric scope 'pair': reachable pair mcc for cluster 0, label 0 is [0.0613, 1.0000] (N=800, cluster size 200).
 WARNING - [CLM-307] target_metric scope 'pair': target 0.01 is outside the reachable range [0.061, 1.000] for this cluster/label pair; clamped to the nearest reachable value.
 WARNING - [CLM-308] target_metric scope 'pair': label 0 is sized to 1 points (a subset of its cluster) to meet the target MCC; any explicit proportion for it is overridden.
 INFO - CLM labels generated. Target counts: [1, 267, 266, 266], achieved: [1, 267, 266, 266].

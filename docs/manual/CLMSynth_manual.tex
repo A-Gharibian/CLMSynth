@@ -1,5 +1,5 @@
 % !CLMSynth-doc = manual
-% !CLMSynth-version = 0.7.2
+% !CLMSynth-version = 0.7.3
 % These two lines are a machine-readable marker, so the
 % file can be renamed freely, and checks the version above against the
 % package version so documentation cannot silently fall behind a release.
@@ -50,7 +50,7 @@
 \lstset{style=mystyle}
 
 % Names the release documented, not the candidate. Banner above tracks the build.
-\title{CLMSynth v0.7.2}
+\title{CLMSynth v0.7.3}
 \author{Arootin Gharibian}
 \date{\today}
 
@@ -93,7 +93,7 @@ The implementation in Python, together with the pipeline scripts, configuration 
     
     \item \textbf{Target metric}: the target metric and the solver vary only the recall level; every setting above is held fixed across probes, so the noise structure changes the solved recall rather than being applied after it.
 
-With \texttt{scope: global} (the default), one recall level is solved for the whole partition by a coarse grid scan; with \texttt{scope: pair}, the single-pair MCC of the \texttt{single\_match} pair is inverted in closed form and no search runs. A target above the configuration's reachable ceiling or below its floor terminates at the closest achievable value. Because $R_K$ is a maximum over matching, and the mean of $R_K$ over all relabeling is exactly $0$, the matched value is never negative and its expectation under independent labeling is strictly positive. 
+With \texttt{scope: global} (the default), one recall level is solved for the whole partition by a coarse grid scan; with \texttt{scope: pair}, the single-pair MCC of the \texttt{single\_match} pair is inverted exactly and no search runs. A target above the configuration's reachable ceiling or below its floor terminates at the closest achievable value. Under \texttt{scope: global} each run also reports the highest value the search found and, when nothing can move the label counts, their size ceiling: the highest value any labeling with those cluster and label counts can score (for ARI, a bound that is not always reached). A \texttt{uniform} or \texttt{concentrated} spillover, or \texttt{competing\_noise}, can move the counts, and then no size ceiling is reported. Both values are logged, returned through the \texttt{report} argument of \texttt{generate\_clm\_labels} and written to the summary txt; neither stops the search. Because $R_K$ is a maximum over matching, and the mean of $R_K$ over all relabeling is exactly $0$, the matched value is never negative and its expectation under independent labeling is strictly positive. 
     
 Currently, three CLM measures are available: 
 
@@ -101,7 +101,7 @@ Currently, three CLM measures are available:
 
 \texttt{clustering\_ari} is solved for the adjusted Rand index (ARI): The ARI measures the agreement over \emph{pairs} of points rather than through any correspondence between the label and cluster identifiers, and is chance-corrected so that independent partitions score $0$. Because it is a function of the cell of the contingency table and the marginal pair counts alone, it does not need an alignment step: permuting the values of the generated label leaves it unchanged, it is symmetric in its two arguments, and it is defined for any $M$ and $K$.
     
-    \item \textbf{Spatial placement} Configures optionally, within each cluster, \emph{which} points receive each label is chosen by weighted sampling without replacement, with weights derived from normalized distance to the cluster centroid, with\texttt{profile}: \texttt{linear}/\texttt{step}/\texttt{exponential}; and \texttt{favors}: \texttt{steepness} for exponential or \texttt{core}/\texttt{boundary} for other profiles. The target CLM outcome is fixed by stages 2--4, so spatial structure can be varied at a constant metric value.
+    \item \textbf{Spatial placement} Configures optionally, within each cluster, \emph{which} points receive each label is chosen by weighted sampling without replacement, with weights derived from normalized distance to the cluster centroid, with\texttt{profile}: \texttt{linear}/\texttt{step}/\texttt{exponential}; and \texttt{favors}: \texttt{steepness} for exponential or \texttt{core}/\texttt{boundary} for other profiles. The target CLM outcome is fixed by stages 2--5, so spatial structure can be varied at a constant metric value.
     
 \end{enumerate}
 
@@ -142,12 +142,12 @@ clm_label:
     value: 0.7
     scope: global | pair           # global (default): one recall solved
                                    #   numerically for the whole partition.
-                                   # pair: exact closed form for the
-                                   #   single_match pair; requires type: mcc
-                                   #   and matching_mode: single.
+                                   # pair: exact, for the single_match
+                                   #   pair; mcc only; requires
+                                   #   matching_mode: single.
     tolerance: 0.01                # both scopes: how far the DELIVERED
                                    #   labeling may sit from the target
-                                   #   before CLM-309/CLM-310 is raised
+                                   #   before CLM-306/CLM-310 is raised
     max_iter: 40                   # global only, bisection budget; the pair
                                    #   scope inverts exactly and never iterates
     probe_seed: 42                 # optional; defaults to the run seed
@@ -211,7 +211,7 @@ print(L.value_counts().sort_index().to_dict())
 \newpage
 
 \section{Example Outputs}
-The global $R_K$/ARI between an $M$-label and a $K$-cluster partition has no closed form, which is why \texttt{scope: global} is solved numerically. The compact closed-form expression $TP^\star$ inverts the \emph{single} confusion table MCC (what \texttt{scope: pair} evaluates), which is why that mode reaches its target without a search. Maximizing over matchings lifts $R_K$'s null expectation above $0$, while ARI needs no alignment and stays centered on it (config A2). That is why the CLM target for single-match configurations A3 and D1 is feasible in table~\ref{tab:g2mg-outcomes}. Configurations A4 and B1--B3 share one set of rules (labels sized $[1024,614,410]$, one rule per label); B1 and B2 request possible values within their configuration (solver within the tolerance $0.01$, while B3, a 3-label partition of a 2-cluster, requests $\mathrm{MCC}$ $=0.99$, which is not possible. The solver returns the closest feasible value, $0.718$, the maximum attainable for this configuration. C1--C3 differ only in spatial placement.
+The global $R_K$/ARI between an $M$-label and a $K$-cluster partition has no closed form, which is why \texttt{scope: global} is solved numerically. The compact closed-form expression $TP^\star$ inverts the \emph{single} confusion table MCC (what \texttt{scope: pair} evaluates), which is why that mode reaches its target without a search. Maximizing over matchings lifts $R_K$'s null expectation above $0$, while ARI needs no alignment and stays centered on it (config A2). That is why the CLM target for single-match configurations A3 and D1 is feasible in table~\ref{tab:g2mg-outcomes}. Configurations A4 and B1--B3 share one set of rules (labels sized $[1024,614,410]$, one rule per label); B1 and B2 request possible values within their configuration (solver within the tolerance $0.01$), while B3, a 3-label partition of a 2-cluster, requests $\mathrm{MCC}$ $=0.99$, which is not possible. The solver returns the closest feasible value, $0.718$, the maximum attainable for this configuration. C1--C3 differ only in spatial placement.
 
 \begin{table}[!h]
 \centering\tiny
@@ -237,16 +237,21 @@ D1 & single (cluster 1, $M{=}2$) & fills cluster exactly; MCC $\approx 1$ & MCC 
 \end{table}
 
 \newpage
-
 \begin{versionhistory}
+Changes from after the published article, behavior, diagnostics and label allocation can diverge from the article, specifically, limitations are addressed. Up to publishing the package in conda-forge.
+  \vhEntry{0.7.3}{2026-10-11}{AG}{Reporting the target metric minimum and maximum, diagnostics and robustness.}
+\end{versionhistory}
+\newpage
+\begin{versionhistory}
+From first release to the release matching the published article with label allocation and behavior, limitations and diagnostics matching the manuscript.
   \vhEntry{0.1}{2026-07-07}{AG}{Initial release: CLM label engine, \texttt{[CLM-\#\#\#]} diagnostics, configuration wizard, MCC/ARI evaluation.}
   \vhEntry{0.2}{2026-07-15}{AG}{Internal, unpublished.}
   \vhEntry{0.3}{2026-07-31}{AG}{\texttt{clustering\_mcc\_pair} added to the API; \texttt{fabricated\_data} cluster ids changed from strings to integers.}
   \vhEntry{0.4}{2026-07-31}{AG}{The renderer can now emit \texttt{target\_metric}, \texttt{competing\_noise}, \texttt{concentrated\_labels}, \texttt{skew\_params} and \texttt{steepness}; \texttt{mdcgen} source repaired.}
-  \vhEntry{0.5}{2026-07-31}{AG}{Research release: \texttt{CITATION.cff}, \texttt{[CLM-1xx]} configuration errors abort the run.}
+  \vhEntry{0.5}{2026-07-31}{AG}{Research release: \texttt{CITATION.cff}, \texttt{[CLM-1xx]} errors abort the run.}
   \vhEntry{0.6.2}{2026-08-02}{AG}{First public release. Label-space and pair-scope guards: \texttt{[CLM-121]}, \texttt{[CLM-128]}, \texttt{[CLM-129]}, \texttt{[CLM-130]}, \texttt{[CLM-153]} and \texttt{[CLM-310]} reject configurations that previously produced silently incorrect labels; documentation revised throughout}
   \vhEntry{0.6.3}{2026-08-08}{AG}{Correctness release: \texttt{[CLM-131]} validates \texttt{skew\_params}; \texttt{scope: pair} now honors \texttt{tolerance}; run folders are created atomically; \texttt{[CLM-104]}/\texttt{[CLM-105]} report per dataset instead of aborting a batch.}
-  \vhEntry{0.6.4}{2026-08-09}{AG}{Tooling and import hygiene: the target-metric search and the final generation now share one random stream, so a solved value is the value delivered; \texttt{byoc} imports are validated against stated requirements (see the uncoded-rejections section of the troubleshooting reference.}
+  \vhEntry{0.6.4}{2026-08-09}{AG}{Tooling and import hygiene. Shared target-metric search and label generation stream. Validated \texttt{byoc} imports (uncoded rejections section}.
   \vhEntry{0.6.5}{2026-08-10}{AG}{The test suite becomes part of the repository.}
   \vhEntry{0.6.6}{2026-08-11}{AG}{A patch release}
   \vhEntry{0.6.7}{2026-08-12}{AG}{CLI-Wizard update and improvement}
@@ -257,7 +262,7 @@ D1 & single (cluster 1, $M{=}2$) & fills cluster exactly; MCC $\approx 1$ & MCC 
   \vhEntry{0.7.0rc2}{2026-09-01}{AG}{Documentation corrections: \texttt{[CLM-309]}' and \texttt{scope: pair} description.}
   \vhEntry{0.7.0}{2026-09-01}{AG}{Release on PyPI. SoftwareX Article Version.}
   \vhEntry{0.7.1}{2026-09-17}{AG}{Patch release: negative \texttt{proportions}, \texttt{recall\_target}, \texttt{tolerance} and \texttt{steepness} are rejected; \texttt{[CLM-205]}/\texttt{[CLM-207]} report a missing \texttt{label}.}
-  \vhEntry{0.7.2}{2026-10-04}{AG}{Patch release: \texttt{[CLM-132]} refuses other than \texttt{balanced}/\texttt{unbalanced}; \texttt{matching\_mode}; \texttt{num\_classes} must be an integer (\texttt{[CLM-126]}); \texttt{[CLM-133]} rejects if dataset's cluster ids or \texttt{coords} are unusable; \texttt{[CLM-134]} refuses a value of the wrong type. This release is the final release that matches the SoftwareX version, changes from this release can diverge from the published article.}
+  \vhEntry{0.7.2}{2026-10-04}{AG}{Patch release: \texttt{[CLM-132]} refuses other than \texttt{balanced}/\texttt{unbalanced}; \texttt{matching\_mode}; \texttt{num\_classes} must be an integer (\texttt{[CLM-126]}); \texttt{[CLM-133]} rejects if dataset's cluster ids or \texttt{coords} are unusable; \texttt{[CLM-134]} refuses a value of the wrong type. This release is the final release that matches the SoftwareX version, changes from this release can diverge from the article.}
 \end{versionhistory}
 \newpage
 % \section*{License}
@@ -287,10 +292,12 @@ Python is distributed under the Python Software Foundation License V.2. This pro
     \item Iglesias, F., Zseby, T., Ferreira, D. \textit{et al.} (2019). \textit{MDCGen: A Multidimensional Dataset Generator for Clustering}. Journal of Classification. \href{https://link.springer.com/article/10.1007/s00357-019-9312-3}{doi: 10.1007/s00357-019-9312-3}
     \item de Vries, S., Thierens, D. Generating the ground truth: Synthetic data for soft label and label noise research. Int J Data Sci Anal 20, 5603–5615 (2025). \href{https://doi.org/10.1007/s41060-025-00786-z}{doi: 10.1007/s41060-025-00786-z}
     \item Jeon, H., Aupetit, M., Shin, D., Cho, A., Park, S., and Seo, J. (2025). \textit{Measuring the Validity of Clustering Validation Datasets}. IEEE Transactions on Pattern Analysis and Machine Intelligence, 47(6), 5045-5058. \href{https://doi.org/10.1109/TPAMI.2025.3548011}{doi: 10.1109/TPAMI.2025.3548011}
+    \item Gharibian, A., Kudělka, M. (2026) A synthetic data generator for cluster and label matching evaluation. SoftwareX 36, 103077.\\
+    \href{https://doi.org/10.1016/j.softx.2026.103077}{doi:10.1016/j.softx.2026.103077}.
 \end{enumerate}
 
 
 
 \includepdf[pages=-]{CLMSynth_configuration_troubleshooting.pdf}
-\includepdf[pages=-]{engine_decision_map_v070.pdf}
+\includepdf[pages=-]{engine_decision_map_v073.pdf}
 \end{document}

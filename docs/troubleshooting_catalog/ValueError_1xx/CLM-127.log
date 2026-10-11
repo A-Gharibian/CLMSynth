@@ -8,8 +8,8 @@ INFO -   - 'local': Bring-your-own-clusters: your CSV with feature columns and e
 INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'byoc'.
 INFO - Extra fetch kwargs forwarded to 'byoc': {'input_dir': '_data', 'cluster_column': 'cluster', 'standardize': False}
 INFO - BYOC input directory: '{catalog}/_data'.
-INFO - byoc: loaded 'k65_clusters.csv': 195 rows, 2 feature(s), 1 cluster labeling from column 'cluster' (65 clusters).
-ERROR - Skipping local/k65_clusters: [CLM-127] the dataset's cluster count K=65 exceeds the supported maximum of 64.
+INFO - byoc: loaded '127_65_clusters.csv': 195 rows, 2 feature(s), 1 cluster labeling from column 'cluster' (65 clusters).
+ERROR - Skipping local/127_65_clusters: [CLM-127] the dataset's cluster count K=65 exceeds the supported maximum of 64.
 WARNING - 1 of the 1 resolved dataset(s) were skipped (see the errors above).
 ERROR - No datasets were successfully processed.
 INFO - No output was produced, so the empty run folder '_scratch/CLM-127/{run}' was removed.

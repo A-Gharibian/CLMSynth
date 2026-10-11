@@ -8,7 +8,7 @@ INFO -   - 'local': Bring-your-own-clusters: your CSV with feature columns and e
 INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'byoc'.
 INFO - Extra fetch kwargs forwarded to 'byoc': {'input_dir': '_data', 'cluster_column': 'cluster', 'standardize': False}
 INFO - BYOC input directory: '{catalog}/_data'.
-ERROR - byoc: 'missing_cluster_ids.csv' is not a usable import, 1 problem(s):
+ERROR - byoc: '133_missing_cluster_ids.csv' is not a usable import, 1 problem(s):
 ERROR -   - [CLM-133] the dataset cannot be labelled: 2 of the 40 values in the cluster column 'cluster' are missing (blank cells); they would never be labelled. Every point needs one cluster id, the ids must be all numbers or all strings, and coords, when given, needs one row per point.
 WARNING - 1 of the 1 resolved dataset(s) were skipped (see the errors above).
 ERROR - No datasets were successfully processed.

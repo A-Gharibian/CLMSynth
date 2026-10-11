@@ -26,15 +26,7 @@ from .clm_errors import clm_error
 
 log = logging.getLogger(__name__)
 
-# --------------------------------------------------------------------------- #
-# Import requirements
-#
-# BYOC is an IMPORT path, not a generator: the user has already clustered a
-# feature subset with their own algorithm and is bringing the result. These
-# checks encode what that implies about the file.
-# --------------------------------------------------------------------------- #
-
-# Names the pipeline itself writes. A user column sharing one is silently
+# A user column sharing one is silently
 # consumed (Cohort_Class, GroundTruth_*) or produces a duplicate column in the
 # output CSV (Cluster_n, Label_n).
 RESERVED_EXACT = {"Cohort_Class"}
@@ -45,10 +37,9 @@ RESERVED_PREFIXES = ("GroundTruth_", TAG_PREFIX)
 RESERVED_PATTERN = re.compile(r"^(Cluster|Label)_\d+$")
 
 # A cluster of one or two points is not a cluster any algorithm meant to
-# produce; it is a stray. The engine's maths works on it, which is the problem:
+# produce:
 # it would quietly proceed on a partition the user did not intend.
 MIN_CLUSTER_SIZE = 3
-
 
 def _raw_header(path: Path) -> list[str]:
     """The header exactly as written, before pandas renames duplicates.
@@ -76,9 +67,6 @@ def as_tag_columns(value) -> list[str]:
 def validate_import(df: pd.DataFrame, header: list[str], cluster_column: str,
                     tag_columns: list[str] | None = None) -> list[str]:
     """Every reason this frame is not a usable BYOC import, or an empty list.
-
-    All checks run, so one pass reports everything wrong with a file rather than
-    making the user fix problems one at a time.
     """
     problems = []
 
@@ -129,10 +117,7 @@ def validate_import(df: pd.DataFrame, header: list[str], cluster_column: str,
                     f"points ({shown}). Clusters that small are strays rather than "
                     "clusters; merge or drop them before importing")
             # 'A' and 'A ' are two values to pandas, so a stray space in a
-            # hand-edited or exported file quietly adds a cluster and changes
-            # every size the matching arithmetic is built on. Refused rather than
-            # stripped: which spelling was meant is the user's call. An id padded
-            # the same way everywhere is one cluster, so it is left alone.
+            # hand-edited or exported file quietly adds a cluster.
             spellings: dict[str, list[str]] = {}
             for k in sizes.index:
                 if isinstance(k, str):

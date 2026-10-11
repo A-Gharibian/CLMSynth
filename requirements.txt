@@ -2,7 +2,7 @@
 # Requires Python 3.12+; pinned to the versions used for verification (Python 3.14).
 # numpy and scipy below both declare >=3.12.
 
-numpy==2.5.3
+numpy==2.5.4
 pandas==3.0.6
 PyYAML==6.0.3
 scipy==1.18.1
@@ -12,4 +12,3 @@ seaborn==0.13.2
 
 # --- Optional ---
 # git+https://github.com/CN-TU/mdcgenpy    # data_source: "mdcgen";
-# the code will work without it if configuration files point to other sources.

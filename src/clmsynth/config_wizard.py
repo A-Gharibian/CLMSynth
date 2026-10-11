@@ -16,6 +16,7 @@ import yaml
 
 from .dataset_sources import SOURCE_DATASETS, SOURCE_METADATA, is_heavy
 from .dataset_sources import resolved_for_report as _resolved_or_raw
+from .generate_config import write_text_atomic
 from .questions import SCHEMA
 
 # Windows' MAX_PATH.
@@ -26,8 +27,7 @@ def _save_config(config: dict, out: str) -> str:
     """Write the config, creating its folder."""
     try:
         Path(out).parent.mkdir(parents=True, exist_ok=True)
-        Path(out).write_text(yaml.dump(config, sort_keys=False, default_flow_style=False),
-                             encoding="utf-8")
+        write_text_atomic(out, yaml.dump(config, sort_keys=False, default_flow_style=False))
     except (OSError, ValueError) as exc:
         print(f"\n  Could not save to '{out}': {exc}")
         print("  Your answers follow, so nothing is lost:\n")
@@ -124,7 +124,7 @@ def ask_bool(prompt, default=True, explain=None) -> bool:
         print("    (answer yes or no)")
 
 
-def ask_choice(prompt, choices, default=None, explain=None) -> str:
+def ask_choice(prompt, choices: tuple[str, ...], default=None, explain=None) -> str:
     """Asks to pick one of `choices`, by number or by name."""
     _explain(explain)
     for i, c in enumerate(choices, 1):
@@ -138,9 +138,9 @@ def ask_choice(prompt, choices, default=None, explain=None) -> str:
         print(f"    (choose 1-{len(choices)} or type the name)")
 
 
-def _parse_ids(raw):
+def _parse_ids(raw: str) -> list[int | str]:
     """Cluster ids may be ints or strings; keep each as int if possible."""
-    out = []
+    out: list[int | str] = []
     for tok in raw.split(","):
         tok = tok.strip()
         if not tok:
@@ -262,6 +262,7 @@ def ask_from(key, **override):
     if q.kind == "bool":
         return ask_bool(prompt, default, explain=explain)
     if q.kind == "choice":
+        assert q.choices is not None   # every "choice" question in questions.SCHEMA lists them
         return ask_choice(prompt, q.choices, default, explain=explain)
     if q.kind == "int_list":
         return ask_ints(prompt, explain=explain, minv=override.get("minv", q.lo),

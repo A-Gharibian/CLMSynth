@@ -11,10 +11,11 @@ INFO - Generating synthetic data (Seed: 42)...
 INFO - Applying perfect separation ground truth to categorical labels...
 INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
 WARNING - [CLM-303] target_metric present: per-rule recall_target values in assignment_matrix are ignored; recall_target is solved for globally.
-WARNING - [CLM-306] target_metric: did not converge within tolerance after 15 iterations. Best found: alpha=0.7000, achieved=0.6594 (target=0.990, tol=0.001).
+WARNING - target_metric: 3 probed recall level(s) in [0.800, 1.000] are infeasible; at alpha=0.800: [CLM-150] Infeasible rule: label 0 needs 218 of its 272 points in clusters [0], which hold only 200 points total. Under target_metric this is the search's recall level alpha=0.800, not a recall_target to lower; levels up to 0.735 fit here. For a higher level, make label 0 smaller (its 272 points come from proportions[0] = 0.34), or give the rule more clusters.
+WARNING - [CLM-306] target_metric: did not converge within tolerance after 15 iterations. Best found: alpha=0.7000, achieved=0.6594 (target=0.990, tol=0.001). Size ceiling for these label counts: mcc=0.7071; the target is above it, so no labeling with these counts reaches it.
 INFO - CLM labels generated. Target counts: [272, 264, 264], achieved: [272, 264, 264].
 INFO - target_metric: final achieved mcc=0.6594 (target was 0.99, alpha=0.7000).
-WARNING - [CLM-309] target_metric: the DELIVERED labeling achieves mcc=0.6594, outside the requested 0.99 +/- 0.001 (solved alpha=0.7000). Two things can cause this. Usually the search simply could not reach the target, in which case [CLM-306] above reports it and is the real explanation; at small N the achievable values form a coarse ladder and a tight tolerance can fall between rungs. Otherwise the labeling that was scored is not the labeling that was written: as of 0.6.4 the search and the final generation share one stream by default, so that second case means an explicit target_metric.probe_seed differing from the run seed. Treat the achieved value above as authoritative, not the requested one.
+INFO - target_metric: highest mcc the search found is 0.6594 (alpha=0.7000); size ceiling 0.7071, which no labeling with these label counts exceeds.
 INFO - [fabricated_data/fabricated/baseline_4class] Attached generated label 'Label_0'.
 INFO - Saved: _scratch/CLM-306/{run}/csv/fabricated_data__fabricated__baseline_4class.csv
 INFO - Saved summary: _scratch/CLM-306/{run}/txt/fabricated_data__fabricated__baseline_4class.txt

@@ -165,22 +165,21 @@ CODES = {
          "entry {entry} has no effect.",
     306: "target_metric: did not converge within tolerance after {max_iter} iterations. "
          "Best found: alpha={best_alpha:.4f}, achieved={best_metric:.4f} "
-         "(target={target:.3f}, tol={tol}).",
+         "(target={target:.3f}, tol={tol}).{ceiling}",
     307: "target_metric scope 'pair': target {target} is outside the reachable range "
          "[{phi_min:.3f}, {phi_max:.3f}] for this cluster/label pair; clamped to the "
          "nearest reachable value.",
     308: "target_metric scope 'pair': label {label} is sized to {m} points (a subset of "
-         "its cluster) to meet the target MCC; any explicit proportion for it is overridden.",
+         "its cluster) to meet the target {metric}; any explicit proportion for it is "
+         "overridden.",
     309: "target_metric: the DELIVERED labeling achieves {type}={achieved:.4f}, outside the "
-         "requested {target} +/- {tol} (solved alpha={alpha:.4f}). Two things can cause this. "
-         "Usually the search simply could not reach the target, in which case [CLM-306] above "
-         "reports it and is the real explanation; at small N the achievable values form a "
-         "coarse ladder and a tight tolerance can fall between rungs. Otherwise the labeling "
-         "that was scored is not the labeling that was written: as of 0.6.4 the search and the "
-         "final generation share one stream by default, so that second case means an explicit "
-         "target_metric.probe_seed differing from the run seed. Treat the achieved value above "
-         "as authoritative, not the requested one.",
-    310: "target_metric scope 'pair': the DELIVERED labeling achieves pair mcc="
+         "requested {target} +/- {tol}, but the search scored {type}={searched:.4f} at the "
+         "same alpha={alpha:.4f}. The labeling the search scored is not the one written: the "
+         "search ran on target_metric.probe_seed and the final generation on the run seed, "
+         "and the two streams place the points differently. Omit probe_seed to have the "
+         "search score the labeling it delivers. Treat the achieved value above as "
+         "authoritative, not the requested one.",
+    310: "target_metric scope 'pair': the DELIVERED labeling achieves pair {type}="
          "{achieved:.4f}, outside the requested {target} +/- {tol}. The closed-form "
          "construction assumes every point of label {label} lies inside cluster {cluster}, "
          "but {outside} of its {total} points lie outside. Treat the achieved value above "

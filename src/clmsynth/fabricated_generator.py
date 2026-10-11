@@ -130,7 +130,7 @@ def generate_synthetic_data(
         final_dfs_to_concat.append(cat_series)
 
     # 3. Final Assembly
-    final_df = pd.concat(final_dfs_to_concat, axis=1)
+    final_df: pd.DataFrame = pd.concat(final_dfs_to_concat, axis=1)
 
     # 4. Save Output
     if output_file:

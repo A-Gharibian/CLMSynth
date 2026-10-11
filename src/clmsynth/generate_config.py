@@ -3,9 +3,13 @@
 The input is a flat "upstream payload" mapping (see upstream_payload.yaml).
 """
 
+import contextlib
 import json
 import logging
+import os
 import sys
+import uuid
+from pathlib import Path
 
 import yaml
 
@@ -18,6 +22,31 @@ log = logging.getLogger(__name__)
 VALID_SKEW_RULES = ("geometric", "dominant_minority", "dirichlet")
 VALID_BALANCE = ("balanced", "unbalanced")
 VALID_SOURCES = ("clustbench", "mdcgen", "fabricated_data", "byoc")
+
+
+def write_text_atomic(path: str | Path, text: str) -> None:
+    """Writes `text` to `path` so the file holds either its old content or all of
+    the new.
+
+    Written in place, a failed write, an interrupt or a second writer on the same
+    path left a truncated or interleaved config that could still parse. The text
+    goes to a temporary file in the same folder and os.replace swaps it in. A
+    symlinked `path` is followed, so the link survives.
+    """
+    target = Path(path).resolve()
+    # open(..., "x") rather than tempfile.mkstemp, which creates the file 0600:
+    # the config would lose the read permission the umask gives everyone else.
+    tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with open(tmp, "x", encoding="utf-8") as file:
+            file.write(text)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(tmp, target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
+        raise
 
 
 def format_yaml_snippet(data, indent_level=6):
@@ -219,11 +248,11 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
         sys.exit(1)
 
     try:
-        with open(output_path, 'w', encoding="utf-8") as file:
-            file.write(rendered_yaml)
+        write_text_atomic(output_path, rendered_yaml)
         log.info(f"Test data configuration successfully written to '{output_path}'")
     except OSError as e:
-        log.critical(f"Failed to write configuration file: {e}")
+        log.critical(f"Failed to write configuration file: {e}. "
+                     f"'{output_path}' was left unchanged.")
         sys.exit(1)
 
 
@@ -252,6 +281,11 @@ def main() -> None:
 
     if not isinstance(payload, dict):
         log.critical(f"Payload file '{payload_path}' must contain a YAML mapping.")
+        sys.exit(1)
+
+    if os.path.exists(output_path) and os.path.samefile(payload_path, output_path):
+        log.critical(f"Output path '{output_path}' is the payload file; writing the config "
+                     "there would replace the payload. Pass a different output path.")
         sys.exit(1)
 
     try:

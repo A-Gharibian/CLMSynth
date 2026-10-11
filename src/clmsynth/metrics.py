@@ -1,6 +1,8 @@
 # metrics.py
-"""Evaluation metrics for cluster-label agreement.
+"""Evaluation metrics for cluster-label agreement, and their ceilings given the group sizes.
 """
+from math import comb
+
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 from sklearn.metrics import adjusted_rand_score, matthews_corrcoef
@@ -32,7 +34,7 @@ def clustering_ari(labels_true, labels_pred) -> float:
     >>> clustering_ari([0, 0, 1, 1], [1, 1, 0, 0])
     1.0
     """
-    return adjusted_rand_score(np.asarray(labels_true), np.asarray(labels_pred))
+    return float(adjusted_rand_score(np.asarray(labels_true), np.asarray(labels_pred)))
 
 
 def clustering_mcc_pair(labels_true, labels_pred, cluster, label) -> float:
@@ -70,6 +72,26 @@ def clustering_mcc_pair(labels_true, labels_pred, cluster, label) -> float:
     u = (np.asarray(labels_true) == cluster).astype(int)
     v = (np.asarray(labels_pred) == label).astype(int)
     return float(matthews_corrcoef(u, v))
+
+
+def clustering_ari_pair(labels_true, labels_pred, cluster, label) -> float:
+    """Single-pair adjusted Rand index: one cluster vs the rest against one
+    label vs the rest.
+
+    The ARI counterpart of `clustering_mcc_pair`. It scores the same two binary
+    partitions; it says nothing about the remaining clusters and labels. The
+    engine does not use it: [CLM-123] refuses a pair ARI target, which has no
+    closed-form inverse.
+
+    Examples
+    --------
+    >>> from clmsynth.metrics import clustering_ari_pair
+    >>> clustering_ari_pair([0, 0, 1, 1], [5, 5, 9, 9], cluster=0, label=5)
+    1.0
+    """
+    u = (np.asarray(labels_true) == cluster).astype(int)
+    v = (np.asarray(labels_pred) == label).astype(int)
+    return float(adjusted_rand_score(u, v))
 
 
 def clustering_mcc(labels_true, labels_pred):
@@ -146,3 +168,124 @@ def clustering_mcc(labels_true, labels_pred):
 
     recoded_pred = pred_relabel[pred_codes]
     return matthews_corrcoef(true_codes, recoded_pred)
+
+
+class MetricCeilings:
+    """Highest values the agreement measures can take, given only the group sizes.
+
+    Each method takes the cluster sizes of one partition and the label sizes of
+    the other, two lists of counts with the same total, and returns a limit that
+    holds for every labeling with those sizes. Neither which points form a group
+    nor how a labeling is built enters, so a limit that depends on a particular
+    construction does not belong here.
+
+    Internal: the engine reads it for the size ceiling it reports, which reaches
+    users as ``report["ceiling"]`` of ``generate_clm_labels``. It is not exported
+    from the package and may change.
+    """
+
+    @staticmethod
+    def _sizes(cluster_sizes, label_sizes) -> tuple[np.ndarray, np.ndarray]:
+        """Both size lists as int64 arrays, after checking they are 1-D lists of
+        counts >= 0 with the same total."""
+        t = np.asarray(cluster_sizes, dtype=np.int64)
+        p = np.asarray(label_sizes, dtype=np.int64)
+        if t.ndim != 1 or p.ndim != 1 or (t < 0).any() or (p < 0).any():
+            raise ValueError("cluster_sizes and label_sizes must be 1-D lists of counts >= 0")
+        if t.sum() != p.sum():
+            raise ValueError("cluster_sizes and label_sizes must count the same points, "
+                             f"got {int(t.sum())} and {int(p.sum())}")
+        return t, p
+
+    @staticmethod
+    def rk_ceiling(cluster_sizes, label_sizes) -> float:
+        """Maximum of `clustering_mcc` (R_K) over every labeling with these sizes.
+
+        With the sizes fixed, the denominator of R_K is fixed, and a matched
+        cluster/label pair (k, j) adds ``N * n_kj - t_k * p_j`` to the numerator,
+        at most ``N * min(t_k, p_j) - t_k * p_j``. Every matched cell can be filled
+        to ``min(t_k, p_j)`` at once: each one then fills its row or its column, so
+        the remaining points never land on a matched cell. The ceiling is the best
+        matching on those gains, and it is always attained.
+
+        Parameters
+        ----------
+        cluster_sizes : array-like of int
+            Point count of each cluster (``t_k``).
+        label_sizes : array-like of int
+            Point count of each label (``p_j``), with the same total.
+
+        Returns
+        -------
+        float
+            In ``[0, 1]``. ``1.0`` only when the two lists hold the same non-zero
+            sizes in some order. ``0.0`` when either side has a single non-empty
+            group, where R_K is 0 for every labeling.
+
+        Examples
+        --------
+        >>> from clmsynth.metrics import MetricCeilings
+        >>> MetricCeilings.rk_ceiling([2, 2], [2, 2])
+        1.0
+        """
+        t, p = MetricCeilings._sizes(cluster_sizes, label_sizes)
+        t = t.astype(np.float64)
+        p = p.astype(np.float64)
+        n = t.sum()
+
+        denom_sq = (n * n - (p * p).sum()) * (n * n - (t * t).sum())
+        if denom_sq == 0:
+            return 0.0
+
+        # Largest numerator term each cluster/label pair can contribute if matched.
+        gain = n * np.minimum.outer(t, p) - np.outer(t, p)
+        row_ind, col_ind = linear_sum_assignment(-gain)
+        return float(gain[row_ind, col_ind].sum() / np.sqrt(denom_sq))
+
+    @staticmethod
+    def ari_bound(cluster_sizes, label_sizes) -> float:
+        """Upper bound of `clustering_ari` over every labeling with these sizes.
+
+        ARI counts pairs of points. With ``A`` pairs sharing a cluster, ``B``
+        sharing a label and ``P = C(N, 2)`` pairs in all, it rises with the pairs
+        that share both, which cannot exceed ``min(A, B)``. Putting that count into
+        the Hubert-Arabie formula gives the bound.
+
+        Unlike `rk_ceiling`, the bound is not always attained. It is reached only
+        when one partition can sit entirely inside the other, which needs the
+        smaller groups to add up exactly to the larger ones: for sizes ``[2, 2]``
+        against ``[3, 1]`` it is 2/3, yet every labeling scores 0. The exact
+        maximum is an integer optimization with no general closed form.
+
+        Parameters
+        ----------
+        cluster_sizes : array-like of int
+            Point count of each cluster.
+        label_sizes : array-like of int
+            Point count of each label, with the same total.
+
+        Returns
+        -------
+        float
+            At most ``1.0``. No labeling with these sizes scores above it.
+
+        Examples
+        --------
+        >>> from clmsynth.metrics import MetricCeilings
+        >>> MetricCeilings.ari_bound([2, 2], [3, 1])
+        0.6666666666666666
+        """
+        t, p = MetricCeilings._sizes(cluster_sizes, label_sizes)
+        a = sum(comb(int(x), 2) for x in t)
+        b = sum(comb(int(x), 2) for x in p)
+        pairs = comb(int(t.sum()), 2)
+
+        # Hubert-Arabie with min(A, B) shared pairs, multiplied through by P so the
+        # arithmetic stays in exact integers until the final division.
+        numerator = 2 * (pairs * min(a, b) - a * b)
+        denominator = a * (pairs - b) + b * (pairs - a)
+        if denominator == 0:
+            # Both sides split every pair, or both join every pair: the one labeling
+            # scores 1. One side splits every pair and the other joins them all: 0.
+            return 1.0 if a == b else 0.0
+        return numerator / denominator

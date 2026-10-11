@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .clm_errors import clm_missing
 from .clm_label_engine import generate_clm_labels
 from .label_context import DatasetContext
 
@@ -28,7 +29,7 @@ def generate_additional_labels(
     Parameters
     ----------
     context : DatasetContext
-        Container holding the features and at least one ground-truth labelling.
+        Container holding the features and at least one ground-truth labeling.
         Mutated in place.
     n_labels : int, default 1
         How many label columns to generate.
@@ -36,10 +37,11 @@ def generate_additional_labels(
         Key into ``context.ground_truths`` naming the clustering to match against.
     clm_config : dict, optional
         The ``clm_label`` block: ``num_classes``, ``matching_mode`` and whatever
-        that mode requires. Required despite the default; passing ``None`` raises.
+        that mode requires. Required despite the default; ``None`` or an empty
+        block raises ``[CLM-207]``.
     noise : float, default 0.1
         Accepted for call-signature compatibility and unused; the noise fallback
-        was retired in favour of the engine.
+        was retired in favor of the engine.
     seed : int, default 42
         Label ``i`` uses ``seed + i``, so the columns differ from one another
         while the run as a whole stays reproducible.
@@ -48,13 +50,16 @@ def generate_additional_labels(
     -------
     None
         ``context`` is modified in place; read the result from
-        ``context.generated_labels`` or ``context.to_dataframe()``.
+        ``context.generated_labels`` or ``context.to_dataframe()``, and under
+        ``target_metric`` the engine's report from ``context.label_reports``.
 
     Raises
     ------
     KeyError
-        If ``source_labeling`` is not in ``context.ground_truths``, or if
-        ``clm_config`` is missing or empty.
+        If ``source_labeling`` is not in ``context.ground_truths``.
+    MissingConfigKey
+        A ``KeyError`` subclass, carrying ``[CLM-207]`` when ``clm_config`` is
+        missing or empty.
     InfeasibleAllocationError
         If the configuration is valid but the requested counts cannot fit the
         cluster capacities.
@@ -79,13 +84,16 @@ def generate_additional_labels(
     cluster_labels = context.ground_truths[source_labeling].to_numpy()
     coords = context.features.to_numpy()
 
+    # A missing key, so the dataset is still written, without a label. No dataset
+    # name here: main names it, as for every other code.
     if not clm_config:
-        raise KeyError(f"'clm_label' is required for {context.battery}/{context.dataset}; "
-                       "the noise fallback is retired.")
+        raise clm_missing(207, where="label_generation", key="clm_label")
 
     for i in range(n_labels):
-        series = generate_clm_labels(cluster_labels, coords, clm_config, seed=seed + i)
-        context.add_generated_label(context.next_generated_label_name(), series)
+        report: dict[str, Any] = {}
+        series = generate_clm_labels(cluster_labels, coords, clm_config, seed=seed + i,
+                                     report=report)
+        context.add_generated_label(context.next_generated_label_name(), series, report=report)
 
 
 def _legacy_noise_flip(base, noise, seed):

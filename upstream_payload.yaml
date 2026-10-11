@@ -8,27 +8,33 @@
 #   python -m clmsynth.generate_config my_payload.yaml out.yaml    # and an explicit output
 
 data_source: "clustbench"        # clustbench | mdcgen | fabricated_data | byoc
-batteries: ["g2mg"]
-datasets: ["g2mg_4_20"]
+batteries: ["fcps"]
+datasets: ["hepta"]
 source_seed: 42
 
 n_labels: 1
 source_labeling: "labels0"
 label_seed: 42
 
-# g2mg_4_20 has 2 ground-truth clusters (ids 1 & 2, 1024 points each).
-num_classes: 2
-proportions: [0.5, 0.5]
-balance: "unbalanced"            # explicit proportions take precedence; skew_rule is the fallback
-skew_rule: "geometric"           # unused here (proportions present); kept for the template
+# fcps/hepta (Thrun & Ultsch, 2020): 212 points in 3-D, 7 well-separated
+# clusters with ids 1-7 (cluster 1 has 32 points, the others 30).
+num_classes: 7
+balance: "balanced"              # equal label sizes: 31, 31, then 30 each
+# proportions: [0.15, 0.15, 0.14, 0.14, 0.14, 0.14, 0.14]   # read only with balance "unbalanced"
+skew_rule: "geometric"           # unused here (balance is "balanced"); kept for the template
 matching_mode: "custom"
 single_match: {cluster: null, label: null}
 # One rule per cluster: route 90% of each label's points into its paired
-# cluster. Feasible (needs 922 <= 1024 per cluster) and produces a strong,
-# measurable cluster-label match rather than an infeasible request.
+# cluster. Feasible (needs at most 28 of a 30-point cluster) and produces a
+# strong, measurable cluster-label match rather than an infeasible request.
 assignment_matrix:
   - {clusters: [1], label: 0, recall_target: 0.9}
   - {clusters: [2], label: 1, recall_target: 0.9}
+  - {clusters: [3], label: 2, recall_target: 0.9}
+  - {clusters: [4], label: 3, recall_target: 0.9}
+  - {clusters: [5], label: 4, recall_target: 0.9}
+  - {clusters: [6], label: 5, recall_target: 0.9}
+  - {clusters: [7], label: 6, recall_target: 0.9}
 split_rule: "equal"
 spillover_rule: "proportional_to_marginal"   # honors 'proportions'; uniform/concentrated do not
 centroid_enabled: true

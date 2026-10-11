@@ -12,6 +12,7 @@ stdlib newer than 3.12.
 import copy
 import importlib
 import pkgutil
+from typing import Any
 
 import pandas as pd
 
@@ -41,7 +42,7 @@ MCC_TOLERANCE = 0.01
 # silently wrong. This routes 80% of each label into its own cluster and lets
 # spillover and centroid placement run, so the paths the project actually exists
 # for are all live.
-SMOKE_CONFIG = {
+SMOKE_CONFIG: dict[str, Any] = {
     "global_settings": {
         "data_source": "fabricated_data",
         "output_dir": "OUTPUT",  # unused: run_pipeline writes to the dirs it is given

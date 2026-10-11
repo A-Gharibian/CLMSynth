@@ -1,6 +1,6 @@
 # Test modules
 
-[![Version](https://img.shields.io/badge/version-0.7.2-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
+[![Version](https://img.shields.io/badge/version-0.7.3-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
 <!-- 
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/{owner}/{repo}/badge)](https://scorecard.dev/viewer/?uri=github.com/{owner}/{repo})
 -->
@@ -9,17 +9,17 @@
 Located in the main tests directory; refer to README for instructions.
 Running in under a minute.
 
-| module                  | defends                                                              |
-|-------------------------|----------------------------------------------------------------------|
-| `test_smoke`            | First pass                                                           |
-| `test_00_contract`      | right input produces right output, sensitive                         |
-| `test_01_logic`         | named suspicions and previous bugs, selective                        |
-| `test_02_edge_cases`    | input edge cases: nothing, one, many, degenerate, duplicates, non-ASCII, BYOC import rules |
-| `test_03_isolation`     | ownership of state: RNG, config, run folder, module registries, logging, plotting imports |
+| module                  | defends                                                                                     |
+|-------------------------|---------------------------------------------------------------------------------------------|
+| `test_smoke`            | First pass                                                                                  |
+| `test_00_contract`      | right input produces right output, sensitive                                                |
+| `test_01_logic`         | named suspicions and previous bugs, selective                                               |
+| `test_02_edge_cases`    | input edge cases: nothing, one, many, degenerate, duplicates, non-ASCII, BYOC import rules  |
+| `test_03_isolation`     | ownership of state: RNG, config, run folder, module registries, logging, plotting imports   |
 | `test_04_failure_modes` | the pipeline degrades rather than aborts, reports it, and exits with a distinguishable code |
-| `test_05_config_safety` | the program's own defenses against a configuration it did not author |
-| `test_06_diagnostics`   | the `[CLM-###]` registry safety net, driven by the catalog           |
-| `test_07_text_wizard`   | the wizard's schema agrees with the engine; its target floor is wizard-only |
+| `test_05_config_safety` | the program's own defenses against a configuration it did not author                        |
+| `test_06_diagnostics`   | the `[CLM-###]` registry safety net, driven by the catalog                                  |
+| `test_07_text_wizard`   | the wizard's schema agrees with the engine; its target floor is wizard-only                 |
 
 The suite needs no network and no optional dependency: `clustbench` fetches
   are patched, and every case runs against the offline `fabricated_data` source

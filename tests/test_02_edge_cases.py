@@ -184,6 +184,160 @@ def test_labels_only_dataset_has_no_features_and_still_labels(tmp_path):
     assert not list(png_dir.glob("*.png")), "fewer than 2 features: plots must be skipped"
 
 
+@pytest.mark.parametrize(
+    "scope,value",
+    [("pair", 0.6), ("pair", -0.5), ("global", 0.6)],
+    ids=["pair-inside", "pair-clamped", "global"],
+)
+def test_the_reachable_pair_range_is_reported_under_scope_pair(
+    scope, value, tmp_path, caplog, no_plots
+):
+    """Under target_metric scope 'pair' the reachable pair MCC is known before the
+    label is built: [phi_min, 1], from N and the single_match cluster's size.
+
+    It was computed and discarded, and reported only by [CLM-307] when a target
+    fell outside it. It is now logged and written to the summary txt on every
+    pair run, whether the target lies inside the range or is clamped to it. The
+    global scope has no such range, and the plot's info box shows none.
+    baseline_4class: N = 800 and cluster 0 holds 200, so
+    phi_min = sqrt(600 / (200 * 799)) = 0.0613.
+    """
+    from clmsynth.main import _clm_info_text
+
+    clm = {
+        "num_classes": 4,
+        "balance": "balanced",
+        "matching_mode": "single",
+        "single_match": {"cluster": 0, "label": 0},
+        "target_metric": {"type": "mcc", "value": value, "scope": scope},
+    }
+    csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
+    for d in (csv_dir, png_dir, txt_dir):
+        d.mkdir()
+    with caplog.at_level(logging.INFO, logger="clmsynth"):
+        n_ok = run_pipeline(
+            "fabricated_data",
+            {
+                "global_settings": {"data_source": "fabricated_data", "output_dir": str(tmp_path)},
+                "fabricated_data_suite": {
+                    "batteries": ["fabricated"],
+                    "datasets": ["baseline_4class"],
+                    "seed": 42,
+                },
+                "label_generation": {
+                    "n_labels": 1,
+                    "source_labeling": "labels0",
+                    "seed": 42,
+                    "clm_label": clm,
+                },
+            },
+            csv_dir,
+            png_dir,
+            txt_dir,
+        )
+    assert n_ok == 1
+
+    summary = (txt_dir / "fabricated_data__fabricated__baseline_4class.txt").read_text(
+        encoding="utf-8"
+    )
+    line = "cluster 0, label 0: [0.0613, 1.0000]   (N = 800, cluster size = 200)"
+    logged = "reachable pair mcc for cluster 0, label 0 is [0.0613, 1.0000]"
+    if scope == "pair":
+        assert "Reachable pair MCC" in summary and line in summary, summary
+        assert logged in caplog.text, caplog.text
+        assert ("[CLM-307]" in caplog.text) == (value < 0), caplog.text
+    else:
+        assert "Reachable pair MCC" not in summary, summary
+        assert "reachable pair mcc" not in caplog.text, caplog.text
+    assert "0.0613" not in _clm_info_text(clm)
+
+
+THREE_LABELS = {
+    "num_classes": 3,
+    "balance": "unbalanced",
+    "proportions": [0.34, 0.33, 0.33],
+    "matching_mode": "custom",
+    "assignment_matrix": [{"label": i, "clusters": [i]} for i in range(3)],
+}
+
+
+@pytest.mark.parametrize(
+    "clm,present,absent",
+    [
+        (
+            {**THREE_LABELS, "target_metric": {"type": "mcc", "value": 0.99}},
+            [
+                "    target_metric = mcc 0.99 requested, 0.6594 achieved (scope global)",
+                "    highest found = 0.6594 (alpha 0.7000)",
+                "    size ceiling  = 0.7071 (no labeling with these label counts scores higher)",
+            ],
+            [],
+        ),
+        (
+            {**THREE_LABELS, "target_metric": {"type": "ari", "value": 0.99}},
+            [("    size bound    = 0.7993 (no labeling with these label counts scores higher; "
+              "not always reached)")],
+            ["size ceiling"],
+        ),
+        (
+            {**THREE_LABELS, "spillover_rule": "uniform",
+             "target_metric": {"type": "mcc", "value": 0.99}},
+            ["    highest found = ", "    size ceiling  = none: the label counts can move"],
+            [],
+        ),
+        (
+            {"num_classes": 4, "balance": "balanced", "matching_mode": "single",
+             "single_match": {"cluster": 0, "label": 0},
+             "target_metric": {"type": "mcc", "value": 0.6, "scope": "pair"}},
+            # 86 points of label 0 in cluster 0: the closed form, rounded to a count.
+            ["    target_metric = mcc 0.6 requested, 0.6011 achieved (scope pair)"],
+            ["highest found", "size ceiling"],
+        ),
+        (
+            {"num_classes": 4, "balance": "balanced", "matching_mode": "perfect"},
+            [],
+            ["target_metric =", "highest found", "size ceiling"],
+        ),
+    ],
+    ids=["global-mcc", "global-ari", "counts-can-move", "pair", "no-target"],
+)
+def test_the_target_report_is_written_to_the_summary(clm, present, absent, tmp_path, no_plots):
+    """Under target_metric the summary txt lists, below each label's counts, what
+    the engine reported: the request and the delivered value, and under scope
+    'global' the highest value the search found and the size ceiling of the
+    label counts (a bound for ari, none when the counts can move). baseline_4class
+    is four clusters of 200, so three labels of 272/264/264 have the ceiling
+    0.7071. A label made without a target lists none of it.
+    """
+    csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
+    for d in (csv_dir, png_dir, txt_dir):
+        d.mkdir()
+    n_ok = run_pipeline(
+        "fabricated_data",
+        {
+            "global_settings": {"data_source": "fabricated_data", "output_dir": str(tmp_path)},
+            "fabricated_data_suite": {
+                "batteries": ["fabricated"],
+                "datasets": ["baseline_4class"],
+                "seed": 42,
+            },
+            "label_generation": {"n_labels": 1, "source_labeling": "labels0", "seed": 42,
+                                 "clm_label": clm},
+        },
+        csv_dir,
+        png_dir,
+        txt_dir,
+    )
+    assert n_ok == 1
+    summary = (txt_dir / "fabricated_data__fabricated__baseline_4class.txt").read_text(
+        encoding="utf-8"
+    )
+    for text in present:
+        assert text in summary, summary
+    for text in absent:
+        assert text not in summary, summary
+
+
 def test_single_point_dataset():
     """N=1, M=K=1: the smallest well-formed input the engine can be given."""
     out = generate_clm_labels(
@@ -722,6 +876,7 @@ def test_byoc_standardize_leaves_a_tag_alone(tmp_path):
         tag_columns=["outcome"],
         standardize=True,
     )
+    assert result is not None
     out = build_context("byoc", "local", "scaled", result).to_dataframe()
     assert out["f1"].min() == 0.0 and out["f1"].max() == 1.0
     assert out["outcome"].tolist() == outcome

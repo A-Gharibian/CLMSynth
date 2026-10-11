@@ -76,7 +76,7 @@ The dictionary below (from the `clm_label` documented in the manual) runs direct
 import numpy as np
 from clmsynth import generate_clm_labels, clustering_mcc
 
-clusters = np.repeat([0, 1, 2], 200)                        # an arbitrary ground truth,  shape (n,N)
+clusters = np.repeat([0, 1, 2], 200)                        # an arbitrary ground truth
 X = np.repeat([[0., 0.], [5., 0.], [0., 5.]], 200, axis=0)  # a feature space, shape (n, d)
 # configuration that can also be supplied through a YAML file:
 cfg = {
@@ -108,6 +108,8 @@ User Manual under the *Configuration Troubleshooting Reference* section.
 An invalid configuration 1xx error aborts the whole run for every dataset except:
 [CLM-102/105/119/125/127/133], which are raised against each dataset's own cluster count,
 cluster IDs or feature columns, so a failure of configuration for one dataset does not apply to a batch of datasets.
+[CLM-120] (no recall level of a `target_metric` fits a dataset) leaves only that dataset's
+label out: the dataset is still written, and the run continues.
 For byoc, [CLM-104] and [CLM-105] are additionally checked across the whole batch before
 any work begins, so an ID mismatch refuses the run before a file is written and names
 every erroneous dataset; everything else is reported per dataset, and the run continues.
@@ -133,7 +135,9 @@ No YAML editing required.
 CLMSynth is fully functional from a config file
 alone; the wizard helps to *create* one.
 
-1. How to generate a config (edit `upstream_payload.yaml`, or pass your own file):
+1. How to generate a config (edit `upstream_payload.yaml`, or pass your own file). The
+   shipped payload labels `fcps/hepta` [[4]](#references) from `clustbench`: 212 points
+   in 3-D, 7 clusters, one rule per cluster.
    ```bash
    python -m clmsynth.generate_config                    # reads upstream_payload.yaml, writes test_data_config.yaml
    python -m clmsynth.generate_config my_payload.yaml    # or an explicit payload (and optionally an output path)
@@ -156,7 +160,9 @@ OUTPUT/{DDMMYY}_{Source}_{HHMMSS}/
 ├── csv/{source}__{battery}__{dataset}.csv     # features + Cluster_n + Label_n
 ├── png/{source}__{battery}__{dataset}__Cluster_0.png
 ├── png/{source}__{battery}__{dataset}__Label_0.png   # one per generated label
-└── txt/{source}__{battery}__{dataset}.txt     # seeds + config + MCC/ARI (as shown on plots)
+└── txt/{source}__{battery}__{dataset}.txt     # seeds + config + MCC/ARI (as shown on plots);
+                                               #   under scope: pair, the reachable pair MCC;
+                                               #   under a target, what the engine reported
 ```
 
 - `{Source}` is the human-facing generator name: `clustbench` → **Gagolewski's framework**,
@@ -243,7 +249,7 @@ probes, so noise structure changes the solved recall rather than being
 applied after it.
 
 - **`scope: "global"` (default)**, targets the whole-partition metric. A single
-  global recall level is solved (coarse grid scan → bisection) so the achieved 
+  global recall level is solved (coarse grid scan → Brent's method) so the achieved 
   MCC or ARI meets the requested value within tolerance. If the target exceeds
   what the geometry/proportions can
   reach, the solver returns its closest feasible value and logs a
@@ -279,7 +285,10 @@ It tries to place label `l*`'s full budget `m_{l*}` inside cluster `k*`, so with
   `target_metric` it raises `InfeasibleAllocationError` (`[CLM-150]`, naming the setting
   `m_{l*}` comes from) whenever `|k*| < m_{l*}`,
   e.g. pointing `single_match` at the *smallest* cluster with a large budget.
-- **Target metric can be unreachable (structural ceiling)**, but the engine does not yet compute or report the ceiling value. *(planned for 0.7.5)*
+- **Target metric can be unreachable (structural ceiling).** Under `scope: global` the
+  engine reports the highest value its search found and, when nothing can move the label
+  counts, their size ceiling: no labeling with those counts scores higher (for `ARI` a
+  bound that is not always reached). Both are reported, not acted on.
 - **Under `single`/`custom`, exact proportions need `spillover_rule: proportional_to_marginal`.**
   `uniform`/`concentrated` deliberately do not preserve the target label counts, and
   `[CLM-304]` reports the delivered counts when they differ from their targets.
@@ -302,8 +311,7 @@ It tries to place label `l*`'s full budget `m_{l*}` inside cluster `k*`, so with
 - **The target-metric search grid cannot see inside a narrow feasible band.**
   Candidate recalls are bracketed on 11 grid points (step 0.1); only feasible
   ones are usable, so the interval between the last feasible grid point and the
-  true feasibility boundary is never explored. *(planned for 0.7.5)*
-- **`plot_feature_scatter` is not thread-safe.** *(planned for 0.7.5)*
+  true feasibility boundary is never explored.
 
 ## Citing
 
@@ -325,3 +333,6 @@ to your discussion.
 3. Gorodkin, J. (2004). Comparing two K-category assignments by a K-category
    correlation coefficient. *Computational Biology and Chemistry*, 28(5–6),
    367–374.
+4. Thrun, M. C., & Ultsch, A. (2020). Clustering benchmark datasets exploiting the
+   fundamental clustering problems. *Data in Brief*, 30, 105501.
+   <https://doi.org/10.1016/j.dib.2020.105501>

@@ -21,7 +21,11 @@ import yaml
 
 from .byoc_source import fetch_byoc_data
 from .cli_logging import configure_cli_logging
-from .clm_label_engine import InfeasibleAllocationError, validate_matching_ids
+from .clm_label_engine import (
+    InfeasibleAllocationError,
+    pair_reachable_range,
+    validate_matching_ids,
+)
 from .dataset_sources import (
     fetch_clustbench_data,
     fetch_fabricated_data,
@@ -58,20 +62,29 @@ SOURCE_DISPLAY = {
 
 
 def _clm_info_text(clm_config: dict) -> str:
-    """Right-margin annotation: the CLM knobs that shaped this generated label."""
+    """Right-margin annotation: the CLM knobs that shaped this generated label.
+
+    Only what the engine read for it, so every value shown has passed its checks:
+    'perfect' takes the label sizes from the clusters, 'balanced' ignores
+    proportions ([CLM-301]), and 'random' places nothing by centroid. Built only
+    for a label the engine generated.
+    """
+    mode = clm_config.get("matching_mode", "-")
     props = clm_config.get("proportions") or []
     cd = clm_config.get("centroid_dependence", {}) or {}
     tm = clm_config.get("target_metric")
 
     lines = ["CLM config"]
-    if props:
+    if mode == "perfect":
+        lines.append("sizes: from clusters")
+    elif clm_config.get("balance") == "unbalanced" and props:
         lines.append("proportions:")
         vals = [f"{float(p):.3g}" for p in props]
         for i in range(0, len(vals), 2):          # two values per line
             lines.append("  " + ", ".join(vals[i:i + 2]))
     else:
         lines.append(f"balance: {clm_config.get('balance', '-')}")
-    if cd.get("enabled"):
+    if mode != "random" and cd.get("enabled"):
         lines.append("centrality:")
         lines.append(f"  {cd.get('favors', 'core')}/{cd.get('profile', 'linear')}")
     else:
@@ -79,15 +92,18 @@ def _clm_info_text(clm_config: dict) -> str:
     if tm:
         lines.append(f"target: {tm.get('type')}={tm.get('value')}")
     else:
-        lines.append(f"matching: {clm_config.get('matching_mode', '-')}")
+        lines.append(f"matching: {mode}")
     return "\n".join(lines)
 
 
 def _write_summary_txt(path: Path, friendly: str, source: str, battery: str, dataset: str,
                        source_labeling: str, gt_col, n_rows: int, clm_config, label_results,
-                       seed_lines: list[str], label_seed: int) -> None:
+                       seed_lines: list[str], label_seed: int,
+                       pair_lines: list[str] | None = None) -> None:
     """One txt per dataset: the configuration used, the seeds that reproduce it
-    (a drawn seed is otherwise only in the log), and the MCC/ARI shown on the plots."""
+    (a drawn seed is otherwise only in the log), the reachable pair MCC under
+    scope 'pair', the MCC/ARI shown on the plots, and under target_metric what
+    the engine reported for each label."""
     gt_disp = gt_col if gt_col else "(none)"
     out = [
         f"Source : {friendly} ({source})",
@@ -102,8 +118,10 @@ def _write_summary_txt(path: Path, friendly: str, source: str, battery: str, dat
         yaml.dump(clm_config, sort_keys=False, default_flow_style=False).rstrip()
         if clm_config else "(legacy noise mode, no clm_label config)",
         "",
-        "===== Results (identical to each plot's subtitle) =====",
     ]
+    if pair_lines:
+        out += [*pair_lines, ""]
+    out.append("===== Results (identical to each plot's subtitle) =====")
     if not label_results:
         out.append("(no generated labels)")
     # Label i was generated with seed + i (generate_additional_labels).
@@ -114,6 +132,8 @@ def _write_summary_txt(path: Path, friendly: str, source: str, battery: str, dat
             out.append(f"{r['name']}:  (no ground-truth labeling to compare against)")
         out.append(f"    seed = {label_seed + i}")
         out.append(f"    label counts = {r['counts']}")
+        if r.get("target"):
+            out += [f"    {line}" for line in _target_lines(r["target"])]
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
@@ -139,7 +159,7 @@ def _is_plain_name(name) -> bool:
     return not ("/" in text or "\\" in text or ":" in text)
 
 
-def _drop_path_shaped_names(jobs):
+def _drop_path_shaped_names(jobs: list) -> list:
     """Filter out jobs whose battery or dataset name is not a plain name."""
     kept = []
     for battery, dataset in jobs:
@@ -172,12 +192,14 @@ def _byoc_cluster_ids(input_dir, dataset: str, cluster_column: str):
 def _configured_cluster_ids(clm_config: dict) -> list:
     """Cluster ids the configuration itself names."""
     mode = clm_config.get("matching_mode")
+    # A block of the wrong shape names no ids here; the engine refuses it ([CLM-134]).
     if mode == "single":
         sm = clm_config.get("single_match") or {}
-        return [sm["cluster"]] if "cluster" in sm else []
+        return [sm["cluster"]] if isinstance(sm, Mapping) and "cluster" in sm else []
     if mode == "custom":
         # A clusters value that is not a list is left to [CLM-134] in _check_pair.
-        return [k for row in (clm_config.get("assignment_matrix") or [])
+        matrix = clm_config.get("assignment_matrix")
+        return [k for row in (matrix if isinstance(matrix, (list, tuple)) else [])
                 if isinstance(row, dict) and isinstance(row.get("clusters"), (list, tuple))
                 for k in row["clusters"]]
     return []
@@ -190,7 +212,8 @@ def precheck_byoc_matching_ids(jobs, fetch_kwargs: dict, clm_config: dict | None
     them, so a batch with several mismatches is fixed in one pass rather than
     one run at a time.
     """
-    if not clm_config:
+    # A clm_label that is not a mapping is left to the engine ([CLM-134]).
+    if not clm_config or not isinstance(clm_config, Mapping):
         return
 
     # [CLM-104] bounds labels by num_classes: dataset-independent, so it is
@@ -225,6 +248,14 @@ def precheck_byoc_matching_ids(jobs, fetch_kwargs: dict, clm_config: dict | None
         "every offending dataset is listed above."
     )
     raise failures[0][1]
+
+
+def _not_a_mapping(key: str, section: object, example: str) -> str | None:
+    """The message for a config section that is not a mapping, or None. A list or
+    a string crashed on the first .get() with a traceback."""
+    if isinstance(section, Mapping):
+        return None
+    return f"'{key}' must be a mapping of settings such as '{example}', got {section!r}."
 
 
 def load_config(config_path: str) -> dict:
@@ -276,7 +307,9 @@ def _render_dataset_plots(final_df: pd.DataFrame, context: DatasetContext,
 
     # Subtitle metrics compare each generated label against the SAME ground-truth
     # labeling the CLM engine keyed off (source_labeling), reusing label_results.
-    clm_info = _clm_info_text(clm_config) if clm_config else None
+    # Only with a generated label to annotate: a skipped one may have stopped on
+    # the very key the box would read.
+    clm_info = _clm_info_text(clm_config) if clm_config and label_results else None
     for r in label_results:
         subtitle = None
         if r["mcc"] is not None:
@@ -324,6 +357,13 @@ def _label_dataset(context: DatasetContext, battery: str, dataset: str,
     except (KeyError, InfeasibleAllocationError) as e:
         log.error(f"Skipping label generation for {battery}/{dataset}: {e}")
         return False
+    except ValueError as e:
+        # [CLM-120] is judged against THIS dataset's cluster sizes: the same
+        # config can fit the next dataset, so it skips the label, not the run.
+        if getattr(e, "code", None) != 120:
+            raise
+        log.error(f"Skipping label generation for {battery}/{dataset}: {e}")
+        return False
     return True
 
 
@@ -337,8 +377,60 @@ def _score_labels(final_df: pd.DataFrame, context: DatasetContext,
             mcc = float(clustering_mcc(final_df[gt_col], final_df[label_name]))
             ari = float(clustering_ari(final_df[gt_col], final_df[label_name]))
         counts = final_df[label_name].value_counts().sort_index().to_dict()
-        label_results.append({"name": label_name, "mcc": mcc, "ari": ari, "counts": counts})
+        label_results.append({"name": label_name, "mcc": mcc, "ari": ari, "counts": counts,
+                              "target": context.label_reports.get(label_name)})
     return label_results
+
+
+def _target_lines(report: Mapping[str, Any]) -> list[str]:
+    """What a label's target_metric run reported, for the summary txt: the
+    request, the delivered value, and under scope 'global' the highest value the
+    search found and the size ceiling of the label counts."""
+    kind = report["type"]
+    lines = [(f"target_metric = {kind} {report['requested']} requested, "
+              f"{report['achieved']:.4f} achieved (scope {report['scope']})")]
+    if report["scope"] != "global":
+        return lines
+    lines.append(f"highest found = {report['highest']:.4f} (alpha {report['highest_alpha']:.4f})")
+    ceiling = report["ceiling"]
+    if ceiling is None:
+        lines.append("size ceiling  = none: the label counts can move (spillover_rule "
+                     "'uniform'/'concentrated' or competing_noise)")
+    elif kind == "mcc":
+        lines.append(f"size ceiling  = {ceiling:.4f} (no labeling with these label counts "
+                     "scores higher)")
+    else:
+        lines.append(f"size bound    = {ceiling:.4f} (no labeling with these label counts "
+                     "scores higher; not always reached)")
+    return lines
+
+
+def _pair_range_lines(clm_config, final_df: pd.DataFrame, gt_col: str | None) -> list[str]:
+    """The reachable pair MCC under target_metric scope 'pair', for the summary
+    txt, under its own heading.
+
+    It depends only on N and the size of the single_match cluster, so it is
+    reported whether or not the label was generated or met its target.
+    The plot box leaves it out.
+    """
+    if not isinstance(clm_config, Mapping) or gt_col is None:
+        return []
+    tm, sm = clm_config.get("target_metric"), clm_config.get("single_match")
+    if (clm_config.get("matching_mode") != "single" or not isinstance(tm, Mapping)
+            or tm.get("scope", "global") != "pair" or tm.get("type") != "mcc"
+            or not isinstance(sm, Mapping) or "cluster" not in sm
+            or isinstance(sm["cluster"], bool)):
+        return []
+    try:
+        n_k = int((final_df[gt_col] == sm["cluster"]).sum())
+    except (TypeError, ValueError):  # an id of the wrong shape, refused as [CLM-134]
+        return []
+    if n_k < 1:
+        return []
+    phi_min, phi_max = pair_reachable_range(len(final_df), n_k)
+    line = (f"cluster {sm['cluster']}, label {sm.get('label')}: "
+            f"[{phi_min:.4f}, {phi_max:.4f}]   (N = {len(final_df)}, cluster size = {n_k})")
+    return ["===== Reachable pair MCC (target_metric scope: pair) =====", line]
 
 
 def _write_dataset(context: DatasetContext, source: str, battery: str, dataset: str,
@@ -360,7 +452,8 @@ def _write_dataset(context: DatasetContext, source: str, battery: str, dataset: 
 
     _write_summary_txt(txt_dir / f"{stem}.txt", friendly, source, battery, dataset,
                        source_labeling, gt_col, len(final_df), clm_config, label_results,
-                       seed_lines, label_seed)
+                       seed_lines, label_seed,
+                       pair_lines=_pair_range_lines(clm_config, final_df, gt_col))
 
     if render_plots:
         _render_dataset_plots(final_df, context, png_dir, stem, gt_col,
@@ -411,6 +504,14 @@ def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: 
     # Read, never popped: the caller may reuse this config. Typed as a Mapping,
     # so a .pop() or assignment here is a mypy error.
     source_config = config.get(f"{source}_suite") or {}
+    label_cfg = config.get("label_generation") or {}
+    # Only the sections this run reads: an unused suite of any shape still runs.
+    for key, section, example in ((f"{source}_suite", source_config, "batteries: all"),
+                                  ("label_generation", label_cfg, "n_labels: 1")):
+        problem = _not_a_mapping(key, section, example)
+        if problem:
+            log.error(problem)
+            return 0
 
     batteries_cfg = source_config.get("batteries")
     if not batteries_cfg:
@@ -438,7 +539,6 @@ def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: 
     fetch_kwargs = {k: v for k, v in source_config.items()
                     if k not in ("batteries", "datasets", "seed")}
 
-    label_cfg = config.get("label_generation") or {}
     label_seed, label_how = _resolve_seed(label_cfg, "label_generation.seed")
     n_add_labels = label_cfg.get("n_labels", 0)
     source_labeling = label_cfg.get("source_labeling", "labels0")
@@ -571,6 +671,11 @@ def main() -> None:
     config_path = args.config
     config = load_config(config_path)
     global_settings = config.get("global_settings") or {}
+    problem = _not_a_mapping("global_settings", global_settings, "data_source: byoc")
+    if problem:
+        # Exit 1 before anything is created, like a config that cannot be loaded.
+        log.critical(f"Configuration file '{config_path}': {problem}")
+        sys.exit(1)
     data_source = str(global_settings.get("data_source", "clustbench")).lower()
     render_plots = not args.no_viz
 

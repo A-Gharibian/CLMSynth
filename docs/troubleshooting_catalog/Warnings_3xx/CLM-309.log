@@ -11,10 +11,11 @@ INFO - Generating synthetic data (Seed: 42)...
 INFO - Applying perfect separation ground truth to categorical labels...
 INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
 WARNING - [CLM-303] target_metric present: per-rule recall_target values in assignment_matrix are ignored; recall_target is solved for globally.
-WARNING - [CLM-306] target_metric: did not converge within tolerance after 40 iterations. Best found: alpha=0.4929, achieved=0.4983 (target=0.500, tol=0.0001).
+INFO - target_metric: converged in 1 probe(s) (alpha=0.4818, achieved=0.5000, target=0.500).
 INFO - CLM labels generated. Target counts: [200, 200, 200, 200], achieved: [200, 200, 200, 200].
-INFO - target_metric: final achieved mcc=0.4983 (target was 0.5, alpha=0.4929).
-WARNING - [CLM-309] target_metric: the DELIVERED labeling achieves mcc=0.4983, outside the requested 0.5 +/- 0.0001 (solved alpha=0.4929). Two things can cause this. Usually the search simply could not reach the target, in which case [CLM-306] above reports it and is the real explanation; at small N the achievable values form a coarse ladder and a tight tolerance can fall between rungs. Otherwise the labeling that was scored is not the labeling that was written: as of 0.6.4 the search and the final generation share one stream by default, so that second case means an explicit target_metric.probe_seed differing from the run seed. Treat the achieved value above as authoritative, not the requested one.
+INFO - target_metric: final achieved mcc=0.4750 (target was 0.5, alpha=0.4818).
+INFO - target_metric: highest mcc the search found is 1.0000 (alpha=1.0000); size ceiling 1.0000, which no labeling with these label counts exceeds.
+WARNING - [CLM-309] target_metric: the DELIVERED labeling achieves mcc=0.4750, outside the requested 0.5 +/- 0.01, but the search scored mcc=0.5000 at the same alpha=0.4818. The labeling the search scored is not the one written: the search ran on target_metric.probe_seed and the final generation on the run seed, and the two streams place the points differently. Omit probe_seed to have the search score the labeling it delivers. Treat the achieved value above as authoritative, not the requested one.
 INFO - [fabricated_data/fabricated/baseline_4class] Attached generated label 'Label_0'.
 INFO - Saved: _scratch/CLM-309/{run}/csv/fabricated_data__fabricated__baseline_4class.csv
 INFO - Saved summary: _scratch/CLM-309/{run}/txt/fabricated_data__fabricated__baseline_4class.txt

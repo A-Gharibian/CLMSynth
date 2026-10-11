@@ -147,6 +147,7 @@ def _catalog_gen(monkeypatch, out_dir):
     monkeypatch.setattr(sys, "argv", ["CLM_catalog_gen.py", str(out_dir)])
     path = Path(__file__).resolve().parents[1] / "tools" / "CLM_catalog_gen.py"
     spec = importlib.util.spec_from_file_location("clm_catalog_gen_under_test", path)
+    assert spec is not None and spec.loader is not None, f"cannot load {path}"
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -164,7 +165,7 @@ def test_catalog_generator_refuses_a_non_catalog_target(tmp_path, monkeypatch):
     gen = _catalog_gen(monkeypatch, victim)
 
     with pytest.raises(SystemExit) as excinfo:
-        gen._checked_rmtree(gen.OUT, ignore_errors=True)
+        gen._checked_rmtree(gen.OUT)
 
     assert "refusing to delete" in str(excinfo.value)
     assert (victim / "precious.txt").read_text(encoding="utf-8") == "keep me"
@@ -176,10 +177,11 @@ def test_catalog_generator_accepts_an_empty_or_absent_target(tmp_path, monkeypat
     empty.mkdir()
     gen = _catalog_gen(monkeypatch, empty)
 
-    gen._checked_rmtree(gen.OUT, ignore_errors=True)
+    gen._checked_rmtree(gen.OUT)
     gen._checked_rmtree(tmp_path / "never_created")
 
-    assert not empty.exists()
+    assert empty.is_dir()
+    assert not (tmp_path / "never_created").exists()
 
 
 def test_catalog_generator_replaces_a_real_catalog(tmp_path, monkeypatch):
@@ -189,9 +191,10 @@ def test_catalog_generator_replaces_a_real_catalog(tmp_path, monkeypatch):
     (catalog / "stale.log").write_text("old", encoding="utf-8")
     gen = _catalog_gen(monkeypatch, catalog)
 
-    gen._checked_rmtree(gen.OUT, ignore_errors=True)
+    gen._checked_rmtree(gen.OUT)
 
-    assert not catalog.exists()
+    assert catalog.is_dir()
+    assert not any(catalog.iterdir())
 
 
 def test_catalog_generator_refuses_to_delete_outside_its_target(tmp_path, monkeypatch):
@@ -216,7 +219,66 @@ def test_catalog_generator_refuses_a_file_target(tmp_path, monkeypatch):
     gen = _catalog_gen(monkeypatch, victim)
 
     with pytest.raises(SystemExit) as excinfo:
-        gen._checked_rmtree(gen.OUT, ignore_errors=True)
+        gen._checked_rmtree(gen.OUT)
 
     assert "not a directory" in str(excinfo.value)
     assert victim.read_text(encoding="utf-8") == "keep me"
+
+
+def test_catalog_generator_empties_a_folder_but_keeps_it(tmp_path, monkeypatch):
+    """A regeneration removes a catalog folder's contents, not the folder."""
+    catalog = tmp_path / "troubleshooting_catalog"
+    (catalog / "ValueError_1xx").mkdir(parents=True)
+    data = catalog / "_data"
+    (data / "nested").mkdir(parents=True)
+    (data / "127_65_clusters.csv").write_text("stale", encoding="utf-8")
+    (data / "nested" / "old.csv").write_text("stale", encoding="utf-8")
+    gen = _catalog_gen(monkeypatch, catalog)
+
+    gen._checked_rmtree(data)
+
+    assert data.is_dir()
+    assert not any(data.iterdir())
+
+
+def test_catalog_generator_refuses_a_catalog_named_folder_outside_a_catalog(
+        tmp_path, monkeypatch):
+    """A folder named like a catalog one is not emptied when OUT holds no catalog."""
+    victim = tmp_path / "worktree"
+    (victim / "_data").mkdir(parents=True)
+    (victim / "_data" / "precious.csv").write_text("keep me", encoding="utf-8")
+    gen = _catalog_gen(monkeypatch, victim)
+
+    with pytest.raises(SystemExit) as excinfo:
+        gen._checked_rmtree(victim / "_data")
+
+    assert "holds no catalog" in str(excinfo.value)
+    assert (victim / "_data" / "precious.csv").read_text(encoding="utf-8") == "keep me"
+
+
+@pytest.mark.parametrize("kind", ["folder", "file"])
+def test_catalog_generator_run_refuses_a_non_catalog_target(kind, tmp_path, monkeypatch):
+    """The run itself refuses, before anything is emptied or written.
+
+    A run empties OUT/<name>, never OUT, so a refusal that only checks being
+    handed OUT let `CLM_catalog_gen.py .` empty a working tree's `_data/`, and a
+    file target crashed with FileExistsError. No case is run.
+    """
+    if kind == "folder":
+        out = tmp_path / "worktree"
+        keep = out / "_data" / "precious.csv"
+        keep.parent.mkdir(parents=True)
+    else:
+        out = keep = tmp_path / "notes.txt"
+    keep.write_text("keep me", encoding="utf-8")
+    gen = _catalog_gen(monkeypatch, out)
+    monkeypatch.setattr(gen, "CASES", [])
+    monkeypatch.setattr(gen, "check_builder_coverage", lambda: ([], []))
+    before = sorted(tmp_path.rglob("*"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        gen.main()
+
+    assert "refusing to delete" in str(excinfo.value)
+    assert keep.read_text(encoding="utf-8") == "keep me"
+    assert sorted(tmp_path.rglob("*")) == before, "the refused run still wrote something"

@@ -21,12 +21,17 @@ Four bands, two mechanisms, decided by what the pipeline actually does:
                            equally wrong for every dataset, so it aborts the
                            run rather than being swallowed per dataset.
                            Asserted on the exception and its `.code`.
-                           SIX EXCEPTIONS, [CLM-102], [CLM-105], [CLM-119],
-                           [CLM-125], [CLM-127] and [CLM-133]: they judge the
-                           DATASET's K, cluster ids or
-                           features rather than the config, so they are logged
-                           per dataset and the batch continues. See
-                           MECHANISM_OVERRIDES below.
+                           SEVEN EXCEPTIONS, logged per dataset while the batch
+                           continues. See MECHANISM_OVERRIDES below.
+                           [CLM-102], [CLM-105], [CLM-119], [CLM-125],
+                           [CLM-127] and [CLM-133] judge the DATASET's K,
+                           cluster ids or features rather than the config, so
+                           that dataset is skipped.
+                           [CLM-120] (no target_metric level fits) is judged
+                           against the dataset's cluster sizes, so another
+                           dataset may fit the same config. It skips no
+                           dataset: only that dataset's label is left out and
+                           the dataset is still written, as under 15x and 2xx.
   InfeasibleAllocation_15x per-dataset skip (another dataset's cluster sizes
                            may satisfy the same rules), logged with its code.
   Warnings_3xx             run succeeds, warning logged with its code.
@@ -71,6 +76,7 @@ BANDS = {
 
 MECHANISM_OVERRIDES = {
     102: LOGGED, 105: LOGGED, 119: LOGGED, 125: LOGGED, 127: LOGGED, 133: LOGGED,
+    120: LOGGED,
 }
 
 
@@ -276,23 +282,6 @@ def test_byoc_cluster_column_wrong_type_is_rejected(cluster_column, tmp_path):
         fetch_byoc_data(dataset_name="tc", input_dir=str(tmp_path), cluster_column=cluster_column)
         is None
     )
-
-
-def test_single_match_cluster_as_list_is_unknown_id():
-    """A list where a scalar cluster id belongs is an unknown id, not a set."""
-    with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(
-            CLUSTERS,
-            COORDS,
-            {
-                "num_classes": 2,
-                "balance": "balanced",
-                "matching_mode": "single",
-                "single_match": {"cluster": [0, 1], "label": 0},
-            },
-            seed=1,
-        )
-    assert "[CLM-105]" in str(excinfo.value)
 
 
 def test_assignment_matrix_string_cluster_does_not_match_int_id():

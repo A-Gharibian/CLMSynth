@@ -327,7 +327,8 @@ def test_a_no_viz_run_never_reaches_the_plotter(tmp_path, monkeypatch):
         dirs = [tmp_path / name / d for d in ("csv", "png", "txt")]
         for d in dirs:
             d.mkdir(parents=True)
-        return run_pipeline(
+        # mypy cannot see that `dirs` holds exactly three paths.
+        return run_pipeline(  # type: ignore[misc]
             "fabricated_data", pipeline_config(tmp_path / name), *dirs, render_plots=render_plots
         )
 

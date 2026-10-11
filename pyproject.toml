@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clmsynth"
-version = "0.7.2"
+version = "0.7.3"
 description = "Synthetic label generator with configurable cluster-label matching (CLM) against ground-truth clusters"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
@@ -135,7 +135,13 @@ banned-module-level-imports = ["matplotlib", "seaborn", "clmsynth.visualization"
 # Python 3.11 was dropped at 0.7.0: numpy and scipy now
 # require >=3.12 (SPEC 0).
 ignore_missing_imports = true
-files = ["src/clmsynth", "tools"]
+files = ["src/clmsynth", "tools", "tests"]
+check_untyped_defs = true
+warn_return_any = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+strict_equality = true
 
 [tool.bandit]
 # Read with `bandit -c pyproject.toml -r src/clmsynth`. these five findings were traced by
@@ -144,7 +150,8 @@ files = ["src/clmsynth", "tools"]
 # input below is supplied by the user.
 #
 #   B101  Two asserts in clm_label_engine guard internal allocation invariants
-#         that no configuration can reach; they are programmer errors, not user
+#         that no configuration can reach, and one in config_wizard guards the
+#         question schema's own shape; they are programmer errors, not user
 #         input validation, which is what the [CLM-###] codes are for. Their
 #         disappearance under -O is acceptable exactly because nothing user-facing depends on them.
 #   B404  config_wizard imports subprocess to launch the run the user just

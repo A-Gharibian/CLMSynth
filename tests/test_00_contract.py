@@ -72,14 +72,14 @@ class Capture(logging.Handler):
         return out
 
 
-def run(cfg, cluster_labels, coords, seed=42):
+def run(cfg, cluster_labels, coords, seed=42, report=None):
     cap = Capture()
     log = logging.getLogger("clmsynth")
     log.addHandler(cap)
     prev = log.level
     log.setLevel(logging.DEBUG)
     try:
-        series = generate_clm_labels(cluster_labels, coords, cfg, seed=seed)
+        series = generate_clm_labels(cluster_labels, coords, cfg, seed=seed, report=report)
     finally:
         log.removeHandler(cap)
         log.setLevel(prev)
@@ -344,9 +344,10 @@ def check_case(name, gkey, cfg):
     c, X = geometry(sizes)
     N, M = len(c), cfg["num_classes"]
     res = []
+    report: dict[str, Any] = {}
 
     try:
-        out, codes = run(cfg, c, X)
+        out, codes = run(cfg, c, X, report=report)
     except InfeasibleAllocationError as exc:
         # A documented, legitimate outcome ([CLM-15x]) rather than a contract
         # breach: this geometry cannot hold the requested budget. The failure
@@ -407,6 +408,26 @@ def check_case(name, gkey, cfg):
                 else f"achieved {achieved:.4f} vs {tm['value']}+/-{tol}, no 306/309",
             )
         )
+
+        # 6. the report is the delivered labeling, and no labeling with these
+        # counts scores above the size ceiling it reports
+        reported = report.get("achieved")
+        res.append(
+            (
+                "report_is_the_delivered_value",
+                reported is not None and abs(reported - achieved) <= 1e-12,
+                f"report {reported} != delivered {achieved}",
+            )
+        )
+        ceiling = report.get("ceiling")
+        if ceiling is not None:
+            res.append(
+                (
+                    "size_ceiling_bounds_the_delivered_value",
+                    achieved <= ceiling + 1e-12,
+                    f"achieved {achieved:.6f} above the size ceiling {ceiling:.6f}",
+                )
+            )
 
     return res
 

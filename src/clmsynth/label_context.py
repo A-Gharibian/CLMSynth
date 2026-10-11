@@ -2,6 +2,7 @@
 
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 
 import pandas as pd
 
@@ -33,6 +34,10 @@ class DatasetContext:
         Surfaced in the output frame as ``Cluster_0``, ``Cluster_1``, ...
     generated_labels : dict of str to pandas.Series
         Labels produced by the engine, keyed ``Label_0``, ``Label_1``, ...
+    label_reports : dict of str to dict
+        What the engine reported for each label made under ``target_metric``
+        (the ``report`` of ``generate_clm_labels``), keyed like
+        ``generated_labels``. A label made without a target has no entry.
     tags : pandas.DataFrame
         Passenger columns carried to the output untouched and kept out of the
         feature geometry. Need not be numeric.
@@ -44,6 +49,7 @@ class DatasetContext:
     source: str = "unknown"  # clustbench | mdcgen | fabricated_data, which fetcher produced this
     ground_truths: dict[str, pd.Series] = field(default_factory=dict)
     generated_labels: dict[str, pd.Series] = field(default_factory=dict)
+    label_reports: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Passenger columns: carried to the CSV, kept out of the geometry.
     tags: pd.DataFrame = field(default_factory=pd.DataFrame)
 
@@ -71,9 +77,13 @@ class DatasetContext:
             )
         return series
 
-    def add_generated_label(self, name: str, series: pd.Series) -> None:
-        """Attaches a generated label column, rejecting misaligned lengths."""
+    def add_generated_label(self, name: str, series: pd.Series,
+                            report: dict[str, Any] | None = None) -> None:
+        """Attaches a generated label column, rejecting misaligned lengths, and
+        the engine's report for it when there is one."""
         self.generated_labels[name] = self._align(series, name)
+        if report:
+            self.label_reports[name] = dict(report)
         log.info(f"[{self._tag}] Attached generated label '{name}'.")
 
     def next_generated_label_name(self) -> str:

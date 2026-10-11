@@ -48,7 +48,7 @@ byoc_suite:
   - local
   input_dir: _data
   datasets:
-  - k65_clusters
+  - 127_65_clusters
   cluster_column: cluster
   standardize: false
   seed: 42

@@ -27,10 +27,12 @@ What is checked:
 
 """
 
+import errno
 import logging
 import re
 import sys
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 import matplotlib.pyplot as plt
@@ -171,6 +173,109 @@ def test_infeasible_allocation_skips_only_the_labelling(tmp_path, monkeypatch):
     assert "Label_0" in written["byoc__local__good_c.csv"]
     assert "Label_0" not in written["byoc__local__poison_b.csv"], (
         "the dataset whose labelling failed got a label anyway"
+    )
+
+
+def write_cluster_sizes(inputs, specs):
+    """One CSV per (name, cluster sizes), ids 0..K-1 in order, two random features."""
+    rng = np.random.default_rng(0)
+    for name, sizes in specs:
+        n = sum(sizes)
+        pd.DataFrame(
+            {
+                "f1": rng.normal(size=n),
+                "f2": rng.normal(size=n),
+                "cluster": np.repeat(np.arange(len(sizes)), sizes),
+            }
+        ).to_csv(inputs / f"{name}.csv", index=False)
+
+
+def crowded_cluster_label(target_metric=None):
+    """Four balanced labels, rule i -> i, and two competing_noise entries that
+    each claim 90% of what the rules leave unclaimed in cluster 0."""
+    clm_label: dict[str, Any] = {
+        "num_classes": 4,
+        "balance": "balanced",
+        "matching_mode": "custom",
+        "assignment_matrix": [
+            {"label": i, "clusters": [i], "recall_target": 0.8} for i in range(4)
+        ],
+        "competing_noise": [
+            {"cluster": 0, "label": 1, "share": 0.9, "favors": "random"},
+            {"cluster": 0, "label": 2, "share": 0.9, "favors": "random"},
+        ],
+    }
+    if target_metric is not None:
+        clm_label["target_metric"] = target_metric
+    return clm_label
+
+
+def test_a_target_no_level_fits_leaves_out_only_that_datasets_label(
+    tmp_path, monkeypatch, caplog
+):
+    """[CLM-120] used to abort the whole run (exit 2), as if the config were wrong
+    for every dataset. It is judged against one dataset's cluster sizes.
+
+    `blocked` has 47 points in cluster 0 where label 0 needs 50: every recall
+    level is infeasible, [CLM-152] below alpha 1 and [CLM-150] at 1. `fits`, four
+    clusters of 50, is feasible at alpha 1. Now [CLM-120] leaves out only
+    `blocked`'s label: it is still written and counted, without `Label_0`, and
+    `fits`, after it in iteration order, gets its label.
+    """
+    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
+
+    inputs = tmp_path / "input"
+    inputs.mkdir()
+    write_cluster_sizes(inputs, [("blocked", [47, 53, 50, 50]), ("fits", [50, 50, 50, 50])])
+
+    csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
+    for d in (csv_dir, png_dir, txt_dir):
+        d.mkdir()
+
+    config = minimal_byoc_config(
+        inputs, tmp_path, ["blocked", "fits"], crowded_cluster_label({"type": "mcc", "value": 0.5})
+    )
+    with caplog.at_level(logging.DEBUG, logger="clmsynth"):
+        n_ok = run_pipeline("byoc", config, csv_dir, png_dir, txt_dir)
+
+    assert n_ok == 2, "both datasets are written, so both are processed"
+    written = {p.name: list(pd.read_csv(p).columns) for p in csv_dir.glob("*.csv")}
+    assert "Label_0" not in written["byoc__local__blocked.csv"], written
+    assert "Label_0" in written["byoc__local__fits.csv"], written
+    assert "Skipping label generation for local/blocked: [CLM-120]" in caplog.text, caplog.text
+    assert "aborting run" not in caplog.text, caplog.text
+
+
+def test_over_claiming_noise_without_a_target_leaves_out_only_the_label(
+    tmp_path, monkeypatch, caplog
+):
+    """[CLM-152] without target_metric is unchanged by [CLM-120] becoming per
+    dataset: it was always an InfeasibleAllocationError that leaves out the
+    dataset's label.
+
+    Four clusters of 50 and the noise above, at the configured recall 0.8: the
+    rule leaves 10 of cluster 0's 50 points unclaimed and the entries claim 9
+    each. The dataset is written and counted, without `Label_0`.
+    """
+    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
+
+    inputs = tmp_path / "input"
+    inputs.mkdir()
+    write_cluster_sizes(inputs, [("over_claimed", [50, 50, 50, 50])])
+
+    csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
+    for d in (csv_dir, png_dir, txt_dir):
+        d.mkdir()
+
+    config = minimal_byoc_config(inputs, tmp_path, ["over_claimed"], crowded_cluster_label())
+    with caplog.at_level(logging.DEBUG, logger="clmsynth"):
+        n_ok = run_pipeline("byoc", config, csv_dir, png_dir, txt_dir)
+
+    assert n_ok == 1
+    columns = list(pd.read_csv(csv_dir / "byoc__local__over_claimed.csv").columns)
+    assert "Label_0" not in columns, columns
+    assert "Skipping label generation for local/over_claimed: [CLM-152]" in caplog.text, (
+        caplog.text
     )
 
 
@@ -319,9 +424,11 @@ def test_non_byoc_id_mismatch_skips_only_that_dataset(tmp_path, monkeypatch):
     naming cluster 3, while `baseline_4class` has ids 0..3 and can.
 
     Every *other* coded `[CLM-1xx]` aborts the run unless it too is a statement
-    about the data: `[CLM-102]`, `[CLM-125]` and `[CLM-127]` judge the dataset's
-    K or its features and are per-dataset for the same reason. `[CLM-104]` is
-    not, its bound is num_classes, which no dataset can change.
+    about the data: `[CLM-102]`, `[CLM-119]`, `[CLM-125]`, `[CLM-127]` and
+    `[CLM-133]` judge the dataset's K, ids or features and are per-dataset for
+    the same reason, and `[CLM-120]`, judged against its cluster sizes, leaves
+    out only that dataset's label. `[CLM-104]` is not, its bound is num_classes,
+    which no dataset can change.
     """
     monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
 
@@ -329,7 +436,7 @@ def test_non_byoc_id_mismatch_skips_only_that_dataset(tmp_path, monkeypatch):
     for d in (csv_dir, png_dir, txt_dir):
         d.mkdir()
 
-    config = {
+    config: dict[str, Any] = {
         "global_settings": {"data_source": "fabricated_data", "output_dir": str(tmp_path)},
         "fabricated_data_suite": {
             "batteries": ["fabricated"],
@@ -548,6 +655,21 @@ def test_unloadable_config_exits_one(tmp_path, content):
     assert excinfo.value.code == 1
 
 
+@pytest.mark.parametrize("value", [[1, 2], "byoc"], ids=["list", "string"])
+def test_a_global_settings_that_is_not_a_mapping_exits_one(value, tmp_path, monkeypatch, caplog):
+    """It crashed on its first .get() with a traceback. It exits 1 like a config
+    that cannot be loaded, naming the section, before anything is created."""
+    config_path = tmp_path / "cfg.yaml"
+    config_path.write_text(yaml.safe_dump({"global_settings": value}), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["clmsynth", str(config_path)])
+    monkeypatch.chdir(tmp_path)
+    with caplog.at_level(logging.CRITICAL, logger="clmsynth"), pytest.raises(SystemExit) as excinfo:
+        clmsynth.main.main()
+    assert excinfo.value.code == 1
+    assert "'global_settings' must be a mapping" in caplog.text, caplog.text
+    assert [p.name for p in tmp_path.iterdir()] == ["cfg.yaml"], "the run created something"
+
+
 def test_unknown_data_source_processes_nothing_without_raising(tmp_path):
     """An unrecognized source is reported and yields zero, not an exception."""
     csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
@@ -626,6 +748,100 @@ def test_a_string_batteries_or_datasets_stops_the_run_and_names_the_key(
         assert run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir, False) == 0
     assert f"fabricated_data_suite.{key}" in caplog.text, caplog.text
     assert not list(csv_dir.glob("*.csv"))
+
+
+_ONE_DATASET = {"batteries": ["fabricated"], "datasets": ["baseline_4class"], "seed": 42}
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("fabricated_data_suite", ["fabricated"]),
+        ("fabricated_data_suite", "fabricated"),
+        ("label_generation", [1, 2]),
+        ("label_generation", 5),
+    ],
+    ids=["suite-list", "suite-string", "label-generation-list", "label-generation-int"],
+)
+def test_a_section_that_is_not_a_mapping_stops_the_run_and_names_it(key, value, tmp_path, caplog):
+    """A list or a string crashed on its first .get() with a traceback, which left
+    the run folder behind; an integer label_generation exited 2 without a word.
+    Refused like an unset batteries, naming the section."""
+    config, csv_dir, png_dir, txt_dir = _fabricated_config(tmp_path, dict(_ONE_DATASET))
+    config[key] = value
+    with caplog.at_level(logging.ERROR, logger="clmsynth"):
+        assert run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir, False) == 0
+    assert f"'{key}' must be a mapping" in caplog.text, caplog.text
+    assert not list(csv_dir.glob("*.csv"))
+
+
+@pytest.mark.parametrize("value", [[], [1, 2], "x"], ids=["empty-list", "list", "string"])
+def test_an_unused_suite_of_any_shape_is_not_read(value, tmp_path):
+    """Only the sections a run reads are checked."""
+    config, csv_dir, png_dir, txt_dir = _fabricated_config(tmp_path, dict(_ONE_DATASET))
+    config["mdcgen_suite"] = value
+    assert run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir, False) == 1
+
+
+@pytest.mark.parametrize(
+    "clm_label,shown,hidden",
+    [
+        (
+            {
+                "num_classes": 4,
+                "matching_mode": "perfect",
+                "balance": "unbalanced",
+                "proportions": ["a", "b", "c", "d"],
+            },
+            "sizes: from clusters",
+            "proportions",
+        ),
+        (
+            {
+                "num_classes": 4,
+                "matching_mode": "random",
+                "balance": "balanced",
+                "proportions": [0.7, 0.1, 0.1, 0.1],
+                "centroid_dependence": {"enabled": True, "favors": "boundary"},
+            },
+            "centrality: off",
+            "0.7",
+        ),
+    ],
+    ids=["perfect-unread-proportions", "random-balanced"],
+)
+def test_the_plot_box_shows_only_what_the_label_was_made_with(
+    clm_label, shown, hidden, tmp_path, monkeypatch
+):
+    """The info box beside a label plot listed proportions 'perfect' never reads
+    (and crashed converting them, after the CSV was written, so the dataset was
+    counted as skipped), proportions 'balanced' ignores, and a centrality
+    'random' never applies."""
+    boxes = []
+
+    def record(*args, **kwargs):
+        boxes.append(kwargs.get("info_text"))
+        return True
+
+    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", record)
+    config, csv_dir, png_dir, txt_dir = _fabricated_config(tmp_path, dict(_ONE_DATASET))
+    config["label_generation"]["clm_label"] = clm_label
+    assert run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir) == 1
+    label_box = next(box for box in boxes if box)
+    assert shown in label_box and hidden not in label_box, label_box
+
+
+def test_a_skipped_label_with_a_malformed_block_is_still_written(tmp_path, no_plots):
+    """Without num_classes the label is skipped ([CLM-201]) and the dataset is
+    still written. The plot box used to be built anyway and crashed on the
+    malformed block, so the written dataset was counted as skipped."""
+    config, csv_dir, png_dir, txt_dir = _fabricated_config(tmp_path, dict(_ONE_DATASET))
+    config["label_generation"]["clm_label"] = {
+        "matching_mode": "custom",
+        "centroid_dependence": [{"enabled": True}],
+    }
+    assert run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir) == 1
+    assert list(csv_dir.glob("*.csv"))
 
 
 @pytest.mark.parametrize("where", ["suite", "label_generation"])
@@ -834,7 +1050,7 @@ def run_main(tmp_path, monkeypatch, config):
     monkeypatch.setattr(sys, "argv", ["clmsynth", str(config_path)])
 
     out = Path(config["global_settings"]["output_dir"])
-    code = 0
+    code: str | int | None = 0
     try:
         clmsynth.main.main()
     except SystemExit as exit_signal:
@@ -1046,6 +1262,53 @@ def test_generate_config_exits_one_on_a_malformed_payload(tmp_path, monkeypatch)
     assert not (tmp_path / "out.yaml").exists()
 
 
+@pytest.mark.parametrize("failure,exit_code", [
+    (OSError(errno.ENOSPC, "No space left on device"), 1),
+    (KeyboardInterrupt(), 130),
+], ids=["disk-full", "interrupt"])
+def test_generate_config_keeps_the_old_config_when_the_write_fails(
+        failure, exit_code, tmp_path, monkeypatch):
+    """A write that does not finish must leave the previous config whole.
+
+    Written in place, the file was truncated before the new text arrived, so a
+    full disk or a Ctrl-C left a partial config that could still parse, and the
+    next run used it. The interrupt message says "nothing written"; this keeps
+    it true.
+    """
+    from clmsynth import generate_config
+
+    payload = tmp_path / "payload.yaml"
+    payload.write_text(yaml.safe_dump({"num_classes": 3}), encoding="utf-8")
+    out = tmp_path / "out.yaml"
+    out.write_text("previous: config\n", encoding="utf-8")
+
+    def fail(fd):
+        raise failure
+
+    monkeypatch.setattr(generate_config.os, "fsync", fail)
+    monkeypatch.setattr(sys, "argv", ["clmsynth-config", str(payload), str(out)])
+    with pytest.raises(SystemExit) as excinfo:
+        generate_config.main()
+    assert excinfo.value.code == exit_code
+    assert out.read_text(encoding="utf-8") == "previous: config\n"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["out.yaml", "payload.yaml"], \
+        "the temporary file was left behind"
+
+
+def test_generate_config_refuses_to_overwrite_its_payload(tmp_path, monkeypatch):
+    """`clmsynth-config p.yaml p.yaml` must not replace the payload it just read."""
+    from clmsynth import generate_config
+
+    payload = tmp_path / "payload.yaml"
+    text = yaml.safe_dump({"num_classes": 3})
+    payload.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["clmsynth-config", str(payload), str(payload)])
+    with pytest.raises(SystemExit) as excinfo:
+        generate_config.main()
+    assert excinfo.value.code == 1
+    assert payload.read_text(encoding="utf-8") == text
+
+
 # ---------------------------------------------------------------------------
 # Row alignment: the guarantee the whole dataset format rests on
 # ---------------------------------------------------------------------------
@@ -1070,16 +1333,19 @@ def test_context_refuses_a_misaligned_generated_label():
             context.add_generated_label("Label_0", pd.Series(range(bad_length)))
 
 
-def test_a_missing_clm_label_is_refused_not_silently_filled():
-    """A config without clm_label is refused."""
+@pytest.mark.parametrize("clm_config", [None, {}], ids=["none", "empty"])
+def test_a_missing_clm_label_is_refused_not_silently_filled(clm_config):
+    """A config without clm_label is refused, as [CLM-207]: a missing key, so the
+    run goes on and writes the dataset without a label. It was an uncoded KeyError."""
     features = pd.DataFrame({"f1": range(10), "f2": range(10)})
     context = DatasetContext(
         "src", "battery", features, ground_truths={"labels0": pd.Series([0] * 5 + [1] * 5)}
     )
 
     with pytest.raises(KeyError) as excinfo:
-        generate_additional_labels(context, n_labels=1, clm_config=None)
+        generate_additional_labels(context, n_labels=1, clm_config=clm_config)
 
+    assert getattr(excinfo.value, "code", None) == 207
     assert "'clm_label' is required" in str(excinfo.value)
     assert not context.generated_labels, "a label was attached despite the refusal"
 

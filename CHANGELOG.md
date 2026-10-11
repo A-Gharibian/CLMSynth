@@ -1,8 +1,136 @@
 # Changelog
 
-All notable changes to CLMSynth are documented here.
+All *notable* changes to CLMSynth are documented here, major changes to the
+label generator behavior are additionally explained in the user manual.
 
 ---
+
+## [0.7.3] — 2026-10-11
+
+Better type checking, fixing more edge cases, new set of tests and the target ceiling.
+This version is the initial release with added measures for calculating and reporting
+the maximum possible target for each metric, there is no action following the calculation,
+it is only reported in the text file.
+
+
+### Added
+
+- **Under `scope: pair`, the reachable pair MCC is reported on every run.** The
+  range `[phi_min, 1]` follows from `N` and the size of the `single_match` cluster and
+  was already computed.
+
+- **Under `scope: global`, a run reports the highest value found and the size
+  ceiling.** The search scored every probe and kept only the one closest to the
+  target, and a missed target never said whether any labeling could reach it. Each
+  run now logs the highest value. For `mcc` it is exact and some labeling with those counts
+  reaches it, though a config's rules may not; for `ari` it is a bound that is not
+  always reached. It is computed from the counts, not from `M` and `K`:
+  `sqrt(M(M-1)/(K(K-1)))` holds only for equal clusters and equal labels. `uniform`
+  and `concentrated` spillover and `competing_noise` can move the counts, so no size
+  ceiling is reported for them. `[CLM-306]` reports the ceiling and says when the target
+  lies above it, or for `mcc` below 0, which the matched R_K never goes below; it
+  fires exactly as before. `generate_clm_labels` takes an optional
+  `report` dict that receives the request, the delivered value, the highest value
+  found and the ceiling; `DatasetContext.label_reports` keeps it per label, and the
+  summary txt lists it under each label. A target above the the ceiling is still searched.
+
+### Changed
+
+- **mypy checks the tests and the bodies of untyped functions.** `[tool.mypy]` now
+  covers `tests/` and turns on `check_untyped_defs`, `warn_return_any`,
+  `warn_unused_ignores`, `warn_redundant_casts`, `warn_unreachable` and
+  `strict_equality`.
+
+- **Negative values are `[CLM-134]`, checked where they are read.** A negative
+  `proportions` entry, `recall_target`, `tolerance` or `steepness` was refused with an
+  uncoded `ValueError`, reported as an "unexpected error" for each dataset (exit 1).
+  It is now `[CLM-134]` (exit 2), checked by the same test that refuses NaN for that
+  key. Like NaN, a negative value in a key the run does not read is no longer
+  refused: `steepness` outside an `exponential` profile, `proportions` under
+  `balance: balanced`, `recall_target` under `target_metric`, and a stray
+  `assignment_matrix` under `single`. Under `perfect`, a negative `tolerance` now
+  reports `[CLM-111]`.
+
+- **The example payload labels `fcps/hepta`.** `upstream_payload.yaml` used
+  `g2mg/g2mg_4_20`, two clusters of 1024 points from a battery flagged as heavy. It
+  now uses `fcps/hepta` ( 212 points in 3-D, 7 clusters),
+  one rule per cluster at recall 0.9.
+
+- **A config section that is not a mapping exits 1 and is named.** `global_settings`,
+  the active `*_suite` and `label_generation` given as a list or a string stopped with
+  a traceback, and the last two left an empty run folder behind. An integer
+  `label_generation` exited 2 without a message. `global_settings` now stops before
+  anything is created; the other two stop the run like an unset `batteries`. A suite
+  the run does not use is still not read.
+
+- **The catalog's byoc inputs are named after their code.**
+
+### Fixed
+
+- **Configs written atomically; `clmsynth-config` never overwrites its payload.**
+
+- **`generate_clm_labels` declares `coords` as optional.**
+
+- **A block of the wrong shape is `[CLM-134]`.** `target_metric`,
+  `centroid_dependence` and `single_match` must be mappings, and `assignment_matrix`
+  and `competing_noise` lists of mappings. A cluster id is one number or string, in
+  `single_match`, `assignment_matrix` and `competing_noise` alike. A wrong shape
+  crashed with an uncoded `AttributeError` or `TypeError` (exit 1). A mapping written
+  without its YAML dash, or a string, was reported as a missing key (`[CLM-205]`,
+  `[CLM-207]`), which writes the dataset without a label and exits 0. A cluster ID
+  given as a list was a cluster the dataset lacks (`[CLM-105]`), which skips the
+  dataset. Each is now refused where the key is read, with exit 2, and `byoc` agrees
+  with the other sources.
+
+- **`generate_clm_labels` refuses a `cfg` that is not a mapping.** `None` or a number
+  crashed with a `TypeError`, and a list or a string was reported as a missing
+  `num_classes` (`[CLM-201]`). Through `clmsynth`, a `clm_label` given as a list or a
+  string wrote every dataset without a label and exited 0, and `byoc` stopped with a
+  traceback. It is now `[CLM-134]` (exit 2). A read-only mapping is still accepted,
+  as the `cfg` and as the blocks inside it; only `skew_params` must still be a `dict`
+  (`[CLM-131]` otherwise).
+
+- **A missing `clm_label` is `[CLM-207]`.** It raised an uncoded `KeyError`,
+  logged in quotes and naming the dataset twice. It now reads `[CLM-207]
+  label_generation: 'clm_label' is required.`, the code already used for a key
+  missing from a rule or a `competing_noise` entry.
+
+- **The plot's info box shows only what the label was made with.**
+
+- **The catalog generator refuses a folder that holds no catalog.** 
+  `OUT_DIR` must now be absent, empty or
+  an earlier catalog, checked before anything is written.
+
+- **A cluster ID written as `null` is `[CLM-134]`.** In `single_match.cluster`, in a
+  rule's `clusters: [null]` and in a `competing_noise` entry's `cluster`, it was read
+  as a cluster named `None` that the dataset lacks (`[CLM-105]`/`[CLM-119]`).
+  It is now a wrong value, as a NaN ID is refused the same way
+  `clusters: null` already was, and stops the run (exit 2) for every source.
+
+- **`matching_mode` written with no value is `[CLM-202]`.** It was reported as an
+  unknown mode named `None` (`[CLM-101]`, exit 2). It now reads as left out, like any
+  other missing key: the dataset is written without a label and the run exits 0.
+
+- **`[CLM-120]` names what blocked each recall level, and skips only that dataset's
+  label.** Under `target_metric` the search dropped every infeasible recall level
+  without its reason, so a `competing_noise` over-claim surfaced only as `[CLM-120]`,
+  whose advice is about rule capacity. Each blocking `[CLM-15x]` code is now logged
+  once, with the levels it blocked and its message at the lowest one, before
+  `[CLM-306]` or `[CLM-120]`. `[CLM-120]` also aborted the whole run (exit 2) although
+  it is judged against one dataset's cluster sizes; that dataset is now written
+  without the label and the run continues.
+
+- **Under `target_metric`, `[CLM-150]` names the search's recall level.** Its advice
+  said "The rule's recall_target=0.3 is feasible up to ... Lower it", a key the search
+  does not read (`[CLM-303]`), and printed a level. It
+  now names the level being probed, and the highest level that fits.
+
+- **`[CLM-309]` reports only a search that scored another labeling.** A missed target
+  fired `[CLM-306]` and `[CLM-309]` for the same value. `[CLM-309]` now fires only when
+  the delivered value differs from the one the search scored at that alpha, which
+  takes an explicit `target_metric.probe_seed` other than the run seed; its message
+  names both values. A missed target is reported by `[CLM-306]` alone, and its
+  closest label is still delivered.
 
 ## [0.7.2] — 2026-10-04
 
@@ -202,7 +330,7 @@ This is the release pinned to the published SoftwareX paper, with one notable
 behavioral change of the engine from release 0.6.2 which was the submitted version.
 The change affected how the target was reached and reported for MCC, as a result,
 the Zenodo repository of the article data reproduction and validation tests was also
-updated with clear traceable changes.
+updated with traceable changes to the results.
 
 ## [0.7.0rc2] — 2026-09-01
 
