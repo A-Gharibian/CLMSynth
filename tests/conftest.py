@@ -11,13 +11,20 @@ import pytest
 matplotlib.use("Agg")
 
 # Must follow the backend selection above.
-import clmsynth.visualization
+import clmsynth._visualization
 
 
 @pytest.fixture
 def no_plots(monkeypatch):
     """Stop `run_pipeline` from rendering anything, returns True.
 
-    Patched on `clmsynth.visualization`: `main` imports it per call.
+    Patched on `clmsynth._visualization`: `main` imports it per call.
     """
-    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
+
+
+@pytest.fixture
+def yaml():
+    """PyYAML, which is optional (the `yaml` extra). A test that reads or writes
+    YAML takes this fixture, and skips where PyYAML is not installed."""
+    return pytest.importorskip("yaml")

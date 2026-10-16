@@ -1,16 +1,20 @@
-$ python -m clmsynth.main ValueError_1xx/CLM-125.yaml
+$ python -m clmsynth.main ValueError_1xx/CLM-125.yaml --no-viz
 # exit code: 1
 
 INFO - Starting Test Data Orchestrator...
 INFO - Output directory: '{catalog}/_scratch/CLM-125'.
+INFO - Run {run} from config '{catalog}/ValueError_1xx/CLM-125.yaml'.
+INFO - Plot rendering is off: png/ stays empty and matplotlib is never imported.
 INFO - Available 'fabricated_data' dataset batteries:
-INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
+INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels. No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
 INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
+INFO - Saved resolved config: _scratch/CLM-125/{run}/info/{run}.yaml
+INFO - Dataset 1 of 1: fabricated/labels_only_4class
 INFO - Generating offline fabricated_data dataset 'labels_only_4class' (n=800, seed=42)...
 INFO - Generating synthetic data (Seed: 42)...
 WARNING - 'labels_only': emitting ONLY the reserved 'Cohort_Class' column, drawn uniformly, and none of the six engineered features. The result carries labels and no geometry. Use it for label-only workflows; it is not a general-purpose fabrication mode.
 INFO - Generated fabricated_data 'labels_only_4class': 800 rows, 0 feature(s), 1 labeling(s) (cluster ids 0..3).
 ERROR - Skipping fabricated/labels_only_4class: [CLM-125] centroid placement requires per-point feature vectors: centroid_dependence.enabled is set but coords is empty. Provide an (N, d) feature array, or disable centroid_dependence and any competing_noise favors 'core'/'boundary'.
-WARNING - 1 of the 1 resolved dataset(s) were skipped (see the errors above).
+WARNING - Of the 1 resolved dataset(s): 0 written with all labels, 0 written with not all labels, 1 skipped (see the errors above).
 ERROR - No datasets were successfully processed.
-INFO - No output was produced, so the empty run folder '_scratch/CLM-125/{run}' was removed.
+INFO - The failed run's folder '_scratch/CLM-125/{run}' was removed. Run with --keep-failed to keep its config and log.

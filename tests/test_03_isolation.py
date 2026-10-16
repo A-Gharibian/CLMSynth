@@ -5,7 +5,7 @@ single-threaded, deterministic assertion about *ownership of state*.
 
 What is checked, in order:
 
-  RNG ownership        `fabricated_generator` reproduces a seed exactly after
+  RNG ownership        `_fabricated_generator` reproduces a seed exactly after
                        an interleaved call with a different seed, and genuinely
                        differs between seeds (so the first is not vacuous).
                        Direct use of the global np.random stream is ruff
@@ -26,6 +26,12 @@ What is checked, in order:
                        What the filter they install *does* is not this module's
                        subject -- that is `05_config_safety`.
   viz isolation        `main` imports no plotting stack; --no-viz renders nothing.
+  optional PyYAML      `main` imports no yaml. With yaml unimportable, a .json
+                       config runs and its resolved config repeats the run, and
+                       any other config file and the config tools name the extra.
+  batch isolation      Several configs run one process each, with their own run
+                       folder, log and exit status; the batch exits with the
+                       highest.
 
 """
 
@@ -33,16 +39,28 @@ import json
 import logging
 import subprocess
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
-import yaml
 
+import clmsynth._visualization
 import clmsynth.main
-import clmsynth.visualization
-from clmsynth import fabricated_generator
-from clmsynth.cli_logging import SingleLineFilter, configure_cli_logging
+from clmsynth import _fabricated_generator
+from clmsynth._cli_logging import SingleLineFilter, configure_cli_logging
 from clmsynth.main import build_run_dir, run_pipeline
+
+# The folder this session imported clmsynth from. -I also ignores PYTHONPATH, which
+# is how an uninstalled checkout (src/ as an IDE source root) reaches the package,
+# so each child adds this folder itself. Added after interpreter start, it brings no
+# sitecustomize.py with it, and the child tests the same copy as this session.
+IMPORT_ROOT = str(Path(clmsynth.__file__).resolve().parents[1])
+
+
+def run_isolated(code: str) -> subprocess.CompletedProcess:
+    prelude = f"import sys\nsys.path.insert(0, {IMPORT_ROOT!r})\n"
+    return subprocess.run([sys.executable, "-I", "-c", prelude + code],
+                          capture_output=True, text=True, check=False)
 
 
 def pipeline_config(output_dir):
@@ -88,7 +106,7 @@ def _no_plots(no_plots):
 
 
 def _fabricate(seed):
-    return fabricated_generator.generate_synthetic_data(n_samples=200, output_file=None, seed=seed)
+    return _fabricated_generator.generate_synthetic_data(n_samples=200, output_file=None, seed=seed)
 
 
 def test_interleaved_seeds_do_not_contaminate_each_other():
@@ -155,7 +173,7 @@ def test_run_pipeline_does_not_mutate_the_callers_config(tmp_path):
 
 def test_build_run_dir_never_hands_out_the_same_name_twice(tmp_path):
     """Repeated calls in the same wall-clock second must diverge.
-    All three share a `DDMMYY_Source_HHMMSS` stem, so this is the collision path,
+    All three share a `YYYYMMDD_HHMMSS_Source` stem, so this is the collision path,
     not the happy one. No caller creates anything here: that is the point
     reservation is now the function's own job.
         Since 0.6.3 `build_run_dir` creates each folder as it hands it out, so the
@@ -293,14 +311,12 @@ def test_importing_main_loads_no_plotting_stack():
     probe = (
         "import json, sys\n"
         "def plotting():\n"
-        "    return sorted(m for m in sys.modules if m.split('.')[0] in {'matplotlib', 'seaborn'})\n"
+        "    return sorted(m for m in sys.modules if m.split('.')[0] == 'matplotlib')\n"
         "before = plotting()\n"
         "import clmsynth.main\n"
         "print(json.dumps([before, [m for m in plotting() if m not in before]]))\n"
     )
-    result = subprocess.run(
-        [sys.executable, "-I", "-c", probe], capture_output=True, text=True, check=False
-    )
+    result = run_isolated(probe)
 
     assert result.returncode == 0, result.stderr
     before, loaded = json.loads(result.stdout)
@@ -321,7 +337,7 @@ def test_a_no_viz_run_never_reaches_the_plotter(tmp_path, monkeypatch):
         calls.append(1)
         return True
 
-    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", record)
+    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", record)
 
     def run(name, render_plots):
         dirs = [tmp_path / name / d for d in ("csv", "png", "txt")]
@@ -352,9 +368,9 @@ def test_the_no_viz_flag_reaches_the_pipeline(tmp_path, monkeypatch, flags, rend
         calls.append(1)
         return True
 
-    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", record)
-    config_path = tmp_path / "cfg.yaml"
-    config_path.write_text(yaml.safe_dump(pipeline_config(tmp_path / "out")), encoding="utf-8")
+    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", record)
+    config_path = tmp_path / "cfg.json"
+    config_path.write_text(json.dumps(pipeline_config(tmp_path / "out")), encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["clmsynth", str(config_path), *flags])
 
     clmsynth.main.main()
@@ -362,3 +378,99 @@ def test_the_no_viz_flag_reaches_the_pipeline(tmp_path, monkeypatch, flags, rend
     assert bool(calls) is renders, (
         f"flags {flags}: expected rendering={renders}, plotter called {len(calls)} time(s)"
     )
+
+
+# ---------------------------------------------------------------------------
+# PyYAML is optional
+#
+# Each child runs with -I, for the reason given in the plotting probe above, and
+# with yaml unimportable, which is what an environment without PyYAML gives it.
+# ---------------------------------------------------------------------------
+
+NO_YAML = "sys.modules['yaml'] = None\n"
+
+
+def without_yaml(code: str) -> subprocess.CompletedProcess:
+    return run_isolated(NO_YAML + code)
+
+
+def run_cli_without_yaml(config_path) -> subprocess.CompletedProcess:
+    return without_yaml(f"sys.argv = ['clmsynth', {str(config_path)!r}, '--no-viz']\n"
+                        "from clmsynth.main import main\nmain()\n")
+
+
+def test_importing_main_loads_no_yaml():
+    probe = "import clmsynth.main\nprint('yaml' in sys.modules)\n"
+    result = run_isolated(probe)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "False", "importing clmsynth.main loaded yaml"
+
+
+def test_a_json_config_runs_without_pyyaml(tmp_path):
+    """The whole CLI path, and its resolved config run again, with no PyYAML."""
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(pipeline_config(tmp_path / "first")), encoding="utf-8")
+
+    first = run_cli_without_yaml(config_path)
+
+    assert first.returncode == 0, first.stderr
+    (run_dir,) = (tmp_path / "first").iterdir()
+    resolved = json.loads((run_dir / "info" / f"{run_dir.name}.json").read_text(encoding="utf-8"))
+    resolved["global_settings"]["output_dir"] = str(tmp_path / "again")
+    resolved_path = tmp_path / "resolved.json"
+    resolved_path.write_text(json.dumps(resolved), encoding="utf-8")
+
+    again = run_cli_without_yaml(resolved_path)
+
+    assert again.returncode == 0, again.stderr
+    (rerun_dir,) = (tmp_path / "again").iterdir()
+    name = "fabricated_data-fabricated-baseline_4class.csv"
+    assert (rerun_dir / "csv" / name).read_bytes() == (run_dir / "csv" / name).read_bytes()
+
+
+def test_any_other_config_file_without_pyyaml_names_the_extra(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("global_settings: {}\n", encoding="utf-8")
+
+    result = run_cli_without_yaml(config_path)
+
+    assert result.returncode == 1, result.stderr
+    assert 'pip install "clmsynth[yaml]"' in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize("module", ["generate_config", "_config_wizard"])
+def test_the_config_tools_without_pyyaml_name_the_extra(module):
+    """Before any payload is read or any question is asked."""
+    result = without_yaml(f"from clmsynth.{module} import main\nmain()\n")
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert 'pip install "clmsynth[yaml]"' in result.stdout + result.stderr
+
+
+def test_a_batch_runs_each_config_in_its_own_process(tmp_path, monkeypatch, caplog):
+    """Two configs, one refused, two at a time. Each run keeps its own folder and
+    log, the summary names each config's run, and the batch exits with the
+    highest status."""
+    good, bad = pipeline_config(tmp_path / "out"), pipeline_config(tmp_path / "out")
+    bad["label_generation"]["clm_label"]["matching_mode"] = "bogus"
+    paths = []
+    for name, config in (("good.json", good), ("bad.json", bad)):
+        (tmp_path / name).write_text(json.dumps(config), encoding="utf-8")
+        paths.append(str(tmp_path / name))
+    monkeypatch.setattr(sys, "argv",
+                        ["clmsynth", *paths, "--jobs", "2", "--no-viz", "--keep-failed"])
+    caplog.set_level(logging.INFO)
+
+    with pytest.raises(SystemExit) as exit_signal:
+        clmsynth.main.main()
+
+    assert exit_signal.value.code == 2
+    logs = {run.name: (run / "info" / f"{run.name}.log").read_text(encoding="utf-8")
+            for run in (tmp_path / "out").iterdir()}
+    assert len(logs) == 2, sorted(logs)
+    good_run = next(name for name, text in logs.items() if "good.json" in text)
+    bad_run = next(name for name, text in logs.items() if "bad.json" in text)
+    assert "[CLM-101]" in logs[bad_run] and "[CLM-101]" not in logs[good_run]
+    assert f"good.json: exit 0, run {good_run}" in caplog.text
+    assert f"bad.json: exit 2, run {bad_run}" in caplog.text

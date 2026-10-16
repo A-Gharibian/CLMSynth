@@ -45,10 +45,6 @@ jobs:
           python-version: "3.13"
           cache: pip
 
-      # The metadata check below reads CITATION.cff as YAML.
-      - name: Install PyYAML
-        run: pip install pyyaml
-
       # The precondition. Refuses to go further when the tag and the declared
       # version disagree, or when any version declaration or release date has
       # been left behind by the bump.

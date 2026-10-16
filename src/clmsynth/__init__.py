@@ -1,6 +1,6 @@
 # clmsynth/__init__.py
 """CLMSynth: synthetic label generation with configurable cluster-label
-matching (CLM).
+matching.
 run as ``python -m clmsynth.main`` or via the ``clmsynth`` console script.
 """
 
@@ -14,7 +14,7 @@ from .metrics import (
     clustering_mcc_pair,
 )
 
-__version__ = "0.7.3"
+__version__ = "0.7.4"
 
 __all__ = [
     "DatasetContext",

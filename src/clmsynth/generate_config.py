@@ -11,9 +11,8 @@ import sys
 import uuid
 from pathlib import Path
 
-import yaml
-
-from .cli_logging import configure_cli_logging
+from ._cli_logging import configure_cli_logging
+from ._compat import import_optional_dependency
 from .config_template import YAML_TEMPLATE
 
 log = logging.getLogger(__name__)
@@ -53,6 +52,8 @@ def format_yaml_snippet(data, indent_level=6):
     """Converts a dict/list into a formatted YAML string for injection.
     indent_level=6 matches single_match/assignment_matrix sitting two
     levels deep (label_generation -> clm_label -> field)."""
+    import yaml
+
     if not data:
         return " " * indent_level + ("[]" if isinstance(data, list) else "{}")
     snippet = yaml.dump(data, default_flow_style=False, sort_keys=False).strip()
@@ -89,7 +90,9 @@ def _optional_block(lines: list[str]) -> str:
 
 
 def generate_base_config(upstream_data: dict, output_path: str = "test_data_config.yaml"):
-    """Generates the YAML configuration using upstream dynamic data."""
+    """Generates the configuration using upstream dynamic data: JSON for a .json
+    output path, YAML otherwise."""
+    import yaml
 
     def pick(key, default):
         """Payload value, or the default when absent or null."""
@@ -242,13 +245,17 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
     )
 
     try:
-        yaml.safe_load(rendered_yaml)
+        config = yaml.safe_load(rendered_yaml)
     except yaml.YAMLError as e:
         log.critical(f"Rendered configuration is not valid YAML: {e}")
         sys.exit(1)
 
+    # The suffix picks the format, as clmsynth reads it. JSON has no comments, so
+    # the template's stay behind.
+    text = (json.dumps(config, indent=2, ensure_ascii=False) + "\n"
+            if Path(output_path).suffix.lower() == ".json" else rendered_yaml)
     try:
-        write_text_atomic(output_path, rendered_yaml)
+        write_text_atomic(output_path, text)
         log.info(f"Test data configuration successfully written to '{output_path}'")
     except OSError as e:
         log.critical(f"Failed to write configuration file: {e}. "
@@ -261,9 +268,14 @@ def main() -> None:
 
     Loads the upstream payload from the given YAML file (default
     ``upstream_payload.yaml``) and renders the pipeline config (default
-    ``test_data_config.yaml``).
+    ``test_data_config.yaml``; JSON when the output path ends in ``.json``).
     """
     configure_cli_logging()
+    try:
+        yaml = import_optional_dependency("yaml", "clmsynth-config")
+    except ImportError as e:
+        log.critical(f"{e}.")
+        sys.exit(1)
     payload_path = sys.argv[1] if len(sys.argv) > 1 else "upstream_payload.yaml"
     output_path = sys.argv[2] if len(sys.argv) > 2 else "test_data_config.yaml"
 

@@ -53,7 +53,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-import yaml
 
 # The Agg backend is selected once in conftest, before any test module is
 # imported, so no GUI toolkit is initialized even if something reaches
@@ -221,7 +220,7 @@ def test_catalog_is_present():
 
 
 @pytest.mark.parametrize("config_path,mechanism", FIXTURES)
-def test_catalog_diagnostic_fires(config_path, mechanism, tmp_path, caplog):
+def test_catalog_diagnostic_fires(config_path, mechanism, tmp_path, caplog, yaml):
     """Each catalog config must still produce the diagnostic it documents."""
     code = config_path.stem.split("-")[1]  # "CLM-101" -> "101"
     tag = f"[CLM-{code}]"
@@ -454,6 +453,7 @@ MINIMAL_PAYLOAD = {
         "unknown-source",
     ],
 )
+@pytest.mark.usefixtures("yaml")
 def test_generate_config_warns_about_configs_the_engine_will_reject(
     overrides, drop, expected, tmp_path, caplog
 ):
@@ -477,6 +477,7 @@ def test_generate_config_warns_about_configs_the_engine_will_reject(
     assert expected in caplog.text, f"no render-time warning. Captured:\n{caplog.text}"
 
 
+@pytest.mark.usefixtures("yaml")
 def test_generate_config_stays_silent_on_a_valid_payload(tmp_path, caplog):
     """The warnings must be worth reading,
     Without this, every case above would still pass if the renderer warned
@@ -500,6 +501,7 @@ def test_generate_config_stays_silent_on_a_valid_payload(tmp_path, caplog):
     ],
     ids=["unknown-balance", "balanced+proportions", "unknown-skew"],
 )
+@pytest.mark.usefixtures("yaml")
 def test_generate_config_ignores_sizing_keys_under_perfect(overrides, drop, tmp_path, caplog):
     """'perfect' neither reads nor validates balance, proportions or skew_rule,
     so the three render warnings about them would describe a failure that never
@@ -515,7 +517,7 @@ def test_generate_config_ignores_sizing_keys_under_perfect(overrides, drop, tmp_
     assert not caplog.text.strip(), f"perfect payload produced warnings:\n{caplog.text}"
 
 
-def test_byoc_render_round_trips_a_windows_path(tmp_path):
+def test_byoc_render_round_trips_a_windows_path(tmp_path, yaml):
     """Rendered byoc config parses back unchanged."""
     from clmsynth.generate_config import generate_base_config
 
@@ -549,7 +551,7 @@ def test_byoc_render_round_trips_a_windows_path(tmp_path):
     ],
     ids=["proportions", "batteries", "datasets"],
 )
-def test_valueless_payload_key_renders_its_default(key, expected, tmp_path):
+def test_valueless_payload_key_renders_its_default(key, expected, tmp_path, yaml):
     """Null key renders its documented default."""
     from clmsynth.generate_config import generate_base_config
 

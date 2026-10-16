@@ -1,13 +1,18 @@
-# visualization.py
+# _visualization.py
 """Scatter-plot rendering for the pipeline outputs."""
 
 import logging
 import os
+import threading
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
-import seaborn as sns
+from matplotlib import colormaps
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 
 log = logging.getLogger(__name__)
 
@@ -16,6 +21,10 @@ log = logging.getLogger(__name__)
 # output_dir they are what crosses the limit first -- while the CSV and TXT of
 # the same dataset still write cleanly.
 _MAX_PATH = 260
+
+# matplotlib is not thread-safe and leaves locking to the caller: saved plots are
+# built and written one at a time. Labels and CSVs do not wait on it.
+_RENDER_LOCK = threading.Lock()
 
 
 def _max_path_hint(output_path: str | None) -> str:
@@ -47,6 +56,11 @@ def plot_feature_scatter(
 ) -> bool:
     """Renders a scatter of two features, optionally colored by `hue_col`, to
     `output_path` (or shows it interactively when the path is omitted).
+
+    A saved plot does not go through pyplot: it is a `Figure` on its own Agg
+    canvas, so it needs no GUI backend and is in no process-wide figure list, and
+    can be rendered from a worker thread. Showing one goes through pyplot and the
+    main thread.
     """
     if df is None or df.empty:
         log.warning("Empty DataFrame provided. Skipping plot generation.")
@@ -59,27 +73,36 @@ def plot_feature_scatter(
 
     fig = None
     shown = False
+    if output_path:
+        _RENDER_LOCK.acquire()  # released in finally
     try:
-        sns.set_theme(style="whitegrid", palette="muted")
-        fig, ax = plt.subplots(figsize=(9, 6))
+        if output_path:
+            fig = Figure(figsize=(9, 6))
+            FigureCanvasAgg(fig)  # attaches itself to fig
+        else:
+            fig = plt.figure(figsize=(9, 6))
+        ax = fig.subplots()
 
-        # Cluster/label ids are categorical, not a continuous scale.
-        plot_df = df
-        if hue_col is not None and pd.api.types.is_numeric_dtype(df[hue_col]):
-            plot_df = df.copy()
-            order = sorted(df[hue_col].dropna().unique())
-            plot_df[hue_col] = pd.Categorical(df[hue_col], categories=order, ordered=True)
-
-        sns.scatterplot(
-            data=plot_df,
-            x=x_col,
-            y=y_col,
-            hue=hue_col,
-            palette="viridis" if hue_col else None,  # viridis is colorblind-friendly
-            alpha=0.8,
-            edgecolor=None,
-            ax=ax,
-        )
+        # Cluster/label ids are categorical, not a continuous scale: one viridis
+        # color per id (colorblind-friendly), sampled clear of both ends of the map.
+        handles: list[Line2D] = []
+        if hue_col is not None:
+            hue = df[hue_col]
+            order = (sorted(hue.dropna().unique()) if pd.api.types.is_numeric_dtype(hue)
+                     else list(hue.dropna().unique()))
+            colors = np.asarray(colormaps["viridis"](np.linspace(0, 1, len(order) + 2)[1:-1]))
+            codes = pd.Categorical(hue, categories=order).codes
+            has_id = codes >= 0                    # a missing id is not drawn
+            ax.scatter(df[x_col][has_id], df[y_col][has_id], c=colors[codes[has_id]],
+                       s=36, alpha=0.8, linewidths=0.48, edgecolors="face")
+            handles = [Line2D([], [], marker="o", linestyle="", markersize=6, color=c,
+                              markeredgewidth=0.48, alpha=0.8, label=str(cat))
+                       for cat, c in zip(order, colors, strict=True)]
+        else:
+            ax.scatter(df[x_col], df[y_col], s=36, alpha=0.8, linewidths=0.48,
+                       edgecolors="face")
+        ax.set_xlabel(x_col)
+        ax.set_ylabel(y_col)
 
         # Fixed axes rectangle: the scatter panel occupies the same position and
         # width on every plot.
@@ -97,8 +120,9 @@ def plot_feature_scatter(
         leg = None
         if hue_col:
             n_cats = df[hue_col].nunique()
-            leg = ax.legend(bbox_to_anchor=(1.02, 1.0), loc='upper left', borderaxespad=0.,
-                            title=hue_col, fontsize=8, ncol=(2 if n_cats > 16 else 1))
+            leg = ax.legend(handles=handles, bbox_to_anchor=(1.02, 1.0), loc='upper left',
+                            borderaxespad=0., title=hue_col, fontsize=8,
+                            ncol=(2 if n_cats > 16 else 1))
 
         # CLM-config box tucked just under the legend, high on the right margin.
         if info_text:
@@ -128,5 +152,9 @@ def plot_feature_scatter(
         log.error(f"[PLOT-FAIL] Failed to generate scatter plot: {e}{_max_path_hint(output_path)}")
         return False
     finally:
-        if fig is not None and not shown:
+        # Only pyplot keeps a figure open, and a shown one belongs to the viewer.
+        # A saved Figure goes with its last reference.
+        if fig is not None and not output_path and not shown:
             plt.close(fig)
+        if output_path:
+            _RENDER_LOCK.release()

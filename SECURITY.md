@@ -48,7 +48,7 @@ the invoking user reaches `open()`:
 
 - `main.py` — `sys.argv[1]`, the config path (`python -m clmsynth.main my_config.yaml`)
 - `generate_config.py`, `sys.argv[1]` and `sys.argv[2]`, the payload and output paths
-- `config_wizard.py`, the save path the wizard asks for at the prompt
+- `_config_wizard.py`, the save path the wizard asks for at the prompt
 
 These are the program's interface. Refusing naming the file or a path because the user
 typed it would remove documented functionality while hardening nothing: the same
@@ -63,7 +63,7 @@ above, that value can come from someone else.
 
 Impact is nonetheless limited:
 
-- `build_run_dir` creates a fresh `DDMMYY_Source_HHMMSS` folder with
+- `build_run_dir` creates a fresh `YYYYMMDD_HHMMSS_Source` folder with
   `mkdir(exist_ok=False)` and retries the suffix on collision, so a hostile
   `output_dir` can create a directory tree somewhere unintended but **cannot
   overwrite a chosen existing file**.

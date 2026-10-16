@@ -1,4 +1,4 @@
-# cli_logging.py
+# _cli_logging.py
 """Logging configuration for the console scripts.
 """
 

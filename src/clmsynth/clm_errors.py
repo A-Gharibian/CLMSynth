@@ -116,10 +116,20 @@ CODES = {
          "the ids must be all numbers or all strings, and coords, when given, needs one "
          "row per point.",
 
-    134: "{key} must be {expected}, got {value!r}. Values are not converted: YAML reads "
+    141:"{key} must be {expected}, got {value!r}. Values are not converted: YAML reads "
          "true/yes/no as booleans and .nan/.inf as numbers, and each was accepted as "
          "something else (true as 1, a quoted \"false\" as on, NaN past every range "
          "check, a mapping's keys as its values).",
+
+    # One code, two blocks; {where} names which. Precedent: 104, 207.
+    142: "{where}: cluster {cluster} is named more than once for label {label}. Each "
+         "cluster is named once per label, so that one entry states how much of the "
+         "label it holds, rather than a sum to work out: {fix}",
+
+    144: "competing_noise entry {i}: label {label} is a target of cluster {cluster} "
+         "({source}), so it cannot also be competing noise there. Competing noise "
+         "places another label in a cluster: use a different label, or remove the "
+         "entry.",
 
     # --- 15x : InfeasibleAllocationError (valid config, counts don't fit) ---
     150: "Infeasible rule: label {label} needs {tp} of its {m} points in clusters "

@@ -1,5 +1,5 @@
 % !CLMSynth-doc = manual
-% !CLMSynth-version = 0.7.3
+% !CLMSynth-version = 0.7.4
 % These two lines are a machine-readable marker, so the
 % file can be renamed freely, and checks the version above against the
 % package version so documentation cannot silently fall behind a release.
@@ -50,7 +50,7 @@
 \lstset{style=mystyle}
 
 % Names the release documented, not the candidate. Banner above tracks the build.
-\title{CLMSynth v0.7.3}
+\title{CLMSynth v0.7.4}
 \author{Arootin Gharibian}
 \date{\today}
 
@@ -112,49 +112,36 @@ Currently, three CLM measures are available:
 \noindent The \texttt{clm\_label\_engine} is the core module for label synthesis. The configuration parameters for the core module are defined as follows:
 \begin{lstlisting}[language=yaml]
 clm_label:
-  num_classes: M                   # 1 <= M <= 64; the data's own K is capped the
-                                   # same way (CLM-126 / CLM-127)
+  num_classes: M                   # 1 <= M <= 64; the data's own K is capped
   balance: balanced | unbalanced   # balanced: uniform 1/M, proportions ignored.
-                                   # Exactly one of the two, case-sensitive
-                                   # (CLM-132); absent = balanced. perfect reads
-                                   # none of balance/proportions/skew_* (CLM-302)
-  proportions: [...]               # unbalanced: used directly when given. Must have
-                                   # exactly M entries (CLM-121) summing to 1 (CLM-106)
+  proportions: [...]               # unbalanced: used directly when given.
   skew_rule: geometric | dominant_minority | dirichlet
                                    # unbalanced fallback when no proportions
   skew_params:
     ratio: 0.5                     # geometric: p_i ~ ratio^i
     dominant_index: 0              # dominant_minority
     dominant_share: 0.5            # dominant_minority
-    alpha: 1.0                     # dirichlet: Dirichlet(alpha,...,alpha)
+    alpha: 1.0                     # dirichlet: Dirichlet
   matching_mode: perfect | single | random | custom
-  single_match: {cluster: k*, label: l*}    # required if matching_mode: single
-  assignment_matrix:                         # required if matching_mode: custom
+  single_match: {cluster: k*, label: l*}    
+  assignment_matrix:                         
     - {label: l, clusters: [k1, ...], recall_target: r}
+                                   # each cluster named once per label (CLM-142)
   split_rule: proportional_to_size | equal   # how a rule's mass splits over its clusters
   spillover_rule: proportional_to_marginal | uniform | concentrated
-  concentrated_labels: [l, ...]    # spillover_rule: concentrated only. A LIST of
-                                   # integer ids in 0..M-1 (CLM-128); a bare number
-                                   # is read as a range, not a one-element list
-                                   # (default: the single largest label)
+  concentrated_labels: [l, ...]    # spillover_rule: concentrated only.
   target_metric:                   # optional (single/custom only)
     type: mcc | ari
     value: 0.7
     scope: global | pair           # global (default): one recall solved
-                                   #   numerically for the whole partition.
                                    # pair: exact, for the single_match
-                                   #   pair; mcc only; requires
-                                   #   matching_mode: single.
+                                   #   pair; mcc only.
     tolerance: 0.01                # both scopes: how far the DELIVERED
-                                   #   labeling may sit from the target
-                                   #   before CLM-306/CLM-310 is raised
+                                   #   labeling may sit from the target.
     max_iter: 40                   # global only, bisection budget; the pair
                                    #   scope inverts exactly and never iterates
     probe_seed: 42                 # optional; defaults to the run seed
   competing_noise:                 # optional (single/custom): structured noise.
-                                   # Converts a share of ONE cluster's UNCLAIMED
-                                   # points to one competing label. Bypasses the
-                                   # target proportions by design (CLM-304).
     - cluster: k
       label: l_comp
       share: 1.0                   # fraction of that cluster's leftover points
@@ -173,7 +160,7 @@ clm_label:
 \section{Usage}
 The input variables required for the generator (\texttt{X} and \texttt{c}; cluster centroids are derived internally from \texttt{X}) are expected to be supplied by external clustered datasets. CLMSynth is designed to work with online and offline datasets, such as the Gagolewski's clustering benchmark suite (\texttt{clustbench}) or synthetic datasets generated via MDCGen (\texttt{mdcgen}). In addition, synthetic data generated through the offline generator (\texttt{fabricated\_data}) and direct import through \texttt{byoc} (\emph{bring-your-own-clusters}) are possible.
 
-\noindent The package installs three entry points: \texttt{clmsynth} runs the pipeline with a YAML configuration, \texttt{clmsynth-config} renders a configuration from an upstream payload, and \texttt{clmsynth-wizard} generates one interactively. A simple demonstrative run is as follows:
+\noindent The package installs three entry points: \texttt{clmsynth} runs the pipeline with a YAML or JSON configuration; \texttt{clmsynth-config} renders a configuration from an upstream payload, and \texttt{clmsynth-wizard} generates one interactively. A simple demonstrative run is as follows:
 
 \begin{lstlisting}[language=Python]
 # Install package with requirements, then:
@@ -240,6 +227,7 @@ D1 & single (cluster 1, $M{=}2$) & fills cluster exactly; MCC $\approx 1$ & MCC 
 \begin{versionhistory}
 Changes from after the published article, behavior, diagnostics and label allocation can diverge from the article, specifically, limitations are addressed. Up to publishing the package in conda-forge.
   \vhEntry{0.7.3}{2026-10-11}{AG}{Reporting the target metric minimum and maximum, diagnostics and robustness.}
+  \vhEntry{0.7.4}{2026-10-16}{AG}{Python 3.15 and batch runs initial support, seaborn removed, PyYAML optional (JSON configs).}
 \end{versionhistory}
 \newpage
 \begin{versionhistory}
@@ -284,7 +272,7 @@ From first release to the release matching the published article with label allo
 \section*{Licenses for Third-Party Libraries}
 
 % 0.7.1: faker removed, it was never used.
-Python is distributed under the Python Software Foundation License V.2. This project relies on several open-source third-party Python libraries, including \texttt{NumPy}, \texttt{Pandas}, \texttt{SciPy}, \texttt{scikit-learn}, \texttt{Matplotlib}, \texttt{Seaborn}, and \texttt{PyYAML}. Optionally \texttt{mdcgenpy}. These packages are distributed under their respective licenses (BSD 3-Clause, MIT, and Apache 2.0). Refer to the official documentation of each package or the project repository for full third-party license details.
+Python is distributed under the Python Software Foundation License V.2. This project relies on several open-source third-party Python libraries, including \texttt{NumPy}, \texttt{Pandas}, \texttt{SciPy}, \texttt{scikit-learn}, and \texttt{Matplotlib}. Optionally \texttt{PyYAML} and \texttt{mdcgenpy}. These packages are distributed under their respective licenses (BSD 3-Clause, MIT, and Apache 2.0). Refer to the official documentation of each package or the project repository for full third-party license details.
 
 \section{References}
 \begin{enumerate}
@@ -299,5 +287,5 @@ Python is distributed under the Python Software Foundation License V.2. This pro
 
 
 \includepdf[pages=-]{CLMSynth_configuration_troubleshooting.pdf}
-\includepdf[pages=-]{engine_decision_map_v073.pdf}
+\includepdf[pages=-]{engine_decision_map_v074.pdf}
 \end{document}

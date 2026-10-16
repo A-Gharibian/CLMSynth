@@ -9,8 +9,7 @@ import pathlib
 import re
 import sys
 import tomllib
-
-import yaml
+from typing import Any
 
 # The repository root is the nearest folder above this script holding
 # pyproject.toml, so the script keeps working wherever it is moved.
@@ -23,6 +22,51 @@ def _capture(pattern: str, text: str, flags: int = 0) -> str:
     return m.group(1) if m else "(absent)"
 
 
+def _cff_scalar(raw: str) -> str:
+    """One scalar as written after `key:`: unquoted, and a plain one without its
+    trailing comment."""
+    raw = raw.strip()
+    single = re.fullmatch(r"'((?:[^']|'')*)'\s*(?:#.*)?", raw)
+    if single:
+        return single.group(1).replace("''", "'")
+    double = re.fullmatch(r'("(?:[^"\\]|\\.)*")\s*(?:#.*)?', raw)
+    if double:
+        return str(json.loads(double.group(1)))
+    return re.split(r"\s+#", raw, maxsplit=1)[0].strip()
+
+
+def read_cff(text: str) -> dict[str, Any]:
+    """The top-level scalars of a CITATION.cff, and `identifiers` as a list of
+    mappings, without PyYAML, which is optional. Only the forms the file uses: a
+    scalar on its key's line, and a block list of `key: value` entries. A value
+    written any other way reads as absent, which the check reports as a
+    disagreement instead of passing over it."""
+    out: dict[str, Any] = {}
+    identifiers: list[dict[str, str]] | None = None
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        top = re.match(r"([A-Za-z][\w-]*):(.*)$", line)     # a key at column 0
+        if top:
+            key, rest = top.groups()
+            identifiers = None
+            value = rest.strip()
+            if not value or value.startswith("#"):
+                if key == "identifiers":
+                    identifiers = out[key] = []
+            elif not value.startswith(("[", "{", ">", "|")):  # flow or block: not read
+                out[key] = _cff_scalar(rest)
+            continue
+        entry = re.match(r"\s*(-\s+)?([A-Za-z][\w-]*):(.*)$", line)
+        if identifiers is None or entry is None:
+            continue        # inside another block, which the check does not read
+        if entry.group(1):
+            identifiers.append({})
+        if identifiers:
+            identifiers[-1][entry.group(2)] = _cff_scalar(entry.group(3))
+    return out
+
+
 def collect() -> tuple:
     """version, version declarations, dates, changelog date, faults, doi."""
     project = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["project"]
@@ -32,10 +76,10 @@ def collect() -> tuple:
     init = (REPO / "src/clmsynth/__init__.py").read_text(encoding="utf-8")
     found["__init__.py"] = _capture(r'__version__\s*=\s*"([^"]+)"', init)
 
-    # Read as YAML, not line by line: a quoted value ('2026-09-17') or a DOI
-    # under `identifiers` is the same fact as its plain or top-level form.
-    cff = yaml.safe_load((REPO / "CITATION.cff").read_text(encoding="utf-8")) or {}
-    found["CITATION.cff"] = str(cff.get("version", "(absent)"))
+    # Read as fields, not grepped: a quoted value ('2026-09-17') or a DOI under
+    # `identifiers` is the same fact as its plain or top-level form.
+    cff = read_cff((REPO / "CITATION.cff").read_text(encoding="utf-8"))
+    found["CITATION.cff"] = cff.get("version", "(absent)")
 
     codemeta = json.loads((REPO / "codemeta.json").read_text(encoding="utf-8"))
     found["codemeta.json"] = codemeta.get("version", "(absent)")
@@ -82,8 +126,8 @@ def collect() -> tuple:
     dates = None
     if dated:
         dates = {
-            # str(): unquoted, YAML reads it as a date object; quoted, as a string.
-            "CITATION.cff date-released": str(cff.get("date-released", "(absent)")),
+            # Text either way: quoted or not, the date reads as written.
+            "CITATION.cff date-released": cff.get("date-released", "(absent)"),
             "codemeta.json dateModified": codemeta.get("dateModified", "(absent)"),
         }
     return (

@@ -9,11 +9,10 @@ dependencies:
   - python=3.14
   - numpy=2.5.3
   - pandas=3.0.6
-  - pyyaml=6.0.3
+  - pyyaml=6.0.3   # optional: config files other than .json
   - scipy=1.18.1
   - scikit-learn=1.9.1
-  - matplotlib=3.11.2
-  - seaborn=0.13.2
+  - matplotlib-base=3.11.2
   - pip
   # Optional, feature-specific (uncomment what you use):
   # - pip:

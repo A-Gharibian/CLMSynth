@@ -12,9 +12,9 @@ away. This module pins the first two; ruff enforces the other two
 * **The negative-target guard is wizard-only.** MCC/ARI targets floor at 0.0 in
   the wizard while the engine is left exactly as it is (no engine bound), because
   a negative target is meaningful but not something the program promises to solve.
-* **The wizard's import graph stays light.** Importing it (or the schema) pulls
-  neither matplotlib nor seaborn, so a future help command built on the schema
-  pays for nothing it does not use.
+* **The wizard's import graph stays light.** Importing it (or the schema) does not
+  pull matplotlib, so a future help command built on the schema pays for nothing
+  it does not use.
 * **Deletability.** No core module imports the wizard.
 
     python -m pytest tests/test_07_text_wizard.py
@@ -26,11 +26,11 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-import yaml
 
-import clmsynth.config_wizard as wizard
+import clmsynth._config_wizard as wizard
+from clmsynth._questions import SCHEMA
 from clmsynth.clm_label_engine import generate_clm_labels
-from clmsynth.questions import SCHEMA
+from clmsynth.main import load_config
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -223,7 +223,7 @@ def test_proportions_prompt_re_asks_on_empty_input(stdin):
 # ---------------------------------------------------------------------------
 
 
-def test_canned_answers_build_an_engine_valid_config(stdin):
+def test_canned_answers_build_an_engine_valid_config(stdin, yaml):
     """Drive the builders with canned answers exactly as main() does, then run the
     assembled clm_label against matching geometry and round-trip it through YAML.
     A regression pin on the refactor: the schema-driven wizard produces the same
@@ -285,17 +285,30 @@ def test_canned_answers_build_an_engine_valid_config(stdin):
 # ---------------------------------------------------------------------------
 
 
-def test_save_creates_a_missing_parent_directory(tmp_path):
-    """Answering "configs/run1.yaml" must not fail."""
-    target = tmp_path / "configs" / "run1.yaml"
+@pytest.mark.parametrize("suffix", ["yaml", "json"])
+def test_save_creates_a_missing_parent_directory(tmp_path, yaml, suffix):
+    """Answering "configs/run1.yaml" must not fail. The file is written in the
+    format its suffix names, as clmsynth reads it."""
+    target = tmp_path / "configs" / f"run1.{suffix}"
 
     wizard._save_config({"global_settings": {"data_source": "byoc"}}, str(target))
 
-    assert yaml.safe_load(target.read_text(encoding="utf-8")) == {
-        "global_settings": {"data_source": "byoc"}
-    }
+    assert load_config(str(target)) == {"global_settings": {"data_source": "byoc"}}
 
 
+@pytest.mark.parametrize("answer,fmt,saved", [
+    ("run1", "json", "run1.json"),
+    ("run1.yaml", "json", "run1.json"),
+    ("run1.json", "yaml", "run1.yaml"),
+    ("run1.yml", "yaml", "run1.yml"),
+    ("run1.v2", "yaml", "run1.v2.yaml"),
+])
+def test_the_chosen_format_sets_the_suffix(answer, fmt, saved):
+    """One format per file: never run1.yaml.json."""
+    assert wizard._config_path(answer, fmt) == saved
+
+
+@pytest.mark.usefixtures("yaml")
 def test_a_failed_save_reports_and_prints_the_answers(tmp_path, capsys):
     """A save failure must not discard the interview."""
     blocker = tmp_path / "blocker"

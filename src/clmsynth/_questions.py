@@ -1,20 +1,20 @@
-# questions.py
+# _questions.py
 """The wizard's questions, as data.
 
 This module holds the question set the CLI wizard asks, one :class:`Question`
 per prompt, separated from the wizard that reads them. Two consumers:
 
-* ``config_wizard.py`` pulls each question by key and drives it through the
+* ``_config_wizard.py`` pulls each question by key and drives it through the
   terminal prompt helpers. The wizard is a *deletable* convenience, a config
   creator and nothing more; removing it leaves CLMSynth fully functional from a
   config file. The schema, being the reusable half, stays.
 * a future in-package ``help`` command, which iterates the schema to surface the
   same ``explain`` text without asking anything.
 
-**Plain data only.** No pandas, matplotlib or seaborn is imported here, and none
+**Plain data only.** No pandas or matplotlib is imported here, and none
 must be: a front end or help command that imports this module should pay for
 nothing but the dataclass. The dataset-registry lookups the wizard needs stay in
-``config_wizard.py`` against ``dataset_sources``; they are dynamic and belong with
+``_config_wizard.py`` against ``dataset_sources``; they are dynamic and belong with
 the control flow, not here.
 
 **Ranges are carried, not hard-coded at a call site.** Two kinds of bound:
@@ -378,7 +378,12 @@ _QUESTIONS: list[Question] = [
 
     # -- 4. Save & run ------------------------------------------------------
     Question(
-        "output.path", "str", "Save this config to (a .yaml file)",
+        "output.format", "choice", "Save the config as",
+        explain="  yaml : room for your own comments\n"
+                "  json : runs without PyYAML installed",
+        default="yaml", choices=("yaml", "json")),
+    Question(
+        "output.path", "str", "Save this config to",
         default="test_data_config.yaml"),
     Question("run.now", "bool", "Run the pipeline now?", default=True),
 ]

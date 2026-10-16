@@ -43,7 +43,7 @@ from pathlib import Path
 
 import pytest
 
-from clmsynth.cli_logging import SingleLineFilter
+from clmsynth._cli_logging import SingleLineFilter
 from clmsynth.main import resolved_for_report
 
 # ---------------------------------------------------------------------------
@@ -142,9 +142,11 @@ def test_a_configured_path_is_reported_as_an_absolute_path(tmp_path, monkeypatch
 # ---------------------------------------------------------------------------
 
 
-def _catalog_gen(monkeypatch, out_dir):
-    """Import the tool with OUT_DIR as its argv."""
-    monkeypatch.setattr(sys, "argv", ["CLM_catalog_gen.py", str(out_dir)])
+def _catalog_gen(monkeypatch, out_dir, *flags):
+    """Import the tool with flags, then OUT_DIR, as its argv. It writes YAML, so it
+    needs PyYAML."""
+    pytest.importorskip("yaml")
+    monkeypatch.setattr(sys, "argv", ["CLM_catalog_gen.py", *flags, str(out_dir)])
     path = Path(__file__).resolve().parents[1] / "tools" / "CLM_catalog_gen.py"
     spec = importlib.util.spec_from_file_location("clm_catalog_gen_under_test", path)
     assert spec is not None and spec.loader is not None, f"cannot load {path}"
@@ -169,6 +171,22 @@ def test_catalog_generator_refuses_a_non_catalog_target(tmp_path, monkeypatch):
 
     assert "refusing to delete" in str(excinfo.value)
     assert (victim / "precious.txt").read_text(encoding="utf-8") == "keep me"
+
+
+def test_catalog_generator_refuses_a_misspelled_flag(tmp_path, monkeypatch):
+    """A misspelled flag exits 2 before a file is touched.
+
+    OUT_DIR was the first argument whatever it was, so a flag written before it
+    became the folder to generate into: `--threads <dir>` wrote a catalog into a
+    folder named `--threads`.
+    """
+    out = tmp_path / "candidate"
+    gen = _catalog_gen(monkeypatch, out, "--threaded")
+    assert gen.ARGS.threaded and gen.OUT == out.resolve()
+
+    with pytest.raises(SystemExit) as excinfo:
+        _catalog_gen(monkeypatch, out, "--threads")
+    assert excinfo.value.code == 2
 
 
 def test_catalog_generator_accepts_an_empty_or_absent_target(tmp_path, monkeypatch):

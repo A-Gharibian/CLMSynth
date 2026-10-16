@@ -5,46 +5,75 @@ triggers it, runs the pipeline, captures the log, and asserts the expected code
 actually appears. Output is grouped one folder per main table:
 
     troubleshooting_catalog/
-        ValueError_1xx/            101..134   fatal, aborts the run (exit 2), except
+        ValueError_1xx/            101..144   fatal, aborts the run (exit 2), except
                                               the codes in EXPECTED_EXIT_BY_CODE
         InfeasibleAllocation_15x/  150..153   per-dataset skip (exit 0)
         KeyError_2xx/              201..209   per-dataset skip (exit 0)
         Warnings_3xx/              301..310   non-fatal, run succeeds (exit 0)
         _data/                     byoc input CSVs for 127 and 133, kept so they rerun
 
-A shipped item is a reproducible case of the troubleshooting manual:
+A shipped item is a reproducible case of the troubleshooting manual. The cases
+are YAML, so running one, or this script, needs the yaml extra
+(pip install "clmsynth[yaml]"):
 
     cd docs/troubleshooting_catalog
-    python -m clmsynth.main InfeasibleAllocation_15x/CLM-150.yaml
+    python -m clmsynth.main InfeasibleAllocation_15x/CLM-150.yaml --no-viz
 
-Captured logs carry no timestamps, so they regenerate byte-identical whenever the
-behavior is unchanged, and a diff shows only what actually changed.
+Cases run with --no-viz: no diagnostic depends on a plot. Captured logs carry no
+timestamps, so they regenerate byte-identical whenever the behavior is unchanged,
+and a diff shows only what actually changed.
 
 Usage (project interpreter, any working directory):
 
-    python tools/CLM_catalog_gen.py [OUT_DIR]
+    python tools/CLM_catalog_gen.py [OUT_DIR] [--threaded]
 
 OUT_DIR defaults to docs/troubleshooting_catalog. Pass a different one to
 generate a candidate catalog for comparison before filing an issue. It must be
 absent, empty, or a catalog from an earlier run; anything else is refused before
 a file is touched.
+
+--threaded runs the cases in a thread pool, one worker per CPU. Each case has its
+own folder, so the catalog and the report are the same as a serial run's.
 """
 
+import argparse
 import csv
+import os
 import re
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
-import yaml
 
+from clmsynth._compat import import_optional_dependency
 from clmsynth.clm_errors import CODES
+
+# The catalog is YAML, and stays YAML.
+try:
+    yaml = import_optional_dependency("yaml", "CLM_catalog_gen.py")
+except ImportError as e:
+    sys.exit(f"{e}.")
 
 # ROOT = Path(__file__).resolve().parent
 REPO = Path(__file__).resolve().parents[1]
-OUT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else REPO / "docs" / "troubleshooting_catalog"
+
+
+def _parse_args() -> argparse.Namespace:
+    # A misspelled flag is refused, not taken for an OUT_DIR to write into.
+    parser = argparse.ArgumentParser(description="Regenerate the troubleshooting catalog.")
+    parser.add_argument("out_dir", nargs="?", type=Path,
+                        default=REPO / "docs" / "troubleshooting_catalog",
+                        help="default: docs/troubleshooting_catalog")
+    parser.add_argument("--threaded", action="store_true",
+                        help="run the cases in a thread pool, one worker per CPU")
+    return parser.parse_args()
+
+
+ARGS = _parse_args()
+OUT = ARGS.out_dir.resolve()
 DATA_REL = "_data"            # byoc inputs, relative to OUT
 SCRATCH_REL = "_scratch"      # per-case run output, folder deleted at the end
 DATA = OUT / DATA_REL
@@ -307,10 +336,21 @@ CASES = [
     # column as one type and builds coords from the same rows.
     ("1xx", 133, "the dataset has missing cluster ids (byoc, blank cluster cells)",
      lambda: byoc(133, "missing_cluster_ids", n_clusters=4, n_per=10, blank_ids=2)),
-    # A quoted "false" is a non-empty string: before [CLM-134] it switched
+    # A quoted "false" is a non-empty string: before [CLM-141] it switched
     # placement on.
-    ("1xx", 134, "a value of the wrong type (centroid_dependence.enabled quoted)",
+    ("1xx", 141, "a value of the wrong type (centroid_dependence.enabled quoted)",
      lambda: c(centroid_dependence={"enabled": "false", "profile": "linear", "favors": "core"})),
+    # Label 1 at the core and at the boundary of cluster 0. Before [CLM-142] the two
+    # entries summed their points and kept the last favors: all of it went to the
+    # boundary. The same code covers a cluster named twice in assignment_matrix.
+    ("1xx", 142, "a cluster named twice for one label (competing_noise core and boundary)",
+     lambda: c(competing_noise=[
+         {"cluster": 0, "label": 1, "share": 0.3, "favors": "core"},
+         {"cluster": 0, "label": 1, "share": 0.3, "favors": "boundary"},
+     ])),
+    # base()'s rule 1 makes label 1 a target of cluster 1.
+    ("1xx", 144, "competing_noise on one of the cluster's own target labels",
+     lambda: c(competing_noise=[{"cluster": 1, "label": 1, "share": 0.5, "favors": "boundary"}])),
 
     # ---- 15x : InfeasibleAllocationError, per-dataset skip ---------------
     ("15x", 150, "one rule's budget exceeds its clusters' capacity",
@@ -413,7 +453,7 @@ def expected_exit(table, code):
 
 
 _TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} - ", re.M)
-_RUN_DIR = re.compile(r"\d{6}_[A-Za-z]+_\d{6}(?:_\d+)?")
+_RUN_DIR = re.compile(r"\d{8}_\d{6}_[A-Za-z]+(?:_\d+)?")
 
 
 def normalise(log: str) -> str:
@@ -442,17 +482,17 @@ def run_case(table, code, desc, builder, expect):
     header = (f"# [CLM-{code}] {desc}\n"
               f"# Regenerated by CLM_catalog_gen.py against the shipped engine.\n"
               f"# Reproduce: cd to this catalog's root, then\n"
-              f"#     python -m clmsynth.main {rel_cfg}\n")
+              f"#     python -m clmsynth.main {rel_cfg} --no-viz\n")
     cfg_path.write_text(header + yaml.dump(cfg, sort_keys=False, default_flow_style=False),
                         encoding="utf-8")
 
     proc = subprocess.run(
-        [sys.executable, "-m", "clmsynth.main", rel_cfg],
+        [sys.executable, "-m", "clmsynth.main", rel_cfg, "--no-viz"],
         cwd=OUT, capture_output=True, text=True, check=False,
     )
     log = normalise((proc.stdout or "") + (proc.stderr or ""))
     (folder / f"CLM-{code}.log").write_text(
-        f"$ python -m clmsynth.main {rel_cfg}\n"
+        f"$ python -m clmsynth.main {rel_cfg} --no-viz\n"
         f"# exit code: {proc.returncode}\n\n{log}", encoding="utf-8")
 
     # The expectation is the BRACKETED form the engine emits. A bare
@@ -474,7 +514,22 @@ def check_builder_coverage():
     return sorted(set(CODES) - built), sorted(built_without_code)
 
 
-def main():
+def judge_case(case):
+    """Run one CASES entry and return its row of the report."""
+    table, code, desc, builder = case
+    expect = f"[CLM-{code}]"
+    want = expected_exit(table, code)
+    try:
+        hit, rc, _log = run_case(table, code, desc, builder, expect)
+    except Exception as exc:                     # broad by design: reporting
+        return (table, code, "BUILD-ERROR", f"{type(exc).__name__}: {exc}",
+                f"- (expected {want})")
+    note = f"matched {expect!r}" if hit else f"EXPECTED {expect!r} NOT FOUND"
+    status = "MISS" if not hit else ("ok" if rc == want else "BAD-EXIT")
+    return (table, code, status, note, f"{rc} (expected {want})")
+
+
+def main(threaded=False):
     missing, built_without_code = check_builder_coverage()
     if missing:
         print(f"ABORT: {len(missing)} registry code(s) have no builder in this file: "
@@ -498,20 +553,13 @@ def main():
     # (engine_internals.md) must survive a regeneration.
     for name in (*TABLES.values(), DATA_REL, SCRATCH_REL):
         _checked_rmtree(OUT / name)
-    OUT.mkdir(parents=True, exist_ok=True)
-    results = []
-    for table, code, desc, builder in CASES:
-        expect = f"[CLM-{code}]"
-        try:
-            hit, rc, _log = run_case(table, code, desc, builder, expect)
-        except Exception as exc:                     # broad by design: reporting
-            results.append((table, code, "BUILD-ERROR", f"{type(exc).__name__}: {exc}",
-                            f"- (expected {expected_exit(table, code)})"))
-            continue
-        note = f"matched {expect!r}" if hit else f"EXPECTED {expect!r} NOT FOUND"
-        want = expected_exit(table, code)
-        status = "MISS" if not hit else ("ok" if rc == want else "BAD-EXIT")
-        results.append((table, code, status, note, f"{rc} (expected {want})"))
+    # Made once here, not by the first cases to run at the same time.
+    SCRATCH.mkdir(parents=True, exist_ok=True)
+    # Each case has its own config, log and run folder, and its own input file
+    # in _data/, so they can run at once. map keeps CASES order for the report.
+    workers = (os.cpu_count() or 1) if threaded else 1
+    with ThreadPoolExecutor(workers) as pool:
+        results = list(pool.map(judge_case, CASES))
 
     _checked_rmtree(SCRATCH)
     if SCRATCH.exists():
@@ -531,4 +579,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(threaded=ARGS.threaded))

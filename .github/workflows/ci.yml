@@ -26,8 +26,9 @@ jobs:
       # Report every interpreter's result.
       fail-fast: false
       matrix:
-        # Must track requires-python (">=3.12,<3.15") in pyproject.toml.
-        python-version: ["3.12", "3.13", "3.14"]
+        # Must track requires-python (">=3.12,<3.16") in pyproject.toml. On 3.15
+        # the test extra installs no PyYAML, so the run covers the core without it.
+        python-version: ["3.12", "3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@v7
 
@@ -101,9 +102,8 @@ jobs:
           python-version: "3.13"
           cache: pip
 
-      # PyYAML: the metadata check at the end reads CITATION.cff as YAML.
       - name: Install the build tools
-        run: pip install build twine pyyaml
+        run: pip install build twine
 
       - name: Build the sdist and wheel
         run: python -m build
@@ -167,6 +167,9 @@ jobs:
             test -x "/tmp/probe/bin/$script" || { echo "missing console script: $script"; exit 1; }
             echo "  console script present: $script"
           done
+          # The bundled offline example runs on the base install, no extra.
+          config=$(/tmp/probe/bin/python -c "from importlib.resources import files; print(files('clmsynth') / 'test_data_config_offline.json')")
+          (cd /tmp && /tmp/probe/bin/clmsynth "$config" --no-viz)
 
       # Six fixed declarations carry the version (codemeta three times over),
       # plus every docs/**/*.tex with a `% !CLMSynth-version` banner. Three

@@ -176,7 +176,7 @@ def test_labels_only_dataset_has_no_features_and_still_labels(tmp_path):
     )
 
     assert n_ok == 1
-    written = pd.read_csv(csv_dir / "fabricated_data__fabricated__labels_only_4class.csv")
+    written = pd.read_csv(csv_dir / "fabricated_data-fabricated-labels_only_4class.csv")
     assert list(written.columns) == ["Cluster_0", "Label_0"], (
         "a labels-only dataset should carry clusters and labels and nothing else"
     )
@@ -237,7 +237,7 @@ def test_the_reachable_pair_range_is_reported_under_scope_pair(
         )
     assert n_ok == 1
 
-    summary = (txt_dir / "fabricated_data__fabricated__baseline_4class.txt").read_text(
+    summary = (txt_dir / "fabricated_data-fabricated-baseline_4class.txt").read_text(
         encoding="utf-8"
     )
     line = "cluster 0, label 0: [0.0613, 1.0000]   (N = 800, cluster size = 200)"
@@ -329,7 +329,7 @@ def test_the_target_report_is_written_to_the_summary(clm, present, absent, tmp_p
         txt_dir,
     )
     assert n_ok == 1
-    summary = (txt_dir / "fabricated_data__fabricated__baseline_4class.txt").read_text(
+    summary = (txt_dir / "fabricated_data-fabricated-baseline_4class.txt").read_text(
         encoding="utf-8"
     )
     for text in present:
@@ -628,8 +628,8 @@ def test_unreachable_tolerance_reports_non_convergence(caplog):
 def test_zero_max_iter_skips_the_refinement_without_crashing():
     """`max_iter: 0` means the bisection body never runs: the grid's best stands.
 
-    A negative value used to do the same silently; it is refused with
-    [CLM-134] since 0.7.2 (test_01_logic::test_a_value_of_the_wrong_type_is_refused).
+    A negative value used to do the same silently; it is refused since 0.7.2,
+    now as [CLM-141] (test_01_logic::test_a_value_of_the_wrong_type_is_refused).
     """
     max_iter = 0
     out = generate_clm_labels(

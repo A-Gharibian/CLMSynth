@@ -400,70 +400,74 @@ def _rows(**row0):
 @pytest.mark.parametrize(
     "overrides, code",
     [
-        ({"centroid_dependence": {"enabled": "false"}}, 134),
-        ({"centroid_dependence": {"enabled": "no"}}, 134),
-        ({"centroid_dependence": {"enabled": None}}, 134),
-        ({"matching_mode": "single", "single_match": {"cluster": True, "label": 0}}, 134),
-        ({"assignment_matrix": _rows(clusters=[True])}, 134),
-        ({"assignment_matrix": _rows(clusters="01")}, 134),
-        ({"assignment_matrix": _rows(clusters=1)}, 134),
-        ({"assignment_matrix": _rows(recall_target=True)}, 134),
-        ({"assignment_matrix": _rows(recall_target=_NAN)}, 134),
-        ({"assignment_matrix": _rows(recall_target=_INF)}, 134),
-        ({"assignment_matrix": _rows(recall_target="0.9")}, 134),
+        ({"centroid_dependence": {"enabled": "false"}}, 141),
+        ({"centroid_dependence": {"enabled": "no"}}, 141),
+        ({"centroid_dependence": {"enabled": None}}, 141),
+        ({"matching_mode": "single", "single_match": {"cluster": True, "label": 0}}, 141),
+        ({"assignment_matrix": _rows(clusters=[True])}, 141),
+        ({"assignment_matrix": _rows(clusters="01")}, 141),
+        ({"assignment_matrix": _rows(clusters=1)}, 141),
+        ({"assignment_matrix": _rows(recall_target=True)}, 141),
+        ({"assignment_matrix": _rows(recall_target=_NAN)}, 141),
+        ({"assignment_matrix": _rows(recall_target=_INF)}, 141),
+        ({"assignment_matrix": _rows(recall_target="0.9")}, 141),
         ({"competing_noise": [{"cluster": 0, "label": 1, "share": True}]}, 117),
         ({"competing_noise": [{"cluster": 0, "label": 1, "share": "0.5"}]}, 117),
-        ({"competing_noise": [{"cluster": True, "label": 1, "favors": "random"}]}, 134),
+        ({"competing_noise": [{"cluster": True, "label": 1, "favors": "random"}]}, 141),
         ({"target_metric": {**_TM, "value": True}}, 113),
         ({"target_metric": {**_TM, "value": None}}, 113),
-        ({"target_metric": {**_TM, "tolerance": _NAN}}, 134),
-        ({"target_metric": {**_TM, "tolerance": _INF}}, 134),
-        ({"target_metric": {**_TM, "tolerance": True}}, 134),
-        ({"target_metric": {**_TM, "max_iter": True}}, 134),
-        ({"target_metric": {**_TM, "max_iter": 20.0}}, 134),
-        ({"target_metric": {**_TM, "max_iter": -5}}, 134),
+        ({"target_metric": {**_TM, "tolerance": _NAN}}, 141),
+        ({"target_metric": {**_TM, "tolerance": _INF}}, 141),
+        ({"target_metric": {**_TM, "tolerance": True}}, 141),
+        ({"target_metric": {**_TM, "max_iter": True}}, 141),
+        ({"target_metric": {**_TM, "max_iter": 20.0}}, 141),
+        ({"target_metric": {**_TM, "max_iter": -5}}, 141),
+        ({"target_metric": {**_TM, "probe_seed": True}}, 141),
+        ({"target_metric": {**_TM, "probe_seed": 7.0}}, 141),
+        ({"target_metric": {**_TM, "probe_seed": -1}}, 141),
+        ({"target_metric": {**_TM, "probe_seed": "7"}}, 141),
         (
             {"centroid_dependence": {"enabled": True, "profile": "exponential",
                                      "steepness": _NAN}},
-            134,
+            141,
         ),
         (
             {"centroid_dependence": {"enabled": True, "profile": "exponential",
                                      "steepness": True}},
-            134,
+            141,
         ),
-        ({"proportions": [0.4, _NAN, 0.2, 0.1]}, 134),
-        ({"proportions": [0.4, "0.3", 0.2, 0.1]}, 134),
-        ({"proportions": [True, 0.0, 0.0, 0.0]}, 134),
+        ({"proportions": [0.4, _NAN, 0.2, 0.1]}, 141),
+        ({"proportions": [0.4, "0.3", 0.2, 0.1]}, 141),
+        ({"proportions": [True, 0.0, 0.0, 0.0]}, 141),
         ({"proportions": None, "skew_rule": "geometric", "skew_params": {"ratio": _NAN}}, 131),
         ({"proportions": None, "skew_rule": "geometric", "skew_params": {"ratio": _INF}}, 131),
         ({"proportions": None, "skew_rule": "dirichlet", "skew_params": {"alpha": _INF}}, 131),
         ({"spillover_rule": "concentrated", "concentrated_labels": [_INF]}, 128),
-        ({"target_metric": [_TM]}, 134),
-        ({"target_metric": 0.5}, 134),
-        ({"centroid_dependence": True}, 134),
-        ({"centroid_dependence": [{"enabled": True}]}, 134),
-        ({"competing_noise": {"cluster": 0, "label": 1, "favors": "random"}}, 134),
-        ({"competing_noise": [None]}, 134),
-        ({"competing_noise": [{"cluster": [0], "label": 1, "favors": "random"}]}, 134),
-        ({"assignment_matrix": _ROW0}, 134),
-        ({"assignment_matrix": [None, *_rows()[1:]]}, 134),
-        ({"assignment_matrix": _rows(clusters=[[0]])}, 134),
-        ({"matching_mode": "single", "single_match": [{"cluster": 0, "label": 0}]}, 134),
-        ({"matching_mode": "single", "single_match": {"cluster": [0], "label": 0}}, 134),
-        ({"matching_mode": "random", "competing_noise": "x"}, 134),
-        ({"matching_mode": "perfect", "centroid_dependence": True}, 134),
-        ({"proportions": [0.5, 0.6, -0.1, 0.0]}, 134),
-        ({"assignment_matrix": _rows(recall_target=-0.5)}, 134),
-        ({"target_metric": {**_TM, "tolerance": -0.1}}, 134),
+        ({"target_metric": [_TM]}, 141),
+        ({"target_metric": 0.5}, 141),
+        ({"centroid_dependence": True}, 141),
+        ({"centroid_dependence": [{"enabled": True}]}, 141),
+        ({"competing_noise": {"cluster": 0, "label": 1, "favors": "random"}}, 141),
+        ({"competing_noise": [None]}, 141),
+        ({"competing_noise": [{"cluster": [0], "label": 1, "favors": "random"}]}, 141),
+        ({"assignment_matrix": _ROW0}, 141),
+        ({"assignment_matrix": [None, *_rows()[1:]]}, 141),
+        ({"assignment_matrix": _rows(clusters=[[0]])}, 141),
+        ({"matching_mode": "single", "single_match": [{"cluster": 0, "label": 0}]}, 141),
+        ({"matching_mode": "single", "single_match": {"cluster": [0], "label": 0}}, 141),
+        ({"matching_mode": "random", "competing_noise": "x"}, 141),
+        ({"matching_mode": "perfect", "centroid_dependence": True}, 141),
+        ({"proportions": [0.5, 0.6, -0.1, 0.0]}, 141),
+        ({"assignment_matrix": _rows(recall_target=-0.5)}, 141),
+        ({"target_metric": {**_TM, "tolerance": -0.1}}, 141),
         (
             {"centroid_dependence": {"enabled": True, "profile": "exponential", "steepness": -2.0}},
-            134,
+            141,
         ),
-        ({"matching_mode": "single", "single_match": {"cluster": None, "label": 0}}, 134),
-        ({"matching_mode": "single", "single_match": {"cluster": _NAN, "label": 0}}, 134),
-        ({"assignment_matrix": _rows(clusters=[None])}, 134),
-        ({"competing_noise": [{"cluster": None, "label": 1, "favors": "random"}]}, 134),
+        ({"matching_mode": "single", "single_match": {"cluster": None, "label": 0}}, 141),
+        ({"matching_mode": "single", "single_match": {"cluster": _NAN, "label": 0}}, 141),
+        ({"assignment_matrix": _rows(clusters=[None])}, 141),
+        ({"competing_noise": [{"cluster": None, "label": 1, "favors": "random"}]}, 141),
     ],
     ids=[
         "enabled-quoted-false",
@@ -488,6 +492,10 @@ def _rows(**row0):
         "max-iter-true",
         "max-iter-float",
         "max-iter-negative",
+        "probe-seed-true",
+        "probe-seed-float",
+        "probe-seed-negative",
+        "probe-seed-string",
         "steepness-nan",
         "steepness-true",
         "proportions-nan",
@@ -527,13 +535,14 @@ def test_a_value_of_the_wrong_type_is_refused(overrides, code):
 
     true passed as 1 (and matched cluster 1), a quoted "false" switched placement
     on, NaN passed every range check, and a negative max_iter skipped the search
-    refinement. Other negatives were refused with an uncoded ValueError, a
-    per-dataset "unexpected error", even in keys the run never read. A block of
-    the wrong shape crashed on its first read, or, as a mapping without its YAML
-    dash, was reported as a missing key ([CLM-207], [CLM-205]); a cluster id given
-    as a list, or written as null, was a cluster the dataset lacks ([CLM-105],
-    [CLM-119]). Both of those skip one dataset. Each is now refused where the key
-    is read.
+    refinement. Any other probe_seed that is not an integer >= 0 crashed uncoded
+    in numpy at the first search probe. Other negatives were refused with an
+    uncoded ValueError, a per-dataset "unexpected error", even in keys the run
+    never read. A block of the wrong shape crashed on its first read, or, as a
+    mapping without its YAML dash, was reported as a missing key ([CLM-207],
+    [CLM-205]); a cluster id given as a list, or written as null, was a cluster
+    the dataset lacks ([CLM-105], [CLM-119]). Both of those skip one dataset.
+    Each is now refused where the key is read.
     """
     cfg = base_custom_cfg(**overrides)
     with pytest.raises(ValueError) as excinfo:
@@ -547,7 +556,7 @@ def test_a_clm_label_that_is_not_a_mapping_is_refused(cfg):
     missing num_classes ([CLM-201]), which writes the dataset unlabelled."""
     with pytest.raises(ValueError) as excinfo:
         generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
-    assert getattr(excinfo.value, "code", None) == 134
+    assert getattr(excinfo.value, "code", None) == 141
 
 
 def test_a_read_only_mapping_is_accepted_as_a_block():
@@ -572,7 +581,7 @@ def test_proportions_given_as_a_mapping_are_refused():
         }
         with pytest.raises(ValueError) as excinfo:
             generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
-        assert getattr(excinfo.value, "code", None) == 134
+        assert getattr(excinfo.value, "code", None) == 141
 
 
 def test_a_competing_noise_entry_without_a_cluster_names_the_key():
@@ -583,6 +592,106 @@ def test_a_competing_noise_entry_without_a_cluster_names_the_key():
         generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
     assert getattr(excinfo.value, "code", None) == 207
     assert "competing_noise entry 0: 'cluster'" in str(excinfo.value)
+
+
+_NOISE = {"cluster": 0, "label": 1, "share": 0.3}
+
+
+@pytest.mark.parametrize(
+    "overrides, fix",
+    [
+        ({"competing_noise": [{**_NOISE, "favors": "core"}, {**_NOISE, "favors": "boundary"}]},
+         "entry 0 places it at 'core' and entry 1 at 'boundary'; choose one."),
+        ({"competing_noise": [{**_NOISE, "favors": "core"}, {**_NOISE, "favors": "core"}]},
+         "write one entry with share 0.6."),
+        ({"competing_noise": [{**_NOISE, "share": 0.7}, {**_NOISE, "share": 0.7}]},
+         "together they ask for share 1.4"),
+        ({"assignment_matrix": [*_rows(), {"label": 0, "clusters": [1, 0], "recall_target": 0.05}]},
+         "assignment_matrix rows 0 and 4"),
+        ({"assignment_matrix": _rows(clusters=[0, 0])}, "list each cluster once in a row."),
+    ],
+    ids=["noise-core-and-boundary", "noise-same-placement", "noise-shares-past-1",
+         "matrix-two-rows", "matrix-one-row-twice"],
+)
+def test_a_cluster_is_named_once_per_label(overrides, fix):
+    """[CLM-142]. Two noise entries for one label and cluster kept only the last
+    favors and summed the points, so 0.3 core plus 0.3 boundary put all of it at
+    the boundary. Two matrix rows added their points, and a row listing a cluster
+    twice lost half of what it routed there."""
+    with pytest.raises(ValueError) as excinfo:
+        generate_clm_labels(CLUSTERS, COORDS, base_custom_cfg(**overrides), seed=1)
+    assert getattr(excinfo.value, "code", None) == 142, str(excinfo.value)
+    assert fix in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"proportions": [0.5, 0.2, 0.2, 0.1],
+         "competing_noise": [{**_NOISE, "favors": "core"}, {**_NOISE, "favors": "boundary"}]},
+        {"target_metric": {"type": "mcc", "value": 0.5},
+         "assignment_matrix": [{"label": 0, "clusters": [0, 1]}, {"label": 0, "clusters": [1]}]},
+    ],
+    ids=["before-an-infeasible-rule", "before-the-search"],
+)
+def test_a_cluster_named_twice_is_refused_whatever_the_dataset(overrides):
+    """[CLM-142] holds for every dataset, so it must not hide behind this one's
+    [CLM-150] (label 0 needs 450 of cluster 0's 400 points), or under
+    target_metric behind a search over levels."""
+    with pytest.raises(ValueError) as excinfo:
+        generate_clm_labels(CLUSTERS, COORDS, base_custom_cfg(**overrides), seed=1)
+    assert getattr(excinfo.value, "code", None) == 142, str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "cfg, source",
+    [
+        (base_custom_cfg(competing_noise=[{"cluster": 1, "label": 1, "share": 0.5}]),
+         "assignment_matrix row 1"),
+        ({"num_classes": 4, "matching_mode": "single", "single_match": {"cluster": 0, "label": 3},
+          "competing_noise": [{"cluster": 0, "label": 3, "share": 0.5, "favors": "random"}]},
+         "single_match"),
+    ],
+    ids=["custom", "single"],
+)
+def test_noise_on_a_clusters_own_target_label_is_refused(cfg, source):
+    """[CLM-144]. Competing noise places another label in a cluster; on the
+    cluster's own target label, the entry's favors moved the target's points too."""
+    with pytest.raises(ValueError) as excinfo:
+        generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+    assert getattr(excinfo.value, "code", None) == 144, str(excinfo.value)
+    assert f"({source})" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "noise",
+    [
+        [{**_NOISE, "favors": "core"}, {"cluster": 0, "label": 2, "share": 0.3, "favors": "boundary"}],
+        [{**_NOISE, "favors": "core"}, {"cluster": 2, "label": 1, "share": 0.3, "favors": "boundary"}],
+    ],
+    ids=["two-labels-one-cluster", "one-label-two-clusters"],
+)
+def test_one_entry_per_label_and_cluster_is_accepted(noise):
+    """Another label in the same cluster, or the same label in another cluster:
+    each cluster is still named once per label."""
+    out = generate_clm_labels(CLUSTERS, COORDS, base_custom_cfg(competing_noise=noise), seed=1)
+    assert len(out) == N
+
+
+def test_target_labels_pick_their_points_before_competing_noise():
+    """The target is set by the matching, and noise is placed in what it leaves.
+    With both placed at the core of cluster 0 under profile step, label 0's 360
+    target points hold the 360 most central points and the noise's 20 the ring
+    after them. Noise used to pick first, and took the core."""
+    cfg = base_custom_cfg(
+        centroid_dependence={"enabled": True, "profile": "step", "favors": "core"},
+        competing_noise=[{"cluster": 0, "label": 1, "share": 0.5, "favors": "core"}],
+    )
+    out = generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1).to_numpy()
+    idx = np.where(CLUSTERS == 0)[0]
+    rank = np.argsort(np.argsort(np.linalg.norm(COORDS[idx] - COORDS[idx].mean(axis=0), axis=1)))
+    assert (out[idx][rank < 360] == 0).all(), "noise took points of cluster 0's core"
+    assert (out[idx][(rank >= 360) & (rank < 380)] == 1).all(), "noise is not the next ring"
 
 
 @pytest.mark.parametrize(
@@ -643,7 +752,7 @@ def test_a_profile_typo_is_refused_even_when_nothing_is_placed(overrides):
     ],
 )
 def test_values_of_the_right_type_or_unread_keys_still_run(overrides):
-    """The [CLM-134] checks refuse only what is read, and accept numpy scalars."""
+    """The [CLM-141] checks refuse only what is read, and accept numpy scalars."""
     out = generate_clm_labels(CLUSTERS, COORDS, base_custom_cfg(**overrides), seed=1)
     assert len(out) == N
 
@@ -934,8 +1043,8 @@ def test_150_under_a_target_names_the_search_level_not_a_recall_target(caplog):
 
 @pytest.mark.parametrize(
     "probe_seed,diverges",
-    [(None, False), (42, False), (7, True)],
-    ids=["default", "run-seed", "other-seed"],
+    [("absent", False), (None, False), (42, False), (7, True)],
+    ids=["default", "empty", "run-seed", "other-seed"],
 )
 def test_309_reports_only_a_probe_seed_divergence(probe_seed, diverges, caplog):
     """[CLM-309] used to fire on every delivered value outside tolerance, so each
@@ -943,12 +1052,15 @@ def test_309_reports_only_a_probe_seed_divergence(probe_seed, diverges, caplog):
 
     It now reports one thing: the delivered labeling is not the one the search
     scored at that alpha. That takes a target_metric.probe_seed other than the
-    run seed (42 here); left out, or set to the run seed, the search scores the
-    labeling it delivers. The missed config above: the label is delivered every
-    time, and only the divergent run delivers a value [CLM-306] did not quote.
+    run seed (42 here); left out, empty, or set to the run seed, the search scores
+    the labeling it delivers. The missed config above: the label is delivered
+    every time, and only the divergent run delivers a value [CLM-306] did not quote.
+
+    An empty probe_seed (`probe_seed:`, None) seeded each probe from fresh OS
+    entropy, so the search scored labelings on no stream the run could deliver.
     """
     tm: dict[str, Any] = {"type": "mcc", "value": 0.5}
-    if probe_seed is not None:
+    if probe_seed != "absent":
         tm["probe_seed"] = probe_seed
     cfg = equal_cfg(proportions=[0.97, 0.01, 0.01, 0.01], target_metric=tm)
     with caplog.at_level(logging.WARNING, logger="clmsynth"):

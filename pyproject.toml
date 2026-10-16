@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clmsynth"
-version = "0.7.3"
+version = "0.7.4"
 description = "Synthetic label generator with configurable cluster-label matching (CLM) against ground-truth clusters"
 readme = "README.md"
-requires-python = ">=3.12,<3.15"
+requires-python = ">=3.12,<3.16"
 license = "MIT"
 license-files = ["LICENSE.txt"]
 # Authorship (the method and the accompanying article) is shared; the program
@@ -26,6 +26,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 # Compatible ranges for installation as a package; requirements.txt keeps the
@@ -33,16 +34,19 @@ classifiers = [
 dependencies = [
     "numpy>=2.0",
     "pandas>=2.2",
-    "PyYAML>=6.0",
     "scipy>=1.11",
     "scikit-learn>=1.4",
     "matplotlib>=3.8",
-    "seaborn>=0.13",
 ]
 
 [project.optional-dependencies]
+# A config file other than .json is read and written with PyYAML.
+yaml = ["PyYAML>=6.0"]
 dev = ["pandas-stubs", "scipy-stubs", "ruff", "mypy", "bandit"]
-test = ["pytest>=8"]
+# PyYAML's 3.15 wheels are on their way to PyPI (yaml/pyyaml#951); until then a 3.15
+# install would need a C compiler, so there the tests that need it skip. Drop the
+# marker once the wheels are out.
+test = ["pytest>=8", "PyYAML>=6.0; python_version < '3.15'"]
 
 [project.urls]
 Homepage = "https://github.com/A-Gharibian/CLMSynth"
@@ -55,15 +59,15 @@ Paper = "https://doi.org/10.1016/j.softx.2026.103077"
 [project.scripts]
 clmsynth = "clmsynth.main:main"
 clmsynth-config = "clmsynth.generate_config:main"
-clmsynth-wizard = "clmsynth.config_wizard:main"
+clmsynth-wizard = "clmsynth._config_wizard:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 # A ready-to-run offline config, so a wheel carries something runnable without
-# a network fetch.
+# a network fetch or an optional dependency.
 [tool.setuptools.package-data]
-clmsynth = ["test_data_config_offline.yaml"]
+clmsynth = ["test_data_config_offline.json"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
@@ -116,20 +120,22 @@ ignore = [
 ]
 
 [tool.ruff.lint.flake8-tidy-imports]
-banned-module-level-imports = ["matplotlib", "seaborn", "clmsynth.visualization"]
+banned-module-level-imports = ["matplotlib", "clmsynth._visualization", "yaml"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 # The wizard is deletable: nothing in the package may import it.
-"clmsynth.config_wizard".msg = "core must not import the wizard; it is deletable"
+"clmsynth._config_wizard".msg = "core must not import the wizard; it is deletable"
 # Every generator owns a seeded np.random.default_rng; the stdlib module draws
 # from one process-global stream.
 "random".msg = "use a seeded np.random.default_rng, not the stdlib global RNG"
 
 [tool.ruff.lint.per-file-ignores]
 # The module that renders is the one place plotting is imported at top level.
-"src/clmsynth/visualization.py" = ["TID253"]
+"src/clmsynth/_visualization.py" = ["TID253"]
 # Tests import the wizard and the plotter directly, on purpose.
 "tests/**" = ["TID251", "TID253"]
+# Repository tools, not shipped: they read YAML at the top.
+"tools/**" = ["TID253"]
 
 [tool.mypy]
 # Python 3.11 was dropped at 0.7.0: numpy and scipy now
@@ -150,11 +156,11 @@ strict_equality = true
 # input below is supplied by the user.
 #
 #   B101  Two asserts in clm_label_engine guard internal allocation invariants
-#         that no configuration can reach, and one in config_wizard guards the
+#         that no configuration can reach, and one in _config_wizard guards the
 #         question schema's own shape; they are programmer errors, not user
 #         input validation, which is what the [CLM-###] codes are for. Their
 #         disappearance under -O is acceptable exactly because nothing user-facing depends on them.
-#   B404  config_wizard imports subprocess to launch the run the user just
+#   B404  _config_wizard imports subprocess to launch the run the user just
 #         finished configuring, at their explicit prompt.
 #   B603  That same call. The argument vector is built from sys.executable and
 #         a config path the wizard itself wrote; no shell, no user string

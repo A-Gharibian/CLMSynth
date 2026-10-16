@@ -1,76 +1,42 @@
-# CLMSynth Roadmap
+  # CLMSynth Roadmap
 
-[![Version](https://img.shields.io/badge/version-0.7.3-blue)](https://github.com/A-Gharibian/CLMSynth/releases)
+[![Version](https://img.shields.io/badge/version-0.7.4-blue)](https://github.com/A-Gharibian/CLMSynth/releases)
 
-Planned work from 0.7.4 to 0.9.0. Current behavior is in **`../README.md`**.
+Planned work from 0.7.5 to 0.9.0. Current behavior is in **`../README.md`**.
 Past changes are in **`../CHANGELOG.md`**.
 
 ## Conventions
 
-Every version below ships code. A patch release (`0.0.x`) fixes specified behavior.
+A patch release (`0.0.x`) fixes specified behavior.
 A minor release (`0.x.0`) ships a new capability.
-
-`[CLM-###]` codes are never renumbered or reused. A new code makes a release
-minor, except for a fix.
+A major release always uploads validation tests to the Zenodo repository.
+`[CLM-###]` codes are never renumbered or reused.
 
 ---
 
-## 0.7.4
+## 0.7.5 Release version
 
-### Parallel-safe batch execution and performance release
-
-Starts with CLM_catalog_gen.py, then clm_label_engine with correct behavior of 
-cli_logging, fabricated generator is outside the scope of this project and is
-maintained separately now. Visualisation can trigger errors on batch.
+Will be released to PyPI. Harmonised questions, diagnostics, tests and manual.
 
 ### Will be Fixed
 
 - **The search grid misses a narrow feasible band.** Widen the bracket beyond the
   grid points. *[issue]*
 
-- **Integer label counts must sum to `N`.** The `[CLM-106]` tolerance can make the
-  rounding remainder negative. Large datasets then get too many labels. *[issue]*
+- **Integer label counts must sum to `N`.** The `[CLM-106]` tolerance lets explicit
+  `proportions` sum to within 1e-6 of 1. Above about a million points, the counts
+  then sum to more than `N`, or to less: 80 too many at 100 million points for a sum
+  of 1.0000008, 7 too few for 0.9999999. *[issue]*
 
-- **Duplicate `competing_noise` entries.** Duplicates sum their counts but keep the
-  last `favors`. *[issue]*
-
-- **Logging is a shared sink with several workers.** Worker records interleave and
-  cannot be attributed. Messages do not always name their dataset. Per-run log
-  files or a run id: still open. *[preventive]*
-
-- **A dataset written with some of its labels is reported as unlabelled.** With
-  `n_labels` above 1, a later label can be infeasible after an earlier one was
-  written. The end-of-run warning then says the CSV holds no label. *[issue]*
-
-- **`plot_feature_scatter` is not thread-safe.**
+- **The `clustbench` registries disagree.** `SOURCE_METADATA` and
+  `CLUSTBENCH_DATASETS` list different batteries. `batteries: all` uses the larger
+  one. *[improvement]*
 
 ### Will be Added
 
-- **A documented batch entry point.** Extend `03_isolation` to cover it. *[feature]*
+- **Plots drawn after the batch.** Workers write the CSVs with plots off, and the
+  plots are drawn from the run folder afterwards, or not at all. *[feature]*
 
-- **An end-of-run summary in the pipeline.** When a run does not finish every
-  dataset, one warning says how many finished with all their labels, how many were
-  written short of them, and how many were skipped. Counted from the labels actually
-  written. The engine and the exit codes are unchanged. *[feature]*
-
-### Performance
-
-- **The catalog generator runs its subprocesses serially.** Each case has its own
-  folder, so pooling is safe. *[improvement]*
-
-### Scope note
-
-Python 3.15 lazy imports may make some fixes unnecessary.
-
-## 0.7.5 Release version
-
-Will be released to PyPI.
-
-### Will be Added
-
-- **Python 3.15** *[support]*
-- **Parallel run on cluster** *[support]*
-- **A Sphinx site.** *[feature]*
 - **The size ceiling acted on, not just reported.** Refuse or warn before searching
   past the size ceiling. *[feature]*
 
@@ -78,25 +44,33 @@ Will be released to PyPI.
 
 ## 0.7.6 and 0.7.7
 
-**Source and generator extensions.** Data-source work, not engine work. Clusters stay
-fixed, read-only input to the engine.
+**Source and generator extensions.** Data-source work, plus one engine hook that reads
+features. Clusters stay fixed, read-only input to the engine.
 
 ### Will be Added
 
 - **Repliclust.** It generates clusters from prompts. *[feature]*
 
-### Will be Fixed
+- **Noise dimensions from `mdcgen`.** New presets set mdcgenpy's `n_noise`. The
+  listed columns become uniform noise for every point, or for chosen clusters only.
+  mdcgenpy validates `add_noise` but never applies it, so it is not used. The output
+  records, per feature, whether it carries cluster structure. `clustbench` and `byoc`
+  report it as unknown. *[feature]*
 
-- **The `clustbench` registries disagree.** `SOURCE_METADATA` and
-  `CLUSTBENCH_DATASETS` list different batteries. `batteries: all` uses the larger
-  one. *[improvement]*
+- **Labels that follow a feature.** `centroid_dependence` scores points by their
+  distance to the cluster center. A chosen feature column or a projection can supply
+  the score instead. With `profile: step`, a label then takes one side of a threshold
+  on that feature within each cluster. The label count sets the threshold, so it
+  differs per cluster. The output also records, per feature, whether it carries label
+  structure. A feature with neither role is noise. Roles are recorded after labeling,
+  since a noise column used as the score carries label structure. A projection reports
+  its weights. *[feature]*
 
 ## 0.7.8 and 0.7.9
 
-**Python 3.15 support**
+- **A Sphinx site.** *[feature]*
 
-- `requires-python` becomes `>=3.12,<3.16`. Add the 3.15 classifier and CI
-  interpreter. Ships once Python 3.15 is released and tested. *[feature]*
+**Dependency pins**
 
 - Relax exact pins to `>=` in `requirements.txt` and
   `environment.yml`. conda-forge discourages exact version pins. *[improvement]*
@@ -104,7 +78,8 @@ fixed, read-only input to the engine.
 ---
 
 # 0.8.0
-## 22 November 2026
+
+Will be submitted to the conda-forge review queue on 22 November 2026.
 
 ### Distribution
 
@@ -124,7 +99,7 @@ fixed, read-only input to the engine.
 # 0.9.0 series
 
 Community feedback, issues and cross-platform compatibility. Pipeline integration
-and a CLMSynth GUI are planned.
+and a CLMSynth GUI are planned, which will use compiled C binaries for real-time resndering.
 
 ## Unplanned
 
@@ -141,6 +116,6 @@ and a CLMSynth GUI are planned.
 - **Label opt-out from spillover.** `scope: pair` resizes the target label and pins
   its recall. *[feature]*
 
-- **NCA as a `target_metric` type.** clustbench scores with NCA by default. NCA is
+- **NCA and AAA as a `target_metric` type.** clustbench scores with NCA by default. NCA is
   asymmetric and has no known closed form. It needs a `_METRIC_FUNCS` entry and a
   global solve. *[feature]*

@@ -1,11 +1,15 @@
-$ python -m clmsynth.main Warnings_3xx/CLM-309.yaml
+$ python -m clmsynth.main Warnings_3xx/CLM-309.yaml --no-viz
 # exit code: 0
 
 INFO - Starting Test Data Orchestrator...
 INFO - Output directory: '{catalog}/_scratch/CLM-309'.
+INFO - Run {run} from config '{catalog}/Warnings_3xx/CLM-309.yaml'.
+INFO - Plot rendering is off: png/ stays empty and matplotlib is never imported.
 INFO - Available 'fabricated_data' dataset batteries:
-INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
+INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels. No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
 INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
+INFO - Saved resolved config: _scratch/CLM-309/{run}/info/{run}.yaml
+INFO - Dataset 1 of 1: fabricated/baseline_4class
 INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed=42)...
 INFO - Generating synthetic data (Seed: 42)...
 INFO - Applying perfect separation ground truth to categorical labels...
@@ -17,10 +21,6 @@ INFO - target_metric: final achieved mcc=0.4750 (target was 0.5, alpha=0.4818).
 INFO - target_metric: highest mcc the search found is 1.0000 (alpha=1.0000); size ceiling 1.0000, which no labeling with these label counts exceeds.
 WARNING - [CLM-309] target_metric: the DELIVERED labeling achieves mcc=0.4750, outside the requested 0.5 +/- 0.01, but the search scored mcc=0.5000 at the same alpha=0.4818. The labeling the search scored is not the one written: the search ran on target_metric.probe_seed and the final generation on the run seed, and the two streams place the points differently. Omit probe_seed to have the search score the labeling it delivers. Treat the achieved value above as authoritative, not the requested one.
 INFO - [fabricated_data/fabricated/baseline_4class] Attached generated label 'Label_0'.
-INFO - Saved: _scratch/CLM-309/{run}/csv/fabricated_data__fabricated__baseline_4class.csv
-INFO - Saved summary: _scratch/CLM-309/{run}/txt/fabricated_data__fabricated__baseline_4class.txt
-INFO - Generating scatter plot for Feature_1 vs Feature_2...
-INFO - Plot saved successfully to: '_scratch/CLM-309/{run}/png/fabricated_data__fabricated__baseline_4class__Cluster_0.png'
-INFO - Generating scatter plot for Feature_1 vs Feature_2...
-INFO - Plot saved successfully to: '_scratch/CLM-309/{run}/png/fabricated_data__fabricated__baseline_4class__Label_0.png'
+INFO - Saved: _scratch/CLM-309/{run}/csv/fabricated_data-fabricated-baseline_4class.csv
+INFO - Saved summary: _scratch/CLM-309/{run}/info/fabricated_data-fabricated-baseline_4class.txt
 INFO - Pipeline ready. 1 dataset(s) processed. Output folder: '_scratch/CLM-309/{run}'.

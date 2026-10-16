@@ -1,6 +1,6 @@
 # Test modules
 
-[![Version](https://img.shields.io/badge/version-0.7.3-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
+[![Version](https://img.shields.io/badge/version-0.7.4-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
 <!-- 
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/{owner}/{repo}/badge)](https://scorecard.dev/viewer/?uri=github.com/{owner}/{repo})
 -->
@@ -20,12 +20,13 @@ Running in under a minute.
 | `test_05_config_safety` | the program's own defenses against a configuration it did not author                        |
 | `test_06_diagnostics`   | the `[CLM-###]` registry safety net, driven by the catalog                                  |
 | `test_07_text_wizard`   | the wizard's schema agrees with the engine; its target floor is wizard-only                 |
+| `test_08_resolved_config` | the run folder's config is what the run read; running it again repeats the run          |
 
 The suite needs no network and no optional dependency: `clustbench` fetches
   are patched, and every case runs against the offline `fabricated_data` source
-  or against the engine directly. `pytest` is a development dependency declared
-  as the `test` extra, not a runtime one, and the suite is not shipped in the
-  sdist. Install the package with the test extra and run the suite:
+  or against the engine directly. `pytest` and PyYAML are development
+  dependencies declared as the `test` extra, not runtime ones, and the suite is
+  not shipped in the sdist. Install the package with the test extra and run the suite:
 
 ```bash
 pip install -e ".[test]"
@@ -66,7 +67,8 @@ All three should report nothing. Where a finding was traced and
 deliberately exempted, the exemption is recorded with its reason next to the
 rule it exempts, in `[tool.ruff.lint]` and `[tool.bandit]` in `pyproject.toml`.
 
-CI runs the suite on Python 3.12–3.14, the static analysis above, and a
+CI runs the suite on Python 3.12–3.15 (on 3.15 without PyYAML, so the tests
+that need it skip), the static analysis above, and a
 packaging job that builds the distributions. The suite itself checks that both
 shipped manuals declare the current package version (`test_06_diagnostics`).
 
@@ -89,7 +91,7 @@ the other modules to centralize them.
 behavior on purpose, so that fixing the defect turns it red and the red is the
 prompt to invert the assertion. None does today: the last one, which pinned that
 `proportions` given as a mapping got no coded diagnostic, went red when 0.7.2
-refused it with `[CLM-134]`, and was replaced by
+refused it with `[CLM-134]`, now `[CLM-141]`, and was replaced by
 `test_01_logic::test_proportions_given_as_a_mapping_are_refused`.
 
 **What CI deliberately does not run.** Four stay out of the gate
@@ -107,4 +109,4 @@ and out of the tests folder:
   be reproduced directly:
 
       cd docs/troubleshooting_catalog
-      python -m clmsynth.main ValueError_1xx/CLM-150.yaml
+      python -m clmsynth.main InfeasibleAllocation_15x/CLM-150.yaml --no-viz

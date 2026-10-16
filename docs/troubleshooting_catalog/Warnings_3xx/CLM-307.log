@@ -1,11 +1,15 @@
-$ python -m clmsynth.main Warnings_3xx/CLM-307.yaml
+$ python -m clmsynth.main Warnings_3xx/CLM-307.yaml --no-viz
 # exit code: 0
 
 INFO - Starting Test Data Orchestrator...
 INFO - Output directory: '{catalog}/_scratch/CLM-307'.
+INFO - Run {run} from config '{catalog}/Warnings_3xx/CLM-307.yaml'.
+INFO - Plot rendering is off: png/ stays empty and matplotlib is never imported.
 INFO - Available 'fabricated_data' dataset batteries:
-INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels (fabricated_generator.py). No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
+INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels. No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
 INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
+INFO - Saved resolved config: _scratch/CLM-307/{run}/info/{run}.yaml
+INFO - Dataset 1 of 1: fabricated/baseline_4class
 INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed=42)...
 INFO - Generating synthetic data (Seed: 42)...
 INFO - Applying perfect separation ground truth to categorical labels...
@@ -17,10 +21,6 @@ INFO - CLM labels generated. Target counts: [1, 267, 266, 266], achieved: [1, 26
 INFO - target_metric: final achieved pair mcc=0.0613 (target was 0.01, pair cluster=0/label=0).
 WARNING - [CLM-310] target_metric scope 'pair': the DELIVERED labeling achieves pair mcc=0.0613, outside the requested 0.01 +/- 0.01. The closed-form construction assumes every point of label 0 lies inside cluster 0, but 0 of its 1 points lie outside. Treat the achieved value above as authoritative, not the requested one.
 INFO - [fabricated_data/fabricated/baseline_4class] Attached generated label 'Label_0'.
-INFO - Saved: _scratch/CLM-307/{run}/csv/fabricated_data__fabricated__baseline_4class.csv
-INFO - Saved summary: _scratch/CLM-307/{run}/txt/fabricated_data__fabricated__baseline_4class.txt
-INFO - Generating scatter plot for Feature_1 vs Feature_2...
-INFO - Plot saved successfully to: '_scratch/CLM-307/{run}/png/fabricated_data__fabricated__baseline_4class__Cluster_0.png'
-INFO - Generating scatter plot for Feature_1 vs Feature_2...
-INFO - Plot saved successfully to: '_scratch/CLM-307/{run}/png/fabricated_data__fabricated__baseline_4class__Label_0.png'
+INFO - Saved: _scratch/CLM-307/{run}/csv/fabricated_data-fabricated-baseline_4class.csv
+INFO - Saved summary: _scratch/CLM-307/{run}/info/fabricated_data-fabricated-baseline_4class.txt
 INFO - Pipeline ready. 1 dataset(s) processed. Output folder: '_scratch/CLM-307/{run}'.

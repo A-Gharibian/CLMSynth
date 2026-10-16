@@ -3,7 +3,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/clmsynth)](https://pypi.org/project/clmsynth/)
 [![Release](https://img.shields.io/github/v/release/A-Gharibian/CLMSynth?include_prereleases&sort=semver)](https://github.com/A-Gharibian/CLMSynth/releases)
-[![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue)](https://github.com/A-Gharibian/CLMSynth/blob/main/pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14%20%7C%203.15-blue)](https://github.com/A-Gharibian/CLMSynth/blob/main/pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](https://github.com/A-Gharibian/CLMSynth/blob/main/LICENSE.txt)
 [![CI](https://img.shields.io/github/actions/workflow/status/A-Gharibian/CLMSynth/ci.yml?branch=main&label=CI)](https://github.com/A-Gharibian/CLMSynth/actions/workflows/ci.yml)
 [![Cite](https://img.shields.io/badge/cite-CITATION.cff-blueviolet)](https://github.com/A-Gharibian/CLMSynth/blob/main/CITATION.cff)
@@ -22,11 +22,14 @@ labels whose relationship to those clusters is characterized by user-defined con
 Requires Python 3.12 or newer.
 
 ```bash
-pip install clmsynth
+pip install "clmsynth[yaml]"
 ```
 
-This pulls the dependencies (compatible version ranges) and installs the console
-scripts `clmsynth`, `clmsynth-config`, and `clmsynth-wizard`.
+This installs the console
+scripts `clmsynth`, `clmsynth-config`, and `clmsynth-wizard`. The `yaml` extra adds
+PyYAML, which reads and writes config files other than `.json`; the wizard and
+`clmsynth-config` need it. `pip install clmsynth` alone runs the engine,
+`run_pipeline`, and `.json` configs.
 
 **Start with the wizard.** `clmsynth-wizard` asks a question per setting and
 writes a runnable config, which is the entry point that needs no files from the
@@ -66,7 +69,7 @@ pip install git+https://github.com/CN-TU/mdcgenpy    # only needed for data_sour
 ## Use directly 
 
 **CLMSynth** integrates with both downstream and upstream Python pipelines,
-and can run without a config or YAML file (`load_config` is the only thing that reads YAML).
+and can run without a config file (`load_config` is the only thing that reads one).
 For example, you can run: `your algorithm → CLMSynth → measure → tune the
 algorithm`; The engine is one pure function of two arrays, a dictionary, and a seed.
 The dictionary below (from the `clm_label` documented in the manual) runs directly:
@@ -102,8 +105,10 @@ local array can be built without going through the datasource route.
 ### Diagnostics
 Every error and warning the engine raises carries a `[CLM-###]` code
 (`1xx` config `ValueError`, `15x` `InfeasibleAllocationError`, `2xx` `KeyError`, and `3xx` Warnings),
-defined once in `clm_errors.py`. The full catalog is available in the CLMSynth
-User Manual under the *Configuration Troubleshooting Reference* section.
+defined in `clm_errors.py`. The full catalog is available in the CLMSynth
+User Manual under the *Configuration Troubleshooting Reference* section. Each code
+has a reproducible case in `docs/troubleshooting_catalog/`, a YAML config and the
+log it produced; running and reproducing  the catalogue needs the `yaml` extra.
 
 An invalid configuration 1xx error aborts the whole run for every dataset except:
 [CLM-102/105/119/125/127/133], which are raised against each dataset's own cluster count,
@@ -128,12 +133,10 @@ For troubleshooting the warnings and exceptions, refer to the troubleshooting se
 
 ## Quick start
 
-**The wizard:** run `python -m clmsynth.config_wizard`. It asks a question for every setting,
-writes the config YAML,
+**The wizard:** run `clmsynth-wizard`. It asks a question for every setting,
+writes the config as YAML or JSON,
 and can run the pipeline. Works for every source, including user-provided (`byoc`) data.
-No YAML editing required.
-CLMSynth is fully functional from a config file
-alone; the wizard helps to *create* one.
+CLMSynth is fully functional from a config file; the wizard helps to *create* one.
 
 1. How to generate a config (edit `upstream_payload.yaml`, or pass your own file). The
    shipped payload labels `fcps/hepta` [[4]](#references) from `clustbench`: 212 points
@@ -141,6 +144,7 @@ alone; the wizard helps to *create* one.
    ```bash
    python -m clmsynth.generate_config                    # reads upstream_payload.yaml, writes test_data_config.yaml
    python -m clmsynth.generate_config my_payload.yaml    # or an explicit payload (and optionally an output path)
+   python -m clmsynth.generate_config my_payload.yaml my_config.json   # a .json output path writes JSON
    ```
 
 2. Run the pipeline:
@@ -148,27 +152,44 @@ alone; the wizard helps to *create* one.
    python -m clmsynth.main                   # reads test_data_config.yaml
    python -m clmsynth.main my_config.yaml    # or an explicit config path
    python -m clmsynth.main my_config.yaml --no-viz   # skip the plots; matplotlib is never imported
+   python -m clmsynth.main my_config.yaml --keep-failed   # keep a failed run's config and log
+   python -m clmsynth.main a.json b.json c.yaml --jobs 2  # a batch: each config in its own process
    ```
+   In a batch every config is a run of its own:
+   `--jobs` (default 1) sets how many run at once. Above 1, each run gets `OMP_NUM_THREADS`,
+   `OPENBLAS_NUM_THREADS` and `MKL_NUM_THREADS` of 1 unless you set them, so the runs do not each start a thread
+   per core.
 
 ## Output
 
 Each run creates a folder:
 
 ```
-OUTPUT/{DDMMYY}_{Source}_{HHMMSS}/
-├── {config}.yaml                              # config used
-├── csv/{source}__{battery}__{dataset}.csv     # features + Cluster_n + Label_n
-├── png/{source}__{battery}__{dataset}__Cluster_0.png
-├── png/{source}__{battery}__{dataset}__Label_0.png   # one per generated label
-└── txt/{source}__{battery}__{dataset}.txt     # seeds + config + MCC/ARI (as shown on plots);
-                                               #   under scope: pair, the reachable pair MCC;
-                                               #   under a target, what the engine reported
+OUTPUT/{YYYYMMDD}_{HHMMSS}_{Source}/
+├── info/
+│   ├── {YYYYMMDD}_{HHMMSS}_{Source}.yaml    # the config as the run read it, .json for a
+│   │                                        #   .json config: defaults filled in, seeds
+│   │                                        #   and datasets as they ran
+│   ├── {YYYYMMDD}_{HHMMSS}_{Source}.log     # the run's log
+│   └── {source}-{battery}-{dataset}.txt     # seeds + config + MCC/ARI (as shown on plots);
+│                                            #   under scope: pair, the reachable pair MCC;
+│                                            #   under a target, what the engine reported
+├── csv/{source}-{battery}-{dataset}.csv     # features + Cluster_n + Label_n
+├── png/{source}-{battery}-{dataset}-Cluster_0.png
+└── png/{source}-{battery}-{dataset}-Label_0.png   # one per generated label
 ```
 
-- `{Source}` is the human-facing generator name: `clustbench` → **Gagolewski's framework**,
-  `mdcgen` → **MDCGen**, `fabricated_data` → **Fabricated**, `byoc` → Bring Your Own Clusters.
-- The base folder is `global_settings.output_dir` (default `OUTPUT`); a numeric
-  suffix is appended.
+- `{Source}` is the display name: `clustbench` → **Clustbench**, `mdcgen` → **MDCGen**,
+  `fabricated_data` → **Fabricated**, `byoc` → **BYOC**, Bring Your Own Clusters.
+- The base folder is `global_settings.output_dir` (default `OUTPUT`).
+- A run that fails before writing a dataset removes its folder. `--keep-failed`
+  keeps it, with the config and the log of why it failed.
+- **Exit status:** 0 success, 1 the config could not be loaded or no dataset was
+  written, 2 a configuration or command-line error, 130 interrupted (Ctrl-C or
+  SIGINT), 143 terminated (SIGTERM). Any other
+  status comes from the shell, the scheduler or a wrapper such as `timeout` or
+  `xargs`; a `[CLM-nnn]` code with the same number is unrelated. A batch exits
+  with the highest status of its configs.
 - **Column naming:** ground-truth class labeling such as `Cluster_0`, `Cluster_1`, …
   (by position, `source_labeling: labels0` surfaces as `Cluster_0`); generated
   labels become `Label_0`, `Label_1`, … (0-indexed, one per `n_labels`).
@@ -276,7 +297,7 @@ applied after it.
 > check one label's precision and recall (rather than its specificity). If you are
 > only interested in a single target label and cluster, prefer
 > `matching_mode: single` with `scope: pair` over a custom distribution coupled
-> with a binary MCC solver [[3]](#references). 
+> with a binary MCC solver [[3]](#References). 
 
 ## Known limitations
 
@@ -318,8 +339,8 @@ It tries to place label `l*`'s full budget `m_{l*}` inside cluster `k*`, so with
 If you use this software as a benchmark, you can export the citation file from the
 project information panel and cite the software itself. Sharing the results in Zenodo
 and linking it to the software repository there is encouraged, so that results from
-different studies can be compared. The software has been published in SoftwareX; however,
-cite the paper only if you directly discuss cluster-label matching, target-metric solution,
+different studies can be compared. The software description has been published in SoftwareX [[5]](#References); 
+cite the [paper](https://doi.org/10.1016/j.softx.2026.103077) only if you discuss CLM, target-metric solution,
 or general benchmarking solution in clustering and classification, and CLMSynth is relevant
 to your discussion.
 
@@ -336,3 +357,5 @@ to your discussion.
 4. Thrun, M. C., & Ultsch, A. (2020). Clustering benchmark datasets exploiting the
    fundamental clustering problems. *Data in Brief*, 30, 105501.
    <https://doi.org/10.1016/j.dib.2020.105501>
+5. Gharibian, A., Kudělka, M. (2026). A synthetic data generator for cluster and label matching evaluation,
+SoftwareX, Volume 36, 103077. <https://doi.org/10.1016/j.softx.2026.103077>

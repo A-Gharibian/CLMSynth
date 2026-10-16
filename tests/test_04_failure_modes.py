@@ -15,39 +15,44 @@ What is checked:
                        line) and does NOT count as a dataset failure, since
                        the CSV is the deliverable and plotting is best-effort
                        (finding N3)
-  error boundary       a failure inside `plt.subplots()` returns False like
+  error boundary       a failure creating the figure returns False like
                        every other plotting failure (finding N4, closed in
                        0.6.9)
+  threads              a saved plot does not go through pyplot, so plots
+                       rendered from worker threads match sequential ones
   interactive branch   omitting `output_path` shows and keeps the figure
   exit codes           a missing or malformed config exits 1, distinct from
                        exit 2 for a coded config error and 0 for success; so
                        does an output_dir blocked by a file, which used to
-                       hang on Windows
+                       hang on Windows; SIGTERM exits 143
   network timeout      `CLUSTBENCH_TIMEOUT` is passed to `urlopen`
 
 """
 
 import errno
+import json
 import logging
 import re
+import signal
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
+import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
-import yaml
 
+import clmsynth._visualization
 import clmsynth.main
-import clmsynth.visualization
 from clmsynth import dataset_sources
+from clmsynth._visualization import plot_feature_scatter
 from clmsynth.label_context import DatasetContext
 from clmsynth.label_generator import generate_additional_labels
 from clmsynth.main import load_config, resolved_for_report, run_pipeline
-from clmsynth.visualization import plot_feature_scatter
 
 # The Agg backend is selected in conftest, before this module is imported, so a
 # headless runner cannot fail for display reasons. This module renders for real
@@ -146,7 +151,7 @@ def test_infeasible_allocation_skips_only_the_labelling(tmp_path, monkeypatch):
     the *labeling* is skipped. The dataset is still written, still counted in
     `n_ok`, and its CSV simply has no `Label_0` column.
     """
-    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -166,12 +171,12 @@ def test_infeasible_allocation_skips_only_the_labelling(tmp_path, monkeypatch):
     assert n_ok == 3
 
     written = {p.name: list(pd.read_csv(p).columns) for p in csv_dir.glob("*.csv")}
-    assert "byoc__local__good_c.csv" in written, (
+    assert "byoc-local-good_c.csv" in written, (
         "the dataset AFTER the failure was not written: the batch aborted"
     )
-    assert "Label_0" in written["byoc__local__good_a.csv"]
-    assert "Label_0" in written["byoc__local__good_c.csv"]
-    assert "Label_0" not in written["byoc__local__poison_b.csv"], (
+    assert "Label_0" in written["byoc-local-good_a.csv"]
+    assert "Label_0" in written["byoc-local-good_c.csv"]
+    assert "Label_0" not in written["byoc-local-poison_b.csv"], (
         "the dataset whose labelling failed got a label anyway"
     )
 
@@ -222,7 +227,7 @@ def test_a_target_no_level_fits_leaves_out_only_that_datasets_label(
     `blocked`'s label: it is still written and counted, without `Label_0`, and
     `fits`, after it in iteration order, gets its label.
     """
-    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -240,8 +245,8 @@ def test_a_target_no_level_fits_leaves_out_only_that_datasets_label(
 
     assert n_ok == 2, "both datasets are written, so both are processed"
     written = {p.name: list(pd.read_csv(p).columns) for p in csv_dir.glob("*.csv")}
-    assert "Label_0" not in written["byoc__local__blocked.csv"], written
-    assert "Label_0" in written["byoc__local__fits.csv"], written
+    assert "Label_0" not in written["byoc-local-blocked.csv"], written
+    assert "Label_0" in written["byoc-local-fits.csv"], written
     assert "Skipping label generation for local/blocked: [CLM-120]" in caplog.text, caplog.text
     assert "aborting run" not in caplog.text, caplog.text
 
@@ -257,7 +262,7 @@ def test_over_claiming_noise_without_a_target_leaves_out_only_the_label(
     rule leaves 10 of cluster 0's 50 points unclaimed and the entries claim 9
     each. The dataset is written and counted, without `Label_0`.
     """
-    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -272,7 +277,7 @@ def test_over_claiming_noise_without_a_target_leaves_out_only_the_label(
         n_ok = run_pipeline("byoc", config, csv_dir, png_dir, txt_dir)
 
     assert n_ok == 1
-    columns = list(pd.read_csv(csv_dir / "byoc__local__over_claimed.csv").columns)
+    columns = list(pd.read_csv(csv_dir / "byoc-local-over_claimed.csv").columns)
     assert "Label_0" not in columns, columns
     assert "Skipping label generation for local/over_claimed: [CLM-152]" in caplog.text, (
         caplog.text
@@ -286,7 +291,7 @@ def test_byoc_id_mismatch_is_refused_before_any_output(tmp_path, monkeypatch, ca
     against *each dataset's own* cluster ids, and under `byoc` every CSV brings
     its own.
     """
-    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -390,7 +395,7 @@ def test_path_shaped_dataset_names_are_refused(tmp_path, monkeypatch, caplog, na
     against a known list and cannot carry one of these; byoc trusts the config
     verbatim, which is the only route in.
     """
-    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -408,7 +413,7 @@ def test_path_shaped_dataset_names_are_refused(tmp_path, monkeypatch, caplog, na
     assert n_ok == 1, "the well-named dataset should still be processed"
     assert "is not a plain name" in caplog.text
     written = {p.name for p in csv_dir.rglob("*.csv")}
-    assert written == {"byoc__local__good.csv"}, f"unexpected output: {written}"
+    assert written == {"byoc-local-good.csv"}, f"unexpected output: {written}"
     # Nothing escaped the run folders, which is the property that matters.
     assert not list(tmp_path.parent.glob("*escape*"))
     assert not list(tmp_path.glob("*escape*"))
@@ -430,7 +435,7 @@ def test_non_byoc_id_mismatch_skips_only_that_dataset(tmp_path, monkeypatch):
     out only that dataset's label. `[CLM-104]` is not, its bound is num_classes,
     which no dataset can change.
     """
-    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
     for d in (csv_dir, png_dir, txt_dir):
@@ -462,7 +467,7 @@ def test_non_byoc_id_mismatch_skips_only_that_dataset(tmp_path, monkeypatch):
     n_ok = run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir)
     assert n_ok == 1, "the batch did not continue past the mismatched dataset"
     assert {p.name for p in csv_dir.glob("*.csv")} == {
-        "fabricated_data__fabricated__baseline_4class.csv"
+        "fabricated_data-fabricated-baseline_4class.csv"
     }
 
 
@@ -475,7 +480,7 @@ def test_datasets_written_without_a_label_are_reported_separately(tmp_path, monk
     never invisible; the summary simply contradicted it, and the summary is what
     a script reads.
     """
-    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -495,9 +500,42 @@ def test_datasets_written_without_a_label_are_reported_separately(tmp_path, monk
         )
 
     assert n_ok == 2, "both datasets are written, so both are still processed"
-    assert "1 of the 2 processed dataset(s) were written WITHOUT" in caplog.text, (
+    assert ("Of the 2 resolved dataset(s): 1 written with all labels, 1 written with not "
+            "all labels, 0 skipped") in caplog.text, (
         f"the unlabelled dataset was not reported. Captured:\n{caplog.text}"
     )
+
+
+def test_a_dataset_short_of_its_later_labels_is_not_reported_as_unlabelled(tmp_path, caplog):
+    """Each label has its own seed, so a later label can fail where the first fitted.
+
+    Label 0 must sit entirely in cluster 0 (20 of 40 points), and its size is a
+    Dirichlet draw per label seed: seeds 2, 3 and 4 give it 15, 9 and 36 points.
+    `Label_0` and `Label_1` are written and `Label_2` raises [CLM-150]. The
+    summary used to say the CSV held features and ground-truth clusters only.
+    """
+    inputs = tmp_path / "input"
+    inputs.mkdir()
+    write_byoc_batch(inputs, [("three_labels", 20)])
+    config = infeasible_config(inputs, tmp_path, ["three_labels"])
+    config["label_generation"].update(n_labels=3, seed=2)
+    config["label_generation"]["clm_label"].update(
+        balance="unbalanced", skew_rule="dirichlet", skew_params={"alpha": 1.0})
+
+    csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
+    for d in (csv_dir, png_dir, txt_dir):
+        d.mkdir()
+
+    with caplog.at_level(logging.DEBUG, logger="clmsynth"):
+        n_ok = run_pipeline("byoc", config, csv_dir, png_dir, txt_dir, False)
+
+    assert n_ok == 1, "the dataset is written, so it is still processed"
+    columns = list(pd.read_csv(csv_dir / "byoc-local-three_labels.csv").columns)
+    assert columns[-2:] == ["Label_0", "Label_1"] and "Label_2" not in columns, columns
+    assert ("Skipping label generation for local/three_labels after 2 of 3 labels: "
+            "[CLM-150]") in caplog.text, caplog.text
+    assert ("Of the 1 resolved dataset(s): 0 written with all labels, 1 written with not "
+            "all labels, 0 skipped") in caplog.text, caplog.text
 
 
 def test_an_unexpected_error_names_its_type_and_the_skip_is_counted(tmp_path, monkeypatch, caplog):
@@ -507,7 +545,7 @@ def test_an_unexpected_error_names_its_type_and_the_skip_is_counted(tmp_path, mo
     names a word, not a failure. The end-of-run summary counts the skip, because
     `n_ok` alone cannot tell "1 of 1" from "1 of 2".
     """
-    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
     real_build_context = clmsynth.main.build_context
 
     def build_context(source, battery, dataset, df):
@@ -532,7 +570,8 @@ def test_an_unexpected_error_names_its_type_and_the_skip_is_counted(tmp_path, mo
 
     assert n_ok == 1, "the healthy dataset must still be processed"
     assert "Skipping local/broken: unexpected KeyError: 'cluster'" in caplog.text, caplog.text
-    assert "1 of the 2 resolved dataset(s) were skipped" in caplog.text, caplog.text
+    assert ("Of the 2 resolved dataset(s): 1 written with all labels, 0 written with not "
+            "all labels, 1 skipped") in caplog.text, caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -543,7 +582,7 @@ def test_an_unexpected_error_names_its_type_and_the_skip_is_counted(tmp_path, mo
 def test_plot_failure_returns_false_and_leaves_no_file(tmp_path, caplog):
     """Finding N3: a rendering failure must be distinguishable from success.
 
-    A column of Python lists is not plottable, so seaborn raises inside the
+    A column of Python lists is not plottable, so matplotlib raises inside the
     function. It previously caught that, logged one line, and returned `None` --
     the same value it returned on success, so no caller could tell the
     difference. It now returns a bool and tags the line `[PLOT-FAIL]`.
@@ -567,7 +606,7 @@ def test_plot_failure_does_not_reduce_the_processed_count(tmp_path, monkeypatch)
     Plotting is best-effort on top of it, so a plot that fails must be logged
     but must not turn a dataset that produced correct labels into a failure.
     """
-    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: False)
+    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: False)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -583,14 +622,14 @@ def test_plot_failure_does_not_reduce_the_processed_count(tmp_path, monkeypatch)
     n_ok = run_pipeline("byoc", byoc_config(inputs, tmp_path, ["solo"]), csv_dir, png_dir, txt_dir)
 
     assert n_ok == 1, "a failed plot was counted as a failed dataset"
-    assert (csv_dir / "byoc__local__solo.csv").is_file()
+    assert (csv_dir / "byoc-local-solo.csv").is_file()
 
 
 def test_figure_creation_failure_returns_false_like_every_other_failure(tmp_path):
     """Finding N4, closed in 0.6.9. Regression pin."""
     frame = pd.DataFrame({"x": [1, 2, 3], "y": [1, 2, 3], "hue": [0, 1, 0]})
     with mock.patch(
-        "clmsynth.visualization.plt.subplots",
+        "clmsynth._visualization.Figure",
         side_effect=RuntimeError("simulated figure-creation failure"),
     ):
         assert (
@@ -609,7 +648,7 @@ def test_figure_creation_failure_returns_false_like_every_other_failure(tmp_path
 def test_interactive_plot_shows_and_keeps_the_figure_open(monkeypatch):
     """Omitting output_path shows and keeps the figure open."""
     show = mock.MagicMock()
-    monkeypatch.setattr("clmsynth.visualization.plt.show", show)
+    monkeypatch.setattr("clmsynth._visualization.plt.show", show)
     frame = pd.DataFrame(
         {"x": [1.0, 2.0, 3.0, 4.0], "y": [1.0, 4.0, 2.0, 3.0], "hue": [0, 1, 0, 1]}
     )
@@ -628,25 +667,69 @@ def test_interactive_plot_shows_and_keeps_the_figure_open(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Saved plots and threads
+# ---------------------------------------------------------------------------
+
+
+def test_saved_plot_does_not_go_through_pyplot(monkeypatch, tmp_path):
+    """pyplot keeps one figure list per process and picks the backend, often a
+    GUI one that only works from the main thread; a saved plot uses neither."""
+    monkeypatch.setattr(clmsynth._visualization, "plt", None)
+    frame = pd.DataFrame({"x": [1.0, 2.0, 3.0], "y": [1.0, 3.0, 2.0], "hue": [0, 1, 0]})
+    saved = plot_feature_scatter(frame, "x", "y", hue_col="hue", info_text="info",
+                                 output_path=str(tmp_path / "x.png"))
+    assert saved, "a saved plot reached pyplot"
+
+
+def test_plots_from_worker_threads_match_sequential_ones(tmp_path):
+    """Four plots drawn at once from worker threads are pixel-identical to the same
+    four drawn one after another."""
+    rng = np.random.default_rng(0)
+    frame = pd.DataFrame({"x": rng.normal(size=200), "y": rng.normal(size=200),
+                          "hue": rng.integers(0, 5, size=200)})
+
+    def draw(folder: str, i: int) -> bool:
+        return plot_feature_scatter(frame, "x", "y", hue_col="hue", title=f"plot {i}",
+                                    info_text=f"info {i}",
+                                    output_path=str(tmp_path / folder / f"{i}.png"))
+
+    sequential = [draw("sequential", i) for i in range(4)]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        threaded = list(pool.map(lambda i: draw("threaded", i), range(4)))
+
+    assert all(sequential) and all(threaded), "a plot failed"
+    for i in range(4):
+        same = np.array_equal(mpimg.imread(tmp_path / "sequential" / f"{i}.png"),
+                              mpimg.imread(tmp_path / "threaded" / f"{i}.png"))
+        assert same, f"plot {i} drawn in a thread differs from the sequential one"
+
+
+# ---------------------------------------------------------------------------
 # Exit codes: the three outcomes must stay distinguishable
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "content",
-    [None, "", "just a string, not a mapping", "global_settings: [unclosed"],
-    ids=["missing-file", "empty-file", "not-a-mapping", "malformed-yaml"],
+    "name,content",
+    [("cfg.yaml", None), ("cfg.yaml", ""), ("cfg.yaml", "just a string, not a mapping"),
+     ("cfg.yaml", "global_settings: [unclosed"),
+     ("cfg.json", ""), ("cfg.json", '"just a string, not a mapping"'),
+     ("cfg.json", '{"global_settings": [unclosed')],
+    ids=["missing-file", "empty-file", "not-a-mapping", "malformed-yaml",
+         "empty-json", "json-not-a-mapping", "malformed-json"],
 )
-def test_unloadable_config_exits_one(tmp_path, content):
+def test_unloadable_config_exits_one(tmp_path, request, name, content):
     """Exit 1 is "ran but produced nothing", distinct from exit 2 for a coded
     config error and 0 for success.
 
-    An empty YAML file parses to `None` and a scalar document parses to a
-    string; both would surface much later as an unhelpful `AttributeError` on
+    An empty file parses to `None` and a scalar document parses to a string;
+    both would surface much later as an unhelpful `AttributeError` on
     `config.get(...)` without this check. A syntax error used to escape as a
     `yaml.YAMLError` traceback.
     """
-    path = tmp_path / "cfg.yaml"
+    if name.endswith(".yaml") and content is not None:
+        request.getfixturevalue("yaml")   # without PyYAML every .yaml exits 1 anyway
+    path = tmp_path / name
     if content is not None:
         path.write_text(content, encoding="utf-8")
 
@@ -659,15 +742,15 @@ def test_unloadable_config_exits_one(tmp_path, content):
 def test_a_global_settings_that_is_not_a_mapping_exits_one(value, tmp_path, monkeypatch, caplog):
     """It crashed on its first .get() with a traceback. It exits 1 like a config
     that cannot be loaded, naming the section, before anything is created."""
-    config_path = tmp_path / "cfg.yaml"
-    config_path.write_text(yaml.safe_dump({"global_settings": value}), encoding="utf-8")
+    config_path = tmp_path / "cfg.json"
+    config_path.write_text(json.dumps({"global_settings": value}), encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["clmsynth", str(config_path)])
     monkeypatch.chdir(tmp_path)
     with caplog.at_level(logging.CRITICAL, logger="clmsynth"), pytest.raises(SystemExit) as excinfo:
         clmsynth.main.main()
     assert excinfo.value.code == 1
     assert "'global_settings' must be a mapping" in caplog.text, caplog.text
-    assert [p.name for p in tmp_path.iterdir()] == ["cfg.yaml"], "the run created something"
+    assert [p.name for p in tmp_path.iterdir()] == ["cfg.json"], "the run created something"
 
 
 def test_unknown_data_source_processes_nothing_without_raising(tmp_path):
@@ -823,7 +906,7 @@ def test_the_plot_box_shows_only_what_the_label_was_made_with(
         boxes.append(kwargs.get("info_text"))
         return True
 
-    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", record)
+    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", record)
     config, csv_dir, png_dir, txt_dir = _fabricated_config(tmp_path, dict(_ONE_DATASET))
     config["label_generation"]["clm_label"] = clm_label
     assert run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir) == 1
@@ -960,7 +1043,7 @@ def test_the_three_exit_codes_stay_distinguishable(tmp_path, clm_label, expected
     hold label 0's budget, so labeling is skipped for every dataset and none
     is written.
     """
-    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -984,8 +1067,8 @@ def test_the_three_exit_codes_stay_distinguishable(tmp_path, clm_label, expected
             "clm_label": clm_label,
         },
     }
-    config_path = tmp_path / "cfg.yaml"
-    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    config_path = tmp_path / "cfg.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["clmsynth", str(config_path)])
 
     if expected_exit == 0:
@@ -1000,9 +1083,9 @@ def test_the_three_exit_codes_stay_distinguishable(tmp_path, clm_label, expected
 # ---------------------------------------------------------------------------
 # A run that produces nothing must leave nothing
 #
-# The run folder, its three subfolders and the config copy are all created
-# before `run_pipeline` is called, so a run that writes no dataset used to leave
-# the whole skeleton behind. Reported from the wizard's byoc path: a config
+# The run folder and its three subfolders are created before `run_pipeline` is
+# called, and the resolved config before its first dataset, so a run that writes
+# no dataset used to leave the whole skeleton behind. Reported from the wizard's byoc path: a config
 # naming an input folder with no CSV in it is a perfectly reasonable thing to
 # write (the wizard configures, it does not synthesise), but running it produced
 # a timestamped folder asserting that a run had happened.
@@ -1042,12 +1125,12 @@ def minimal_byoc_config(input_dir, output_dir, datasets, clm_label=None):
     }
 
 
-def run_main(tmp_path, monkeypatch, config):
+def run_main(tmp_path, monkeypatch, config, *flags):
     """Drive the CLI over `config` and return (exit code, surviving run folders)."""
-    monkeypatch.setattr(clmsynth.visualization, "plot_feature_scatter", lambda *a, **k: True)
-    config_path = tmp_path / "cfg.yaml"
-    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
-    monkeypatch.setattr(sys, "argv", ["clmsynth", str(config_path)])
+    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
+    config_path = tmp_path / "cfg.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["clmsynth", str(config_path), *flags])
 
     out = Path(config["global_settings"]["output_dir"])
     code: str | int | None = 0
@@ -1065,7 +1148,7 @@ def test_a_run_that_writes_nothing_leaves_no_run_folder(tmp_path, monkeypatch):
     processed and the run exits 1. What used to survive that was a timestamped
     folder containing an empty csv/, png/ and txt/ and a copy of the config --
     indistinguishable at a glance from a run that succeeded, and picked up by
-    anything globbing the output directory.
+    anything globbing the output directory. --keep-failed keeps it on request.
     """
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -1112,6 +1195,32 @@ def test_a_coded_config_error_leaves_no_run_folder(tmp_path, monkeypatch):
     assert survivors == [], f"an empty run folder survived a coded abort: {survivors}"
 
 
+def test_keep_failed_keeps_the_config_and_the_log_of_why(tmp_path, monkeypatch):
+    """The same coded abort under --keep-failed: only info/ holds anything.
+
+    The byoc precheck runs after the resolved config is written, so the config
+    is kept too, not only the log.
+    """
+    inputs = tmp_path / "input"
+    inputs.mkdir()
+    write_byoc_batch(inputs, [("solo", 20)])
+    config = minimal_byoc_config(
+        inputs, tmp_path / "out", ["solo"],
+        clm_label={"num_classes": 2, "matching_mode": "single",
+                   "single_match": {"cluster": 9, "label": 0}},
+    )
+
+    code, survivors = run_main(tmp_path, monkeypatch, config, "--keep-failed")
+
+    assert code == 2, f"expected exit 2 for a coded config error, got {code}"
+    assert len(survivors) == 1, f"the failed run's folder was not kept: {survivors}"
+    run_dir = tmp_path / "out" / survivors[0]
+    kept = sorted(p.relative_to(run_dir).as_posix() for p in run_dir.rglob("*") if p.is_file())
+    assert kept == [f"info/{run_dir.name}.json", f"info/{run_dir.name}.log"], kept
+    log_text = (run_dir / "info" / f"{run_dir.name}.log").read_text(encoding="utf-8")
+    assert "[CLM-105]" in log_text, log_text
+
+
 def test_a_successful_run_keeps_everything_it_wrote(tmp_path, monkeypatch):
     """The other direction, and the one that matters if the predicate is wrong.
 
@@ -1133,10 +1242,71 @@ def test_a_successful_run_keeps_everything_it_wrote(tmp_path, monkeypatch):
     assert written, "the run folder survived but its csv/ is empty"
 
 
+def test_a_run_folder_is_named_by_run_and_its_files_by_dataset(tmp_path, monkeypatch, caplog):
+    """YYYYMMDD_HHMMSS_<Source>/: per-dataset files in csv/ and info/, and the
+    run's own config and log in info/, named after the folder. The log names the
+    config it ran and opens each dataset with a header."""
+    inputs = tmp_path / "input"
+    inputs.mkdir()
+    write_byoc_batch(inputs, [("solo", 20)])
+    caplog.set_level(logging.INFO)
+
+    code, survivors = run_main(
+        tmp_path, monkeypatch, minimal_byoc_config(inputs, tmp_path / "out", ["solo"])
+    )
+
+    assert code == 0, f"expected a clean run, got exit {code}"
+    (name,) = survivors
+    assert re.fullmatch(r"\d{8}_\d{6}_BYOC", name), name
+    run_dir = tmp_path / "out" / name
+    files = sorted(p.relative_to(run_dir).as_posix() for p in run_dir.rglob("*") if p.is_file())
+    assert files == ["csv/byoc-local-solo.csv", f"info/{name}.json", f"info/{name}.log",
+                     "info/byoc-local-solo.txt"], files
+    log_text = (run_dir / "info" / f"{name}.log").read_text(encoding="utf-8")
+    assert f"Run {name} from config '{(tmp_path / 'cfg.json').resolve()}'." in log_text, log_text
+    assert "Dataset 1 of 1: local/solo" in log_text, log_text
+
+
+def test_sigterm_stops_the_run_like_ctrl_c(tmp_path, monkeypatch):
+    """A scheduler cancels a job, or ends it at its time limit, with SIGTERM.
+    The run logs why it stopped and exits 143, and main() puts back the handler
+    it found."""
+    inputs = tmp_path / "input"
+    inputs.mkdir()
+    before = signal.getsignal(signal.SIGTERM)
+
+    def terminated(*args, **kwargs):
+        handler = signal.getsignal(signal.SIGTERM)
+        assert callable(handler), f"main() installed no SIGTERM handler: {handler!r}"
+        handler(signal.SIGTERM, None)
+
+    monkeypatch.setattr(clmsynth.main, "run_pipeline", terminated)
+    code, survivors = run_main(
+        tmp_path, monkeypatch, minimal_byoc_config(inputs, tmp_path / "out", ["solo"]),
+        "--keep-failed")
+
+    assert code == 143, f"expected exit 143 for SIGTERM, got {code}"
+    log_text = (tmp_path / "out" / survivors[0] / "info" / f"{survivors[0]}.log").read_text(
+        encoding="utf-8")
+    assert "Terminated; stopping." in log_text, log_text
+    assert signal.getsignal(signal.SIGTERM) is before
+
+
+def _failed_run_scaffold(tmp_path):
+    """What a run holds before its first dataset: empty csv/ and png/, and
+    info/ with its config and log."""
+    run_dir = tmp_path / "20260809_120000_BYOC"
+    for sub in ("csv", "png", "info"):
+        (run_dir / sub).mkdir(parents=True)
+    for ext in (".yaml", ".log"):
+        (run_dir / "info" / f"{run_dir.name}{ext}").write_text("x", encoding="utf-8")
+    return run_dir
+
+
 @pytest.mark.parametrize(
     "litter",
-    ["csv/result.csv", "png/plot.png", "stray.txt"],
-    ids=["a-csv", "a-plot", "an-unexpected-file"],
+    ["csv/result.csv", "png/plot.png", "info/byoc-local-solo.txt", "stray.txt"],
+    ids=["a-csv", "a-plot", "a-summary", "an-unexpected-file"],
 )
 def test_a_run_folder_holding_anything_real_is_never_removed(tmp_path, litter):
     """The predicate directly: one file is enough to make a folder untouchable.
@@ -1146,34 +1316,26 @@ def test_a_run_folder_holding_anything_real_is_never_removed(tmp_path, litter):
     this code did not put there is someone else's, and guessing about it is how
     a cleanup becomes a data-loss bug.
     """
-    run_dir = tmp_path / "090826_BYOC_120000"
-    for sub in ("csv", "png", "txt"):
-        (run_dir / sub).mkdir(parents=True)
-    config_copy = run_dir / "cfg.yaml"
-    config_copy.write_text("global_settings: {}", encoding="utf-8")
-
+    run_dir = _failed_run_scaffold(tmp_path)
     target = run_dir / litter
     target.write_text("content", encoding="utf-8")
 
-    assert clmsynth.main.discard_run_dir_if_barren(run_dir, config_copy) is False
+    assert clmsynth.main.discard_failed_run(run_dir, keep_failed=False) is False
     assert run_dir.is_dir(), "a run folder holding real content was removed"
     assert target.is_file(), "the content itself was removed"
 
 
-def test_the_barren_predicate_accepts_exactly_the_scaffolding(tmp_path):
+def test_the_failed_run_predicate_accepts_exactly_the_scaffolding(tmp_path):
     """The positive half, stated once on its own.
 
-    Three empty subfolders and the config copy is precisely what `main` creates
-    before the pipeline runs; if this stops matching, the cleanup silently stops
-    happening and the litter comes back with no test going red.
+    Two empty subfolders and info/ with the run's config and log is precisely
+    what a run leaves before its first dataset is written; if this stops
+    matching, the cleanup silently stops happening and the litter comes back
+    with no test going red.
     """
-    run_dir = tmp_path / "090826_BYOC_120000"
-    for sub in ("csv", "png", "txt"):
-        (run_dir / sub).mkdir(parents=True)
-    config_copy = run_dir / "cfg.yaml"
-    config_copy.write_text("global_settings: {}", encoding="utf-8")
+    run_dir = _failed_run_scaffold(tmp_path)
 
-    assert clmsynth.main.discard_run_dir_if_barren(run_dir, config_copy) is True
+    assert clmsynth.main.discard_failed_run(run_dir, keep_failed=False) is True
     assert not run_dir.exists()
 
 
@@ -1233,6 +1395,7 @@ def test_reporting_a_path_never_raises():
         assert isinstance(resolved_for_report(malformed), str)
 
 
+@pytest.mark.usefixtures("yaml")
 def test_generate_config_exits_one_on_a_missing_payload(tmp_path, monkeypatch):
     """The other console script's failure path, alongside the pipeline's.
 
@@ -1249,6 +1412,7 @@ def test_generate_config_exits_one_on_a_missing_payload(tmp_path, monkeypatch):
     assert excinfo.value.code == 1
 
 
+@pytest.mark.usefixtures("yaml")
 def test_generate_config_exits_one_on_a_malformed_payload(tmp_path, monkeypatch):
     """A YAML syntax error in the payload exits 1 like a missing file, not a traceback."""
     from clmsynth import generate_config
@@ -1267,7 +1431,7 @@ def test_generate_config_exits_one_on_a_malformed_payload(tmp_path, monkeypatch)
     (KeyboardInterrupt(), 130),
 ], ids=["disk-full", "interrupt"])
 def test_generate_config_keeps_the_old_config_when_the_write_fails(
-        failure, exit_code, tmp_path, monkeypatch):
+        failure, exit_code, tmp_path, monkeypatch, yaml):
     """A write that does not finish must leave the previous config whole.
 
     Written in place, the file was truncated before the new text arrived, so a
@@ -1295,7 +1459,7 @@ def test_generate_config_keeps_the_old_config_when_the_write_fails(
         "the temporary file was left behind"
 
 
-def test_generate_config_refuses_to_overwrite_its_payload(tmp_path, monkeypatch):
+def test_generate_config_refuses_to_overwrite_its_payload(tmp_path, monkeypatch, yaml):
     """`clmsynth-config p.yaml p.yaml` must not replace the payload it just read."""
     from clmsynth import generate_config
 

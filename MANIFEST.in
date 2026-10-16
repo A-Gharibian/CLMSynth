@@ -15,7 +15,7 @@ include requirements.txt
 include environment.yml
 
 # Example configs referenced by the README quick-start. The offline one moved
-# into the package, so `recursive-include src/clmsynth *.yaml` below carries it.
+# into the package, so `recursive-include src/clmsynth *.json` below carries it.
 include upstream_payload.yaml
 
 # User manual and the coded-diagnostics reference catalogue.
@@ -34,7 +34,7 @@ include docs/ROADMAP.md
 # package; listed explicitly here for sdist robustness regardless of build
 # backend behavior).
 recursive-include src/clmsynth *.py
-recursive-include src/clmsynth *.yaml
+recursive-include src/clmsynth *.json
 
 # Never ship build/tooling
 global-exclude __pycache__

@@ -1,39 +1,58 @@
-# config_wizard.py
+# _config_wizard.py
 """
 Configuration Generator (CLI wizard).
-    python -m clmsynth.config_wizard      (or the `clmsynth-wizard` console script)
+    clmsynth-wizard      (or python -m clmsynth._config_wizard)
 
 Run as a module, not as a file.
 """
 
+import json
 import math
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-import yaml
-
+from ._compat import import_optional_dependency
+from ._questions import SCHEMA
 from .dataset_sources import SOURCE_DATASETS, SOURCE_METADATA, is_heavy
 from .dataset_sources import resolved_for_report as _resolved_or_raw
 from .generate_config import write_text_atomic
-from .questions import SCHEMA
 
 # Windows' MAX_PATH.
 _MAX_PATH = 260
 
 
 def _save_config(config: dict, out: str) -> str:
-    """Write the config, creating its folder."""
+    """Write the config, creating its folder: JSON for a .json path, else YAML."""
+    if out.lower().endswith(".json"):
+        text = json.dumps(config, indent=2, ensure_ascii=False) + "\n"
+    else:
+        import yaml
+        text = yaml.dump(config, sort_keys=False, default_flow_style=False)
     try:
         Path(out).parent.mkdir(parents=True, exist_ok=True)
-        write_text_atomic(out, yaml.dump(config, sort_keys=False, default_flow_style=False))
+        write_text_atomic(out, text)
     except (OSError, ValueError) as exc:
         print(f"\n  Could not save to '{out}': {exc}")
         print("  Your answers follow, so nothing is lost:\n")
-        print(yaml.dump(config, sort_keys=False, default_flow_style=False))
+        print(text)
         raise SystemExit(1) from None
     return out
+
+
+_SUFFIXES = {"yaml": (".yaml", ".yml"), "json": (".json",)}
+
+
+def _config_path(out: str, fmt: str) -> str:
+    """`out` with the suffix of `fmt`. A config suffix of the other format is
+    replaced, never kept beside it, so the file is never cfg.json.yaml."""
+    suffix = Path(out).suffix.lower()
+    if suffix in _SUFFIXES[fmt]:
+        return out
+    if suffix in _SUFFIXES["yaml"] + _SUFFIXES["json"]:
+        out = out[:-len(suffix)]
+    return f"{out}.{fmt}"
 
 # --------------------------------------------------------------------------- #
 # Input helpers: each explains, shows a [default], and re-asks on bad input.
@@ -283,11 +302,12 @@ def ask_from(key, **override):
 def _worst_case_path_len(gs, source, suite) -> int:
     """Length of the longest file a run of this config could write:
 
-        <output_dir>/DDMMYY_<source>_HHMMSS/png/<source>__<battery>__<dataset>__Label_<n>.png
+        <output_dir>/YYYYMMDD_HHMMSS_<Source>/png/<source>-<battery>-<dataset>-Cluster_0.png
 
-    Plot names are the longest and so cross Windows' MAX_PATH."""
+    Plot names are the longest and so cross Windows' MAX_PATH. The source key
+    stands in for its display name, which is never longer."""
     base = len(str(Path(gs["output_dir"]).resolve()))
-    run_stem = f"DDMMYY_{source}_HHMMSS"
+    run_stem = f"YYYYMMDD_HHMMSS_{source}"
     batteries = suite.get("batteries")
     if batteries == "all" or batteries is None:
         batteries = list(SOURCE_DATASETS.get(source, {}).keys())
@@ -300,7 +320,7 @@ def _worst_case_path_len(gs, source, suite) -> int:
         names = []
     longest_ds = max((str(n) for n in names), key=len, default="dataset")
     longest_bat = max((str(b) for b in batteries), key=len, default="battery")
-    leaf = f"png/{source}__{longest_bat}__{longest_ds}__Label_9.png"
+    leaf = f"png/{source}-{longest_bat}-{longest_ds}-Cluster_0.png"
     return base + 1 + len(run_stem) + 1 + len(leaf)
 
 
@@ -585,7 +605,7 @@ def _build_rules(omit_recall, M):
 # --------------------------------------------------------------------------- #
 
 def _run() -> None:
-    """Runs the wizard: all sections, save the YAML, optionally run main.py."""
+    """Runs the wizard: all sections, save the config, optionally run main.py."""
     print("=" * 62)
     print("  CLMSynth, User-Friendly Configuration Generator")
     print("=" * 62)
@@ -601,9 +621,9 @@ def _run() -> None:
     config = {"global_settings": gs, f"{source}_suite": suite, "label_generation": lg}
 
     section("4. Save & run")
-    out = ask_from("output.path")
-    if not out.lower().endswith((".yaml", ".yml")):
-        out += ".yaml"                       # always a .yaml file, distinct from any output folder
+    fmt = ask_from("output.format")
+    # The suffix also keeps the file distinct from any output folder.
+    out = _config_path(ask_from("output.path", default=f"test_data_config.{fmt}"), fmt)
     if _resolved_or_raw(out) == _resolved_or_raw(gs["output_dir"]):
         # last-ditch guard against a folder/file name clash
         out = str(Path(out).with_name("config_" + Path(out).name))
@@ -624,6 +644,12 @@ def _run() -> None:
 
 def main() -> None:
     """Entry point; Ctrl-C cancels cleanly."""
+    # Before the first question, not after the last one.
+    try:
+        import_optional_dependency("yaml", "clmsynth-wizard")
+    except ImportError as e:
+        print(f"\n  {e}.")
+        raise SystemExit(1) from None
     try:
         _run()
     except KeyboardInterrupt:

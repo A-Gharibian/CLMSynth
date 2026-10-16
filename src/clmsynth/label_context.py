@@ -46,7 +46,7 @@ class DatasetContext:
     battery: str
     dataset: str
     features: pd.DataFrame
-    source: str = "unknown"  # clustbench | mdcgen | fabricated_data, which fetcher produced this
+    source: str = "unknown"  # clustbench | mdcgen | fabricated_data | byoc, which fetcher produced this
     ground_truths: dict[str, pd.Series] = field(default_factory=dict)
     generated_labels: dict[str, pd.Series] = field(default_factory=dict)
     label_reports: dict[str, dict[str, Any]] = field(default_factory=dict)

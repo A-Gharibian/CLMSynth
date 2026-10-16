@@ -5,6 +5,98 @@ label generator behavior are additionally explained in the user manual.
 
 ---
 
+## [0.7.4] — 2026-10-16
+
+Python 3.15 initial support, seaborn is removed and PyYAML is optional dependency.
+Initial support for batch runs.
+
+### Added
+
+- **Python 3.15.** `requires-python` is `>=3.12,<3.16`, with the 3.15 CI and tests.
+
+- **`json` config** `load_config` reads a
+  `.json` file with `json` and any other with PyYAML. PyYAML remains for manual 
+  editing and numan editable files, specifically for the troubleshooting catalogue.
+  `clmsynth-config` writes JSON to a `.json` output path.
+
+-  PyYAML is now optional, however, until the PyYAML project is in PyPI for Python 3.15
+   installing it on 3.15 is a source build without C compiler 
+   ([yaml/pyyaml#951](https://github.com/yaml/pyyaml/issues/951)).
+   `pip install "clmsynth[yaml]"` installs the optional YAML support. 
+   The bundled offline example changed to `test_data_config_offline.json` and 
+   `check_release_metadata.py` reads `CITATION.cff` without PyYAML.
+
+- **The run folder records the config that was executed.** `info/<run folder>.yaml`, or
+  `.json` for a `.json` input, replaces the copy of the input: every key
+  the run read, with its value or its default, the seeds as numbers, and `datasets` as
+  the list that ran.
+
+- **`--keep-failed` keeps a failed run's folder.**
+
+- **The wheel's offline checks runs on the base install.** CI runs it from a fresh
+  install with no extras (developer only).
+
+- **End of run report.**, example: `Of the 3 resolved dataset(s): 1
+  written with all labels, 1 written with not all labels, 1 skipped (see the errors
+  above)`. The run's log is kept in its folder as `info/<run folder>.log`.
+
+- **A batch of configs: `clmsynth a.json b.json c.yaml --jobs 2`.** Each config runs
+  in its own process, `--no-viz` and `--keep-failed` optional in every run.
+
+- **The wizard asks whether to save the config as YAML or JSON.**
+
+- **A run stopped by SIGTERM logs and exits 143.** A scheduler sends SIGTERM to
+  cancel a job or at its time limit logs `Terminated; stopping.`
+
+- **`CLM_catalog_gen.py --threaded` runs the catalog's cases in a thread pool.**
+
+### Changed
+
+- **`[CLM-134]` is now `[CLM-141]`.** because 134 is an abort code. Codes 134 to
+  140 and 143 are left reserved, and new 1xx codes start at 144.
+
+- **The run folder is named `YYYYMMDD_HHMMSS_<Source>`**.
+
+- **`clustbench` is displayed as Clustbench**.
+
+- **The summary txt writes its config block as JSON.** PyYAML rendered it; the standard
+  library now does, so it reads the same whatever is installed.
+
+- **seaborn is removed.** `_visualization.py` draws with matplotlib alone.
+
+- **Optional dependencies are imported in one place.** `_compat.py`'s
+  `import_optional_dependency` names what needs the package and how to install it.
+
+- **The Faker code is removed.**
+
+- **The troubleshooting catalog's cases run with `--no-viz`**.
+
+- **Target labels pick their points before competing noise.**
+
+- **Private modules may change in any release**, since they are not part of the core CLMSynth program.
+
+### Fixed
+
+- **A dataset written with some of its labels is no longer reported as unlabelled.**
+
+- **A cluster named twice for one label is refused with `[CLM-142]`.**
+
+- **Competing noise on one of the cluster's own target labels is refused,
+  `[CLM-144]`.** The entry's `favors` also moved the target's own points in that
+  cluster. Competing noise places another label in a cluster.
+
+- **`competing_noise` entries are checked once, before allocation and the target
+  search.** Their keys, cluster ids, labels, shares and placements (`[CLM-207]`,
+  `[CLM-141]`, `[CLM-116..118]`) were checked during allocation, so dataset's
+  `[CLM-15x]`, or under `target_metric` a `[CLM-120]`, came first. Whether the cluster
+  exists in the dataset (`[CLM-119]`) is still checked there.
+
+- **An empty `target_metric.probe_seed` as the run seed is now an absent one.**
+
+- **A `probe_seed` that is not an integer >= 0 is refused with `[CLM-141]`.**
+
+- **pyplot is removed from the pipeline.**
+
 ## [0.7.3] — 2026-10-11
 
 Better type checking, fixing more edge cases, new set of tests and the target ceiling.

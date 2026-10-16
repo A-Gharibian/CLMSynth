@@ -1,4 +1,4 @@
-# fabricated_generator.py
+# _fabricated_generator.py
 """Offline synthetic-feature generator.
 Six numeric feature types, plus a categorical column generator.
 """
@@ -10,34 +10,7 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 
-try:
-    from faker import Faker
-except ImportError:
-    Faker = None  # optional dependency; numpy fallback is used when absent
-
 log = logging.getLogger(__name__)
-
-
-# ==========================================
-# --- Modular Injectors --------------------
-# ==========================================
-
-def generate_faker_categories(n_samples: int, labels: list, seed: int) -> pd.Series:
-    """Generates categorical labels using Faker, falling back to numpy if unavailable."""
-    # Local generator: global RNG state is not thread-safe.
-    rng = np.random.default_rng(seed)
-    if Faker is not None:
-        Faker.seed(seed)
-        fake = Faker()
-        # Draw base labels first (so the class distribution is the intended one),
-        # then map each to a display string; the Faker names are cosmetic.
-        group_mapping = {label: fake.company() for label in labels}
-        base_assignments = rng.choice(labels, size=n_samples)
-        faker_assignments = [group_mapping[val] for val in base_assignments]
-        return pd.Series(faker_assignments, name="Cohort_Class")
-    else:
-        log.warning("Faker not installed. Falling back to basic numpy categories.")
-        return pd.Series(rng.choice(labels, size=n_samples), name="Cohort_Class")
 
 
 # ==========================================
@@ -101,30 +74,17 @@ def generate_synthetic_data(
 
         clustering_config = ground_truths.get("class_clustering", {})
         if labels_only:
-            # Drawn directly rather than through generate_faker_categories: this
-            # mode must be reproducible from the seed alone, and that helper
-            # substitutes Faker company names whenever Faker happens to be
-            # installed.
             cat_series = pd.Series(rng.choice(labels, size=n_samples), name="Cohort_Class")
         elif clustering_config.get("enforce_perfect_separation", False):
             log.info("Applying perfect separation ground truth to categorical labels...")
             # Perfect separation: class is the Feature_1 percentile bin, so a
             # clustering algorithm recovers a 1:1 label/cluster match.
             percentiles = pd.qcut(scaled_df['Feature_1'], q=len(labels), labels=labels)
-
-            if cat_config.get("use_faker", False):
-                # Map the perfect percentile splits to Faker names
-                if Faker is not None:
-                    fake = Faker()
-                    Faker.seed(seed)
-                    group_mapping = {label: fake.company() for label in labels}
-                    percentiles = percentiles.map(group_mapping)
-                else:
-                    log.warning("Faker requested but not installed. Using base labels.")
-
             cat_series = pd.Series(percentiles, name=clustering_config.get("target_label", "Cohort_Class"))
         else:
-            cat_series = generate_faker_categories(n_samples, labels, seed)
+            # A stream of its own from the seed, not the features' stream.
+            cat_series = pd.Series(np.random.default_rng(seed).choice(labels, size=n_samples),
+                                   name="Cohort_Class")
 
         cat_series.index = scaled_df.index
         final_dfs_to_concat.append(cat_series)

@@ -3,7 +3,7 @@
 Scope is deliberately narrow, and everything outside it belongs to another
 suite:
 
-Runs on every supported interpreter (3.12-3.14); nothing here uses syntax or
+Runs on every supported interpreter (3.12-3.15); nothing here uses syntax or
 stdlib newer than 3.12.
 
     python -m pytest tests/test_smoke.py -v
@@ -15,6 +15,7 @@ import pkgutil
 from typing import Any
 
 import pandas as pd
+import pytest
 
 from clmsynth.generate_config import generate_base_config
 from clmsynth.main import load_config, run_pipeline
@@ -177,19 +178,22 @@ def test_pipeline_produces_expected_csv(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_rendered_config_runs(tmp_path):
+@pytest.mark.usefixtures("yaml")
+@pytest.mark.parametrize("suffix", ["yaml", "json"])
+def test_rendered_config_runs(tmp_path, suffix):
     """`clmsynth-config` then `clmsynth`: the two-command flow the README opens with.
+    The output path's suffix picks the format.
 
     python -m clmsynth.generate_config    # payload -> config
     python -m clmsynth.main               # config  -> dataset
     """
-    rendered = tmp_path / "rendered_config.yaml"
+    rendered = tmp_path / f"rendered_config.{suffix}"
     # dict(): the module-level payload is shared, and a renderer that mutated
     # what it was handed would otherwise leak into any test added after this one.
     generate_base_config(dict(MINIMAL_PAYLOAD), output_path=str(rendered))
     assert rendered.is_file(), "generate_base_config wrote nothing"
 
-    # It must be YAML the pipeline's own loader accepts, not just parseable text.
+    # It must be a file the pipeline's own loader accepts, not just parseable text.
     config = load_config(str(rendered))
     assert config["global_settings"]["data_source"] == "fabricated_data"
 

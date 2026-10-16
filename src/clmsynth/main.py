@@ -1,26 +1,35 @@
 # main.py
 """Pipeline entry point.
 
-Reads a config YAML (default test_data_config.yaml), fetches each requested
+Reads a config file (default test_data_config.yaml), fetches each requested
 dataset from the configured source, generates the CLM labels, and writes one
-timestamped run folder with the CSV, plots, and a metrics summary per dataset.
+timestamped run folder with the CSV, plots, and a metrics summary per dataset,
+and in info/ the config as the run read it (resolved_config.py) and the run's log.
+Several config files run as a batch, each in its own process.
 """
 
 import argparse
+import json
 import logging
+import os
+import re
 import shutil
+import signal
+import subprocess
 import sys
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
-import yaml
 
+from . import __version__
+from ._cli_logging import LOG_FORMAT, SingleLineFilter, configure_cli_logging
+from ._compat import import_optional_dependency
 from .byoc_source import fetch_byoc_data
-from .cli_logging import configure_cli_logging
 from .clm_label_engine import (
     InfeasibleAllocationError,
     pair_reachable_range,
@@ -39,6 +48,14 @@ from .dataset_sources import (
 from .label_context import DatasetContext, build_context
 from .label_generator import generate_additional_labels
 from .metrics import clustering_ari, clustering_mcc
+from .resolved_config import (
+    DATA_SOURCE,
+    N_LABELS,
+    OUTPUT_DIR,
+    SOURCE_LABELING,
+    plain,
+    resolve_config,
+)
 
 log = logging.getLogger(__name__)
 
@@ -52,9 +69,11 @@ FETCHERS = {
 # and byoc reads a file, so the seed reaches neither.
 SEEDED_SOURCES = ("mdcgen", "fabricated_data")
 
-# "clustbench"/"mdcgen" are fetcher keys, not the real dataset origin.
+# Display names for the run folder, plot titles and summaries, capitalized apart
+# from the data_source keys. Clustbench is the package that fetches; its
+# datasets come from many authors.
 SOURCE_DISPLAY = {
-    "clustbench": "Gagolewski",
+    "clustbench": "Clustbench",
     "mdcgen": "MDCGen",
     "fabricated_data": "Fabricated",
     "byoc": "BYOC",
@@ -115,7 +134,8 @@ def _write_summary_txt(path: Path, friendly: str, source: str, battery: str, dat
         *seed_lines,
         "",
         "===== CLM label configuration =====",
-        yaml.dump(clm_config, sort_keys=False, default_flow_style=False).rstrip()
+        # The standard library, so the summary reads the same whatever is installed.
+        json.dumps(plain(clm_config), indent=2, ensure_ascii=False, default=str)
         if clm_config else "(legacy noise mode, no clm_label config)",
         "",
     ]
@@ -192,12 +212,12 @@ def _byoc_cluster_ids(input_dir, dataset: str, cluster_column: str):
 def _configured_cluster_ids(clm_config: dict) -> list:
     """Cluster ids the configuration itself names."""
     mode = clm_config.get("matching_mode")
-    # A block of the wrong shape names no ids here; the engine refuses it ([CLM-134]).
+    # A block of the wrong shape names no ids here; the engine refuses it ([CLM-141]).
     if mode == "single":
         sm = clm_config.get("single_match") or {}
         return [sm["cluster"]] if isinstance(sm, Mapping) and "cluster" in sm else []
     if mode == "custom":
-        # A clusters value that is not a list is left to [CLM-134] in _check_pair.
+        # A clusters value that is not a list is left to [CLM-141] in _check_pair.
         matrix = clm_config.get("assignment_matrix")
         return [k for row in (matrix if isinstance(matrix, (list, tuple)) else [])
                 if isinstance(row, dict) and isinstance(row.get("clusters"), (list, tuple))
@@ -212,7 +232,7 @@ def precheck_byoc_matching_ids(jobs, fetch_kwargs: dict, clm_config: dict | None
     them, so a batch with several mismatches is fixed in one pass rather than
     one run at a time.
     """
-    # A clm_label that is not a mapping is left to the engine ([CLM-134]).
+    # A clm_label that is not a mapping is left to the engine ([CLM-141]).
     if not clm_config or not isinstance(clm_config, Mapping):
         return
 
@@ -258,25 +278,75 @@ def _not_a_mapping(key: str, section: object, example: str) -> str | None:
     return f"'{key}' must be a mapping of settings such as '{example}', got {section!r}."
 
 
+def _is_json(path: str | Path) -> bool:
+    """A .json config is read and written with the standard library, any other
+    with PyYAML, which is optional."""
+    return Path(path).suffix.lower() == ".json"
+
+
 def load_config(config_path: str) -> dict:
-    """Loads the pipeline config YAML; exits 1 with a message if absent, malformed or empty."""
+    """Loads the pipeline config; exits 1 with a message if absent, unreadable,
+    malformed or empty."""
     path = Path(config_path)
     if not path.is_file():
         log.critical(f"Configuration file not found at '{config_path}'. "
                      f"Run clmsynth-wizard or clmsynth-config first.")
         sys.exit(1)
-    with open(path, encoding="utf-8") as file:
+    # utf-8-sig drops a BOM (Notepad, PowerShell 5.1), as PyYAML does and json does not.
+    text = path.read_text(encoding="utf-8-sig")
+    # Each parser's message carries the line and column of the mistake.
+    if _is_json(path):
         try:
-            config = yaml.safe_load(file)
+            config = json.loads(text) if text.strip() else None
+        except json.JSONDecodeError as e:
+            log.critical(f"Configuration file '{config_path}' is not valid JSON: {e}")
+            sys.exit(1)
+    else:
+        try:
+            yaml = import_optional_dependency("yaml", f"Reading {config_path!r}")
+        except ImportError as e:
+            log.critical(f"{e}. A .json config needs nothing more.")
+            sys.exit(1)
+        try:
+            config = yaml.safe_load(text)
         except yaml.YAMLError as e:
-            # The message carries the line and column of the mistake.
             log.critical(f"Configuration file '{config_path}' is not valid YAML: {e}")
             sys.exit(1)
     # An empty file parses to None; anything non-mapping means main()'s config.get(...)
     if not isinstance(config, dict):
-        log.critical(f"Configuration file '{config_path}' is empty or not a YAML mapping.")
+        log.critical(f"Configuration file '{config_path}' is empty or not a mapping of "
+                     "settings.")
         sys.exit(1)
     return config
+
+
+_RESOLVED_HEADER = (
+    "# The configuration this run read, written by clmsynth {version}: every key with\n"
+    "# its value or its default, seeds as numbers, and the datasets that ran. Keys the\n"
+    "# run never read, or read and ignored, are left out. Running this file repeats the run.\n"
+)
+
+
+def _write_resolved_config(path: Path, resolved: Mapping[str, Any]) -> None:
+    """Written in the format of `path`, as load_config reads it. Best-effort, like
+    the plots: the CSVs are the deliverable, so a record that cannot be written is
+    reported and the run goes on."""
+    data = plain(resolved)
+    try:
+        if _is_json(path):
+            text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+        else:
+            yaml = import_optional_dependency("yaml", "Writing it")
+            text = _RESOLVED_HEADER.format(version=__version__) + yaml.safe_dump(
+                data, sort_keys=False, default_flow_style=False, allow_unicode=True)
+        path.write_text(text, encoding="utf-8")
+    except Exception as e:
+        # A full disk, PyYAML missing, or a value no writer represents, which a
+        # dict run can pass.
+        log.error(f"Could not write the resolved config '{path}': {e}")
+        return
+    log.info(f"Saved resolved config: {path}")
+
 
 def _render_dataset_plots(final_df: pd.DataFrame, context: DatasetContext,
                           png_dir: Path, stem: str, gt_col: str | None,
@@ -285,7 +355,7 @@ def _render_dataset_plots(final_df: pd.DataFrame, context: DatasetContext,
                           clm_config: dict | None) -> None:
     """Best-effort PNGs for one dataset."""
     # Deferred so --no-viz never imports matplotlib.
-    from .visualization import plot_feature_scatter
+    from ._visualization import plot_feature_scatter
 
     feature_cols = list(context.features.columns)
     if len(feature_cols) < 2:
@@ -297,7 +367,7 @@ def _render_dataset_plots(final_df: pd.DataFrame, context: DatasetContext,
         if not plot_feature_scatter(
             final_df, x_col=x_col, y_col=y_col,
             hue_col=gt_col,
-            output_path=str(png_dir / f"{stem}__{gt_col}.png"),
+            output_path=str(png_dir / f"{stem}-{gt_col}.png"),
             title=plot_title,
             subtitle=f"ground-truth clusters ({gt_col})",
         ):
@@ -317,7 +387,7 @@ def _render_dataset_plots(final_df: pd.DataFrame, context: DatasetContext,
         if not plot_feature_scatter(
             final_df, x_col=x_col, y_col=y_col,
             hue_col=r["name"],
-            output_path=str(png_dir / f"{stem}__{r['name']}.png"),
+            output_path=str(png_dir / f"{stem}-{r['name']}.png"),
             title=plot_title,
             subtitle=subtitle,
             info_text=clm_info,
@@ -325,9 +395,8 @@ def _render_dataset_plots(final_df: pd.DataFrame, context: DatasetContext,
             log.warning(f"'{stem}': plot for '{r['name']}' failed; CSV/labels are unaffected.")
 
 
-def _resolve_jobs(source: str, batteries: list[str], datasets_cfg, fetch_kwargs: dict,
-                  clm_config: dict | None) -> list:
-    """(battery, dataset) pairs to run, BYOC pre-checked."""
+def _resolve_jobs(source: str, batteries: list[str], datasets_cfg, fetch_kwargs: dict) -> list:
+    """(battery, dataset) pairs to run."""
     if any(is_heavy(source, b) for b in batteries):
         log.warning(f"Selection includes a heavy '{source}' battery: expect long fetch/generation times.")
 
@@ -337,34 +406,36 @@ def _resolve_jobs(source: str, batteries: list[str], datasets_cfg, fetch_kwargs:
     if fetch_kwargs:
         log.info(f"Extra fetch kwargs forwarded to '{source}': {fetch_kwargs}")
 
-    # Other sources surface [CLM-104]/[CLM-105] per dataset.
     if source == "byoc":
         log.info(f"BYOC input directory: "
                  f"'{resolved_for_report(fetch_kwargs.get('input_dir', '.'))}'.")
-        precheck_byoc_matching_ids(jobs, fetch_kwargs, clm_config)
     return jobs
 
 
 def _label_dataset(context: DatasetContext, battery: str, dataset: str,
                    label_cfg: Mapping[str, Any], n_add_labels: int, source_labeling: str,
-                   clm_config: dict | None, seed: int) -> bool:
-    """False when label generation was skipped."""
+                   clm_config: dict | None, seed: int) -> None:
+    """Labels stop at the first that fails for this dataset; the ones before it
+    stay attached."""
+    error: Exception
     try:
         generate_additional_labels(
             context, n_labels=n_add_labels, source_labeling=source_labeling,
             clm_config=clm_config, noise=label_cfg.get("noise", 0.1), seed=seed,
         )
+        return
     except (KeyError, InfeasibleAllocationError) as e:
-        log.error(f"Skipping label generation for {battery}/{dataset}: {e}")
-        return False
+        error = e
     except ValueError as e:
         # [CLM-120] is judged against THIS dataset's cluster sizes: the same
         # config can fit the next dataset, so it skips the label, not the run.
         if getattr(e, "code", None) != 120:
             raise
-        log.error(f"Skipping label generation for {battery}/{dataset}: {e}")
-        return False
-    return True
+        error = e
+    # Each label has its own seed, so a later one can fail where the first fitted.
+    written = len(context.generated_labels)
+    after = f" after {written} of {n_add_labels} labels" if written else ""
+    log.error(f"Skipping label generation for {battery}/{dataset}{after}: {error}")
 
 
 def _score_labels(final_df: pd.DataFrame, context: DatasetContext,
@@ -423,7 +494,7 @@ def _pair_range_lines(clm_config, final_df: pd.DataFrame, gt_col: str | None) ->
         return []
     try:
         n_k = int((final_df[gt_col] == sm["cluster"]).sum())
-    except (TypeError, ValueError):  # an id of the wrong shape, refused as [CLM-134]
+    except (TypeError, ValueError):  # an id of the wrong shape, refused as [CLM-141]
         return []
     if n_k < 1:
         return []
@@ -439,7 +510,7 @@ def _write_dataset(context: DatasetContext, source: str, battery: str, dataset: 
                    render_plots: bool, seed_lines: list[str], label_seed: int) -> None:
     """CSV, summary and plots for one dataset."""
     final_df = context.to_dataframe()
-    stem = f"{source}__{battery}__{dataset}"
+    stem = f"{source}-{battery}-{dataset}"
     final_df.to_csv(csv_dir / f"{stem}.csv", index=False)
     log.info(f"Saved: {csv_dir / f'{stem}.csv'}")
 
@@ -492,9 +563,12 @@ def _resolve_seed(block: Mapping[str, Any], name: str) -> tuple[int, str]:
 
 
 def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: Path,
-                 png_dir: Path, txt_dir: Path, render_plots: bool = True) -> int:
+                 png_dir: Path, txt_dir: Path, render_plots: bool = True,
+                 config_out: Path | None = None) -> int:
     """Runs every configured dataset through fetch, label generation, and
-    output writing. Returns the number of datasets processed without error."""
+    output writing. Returns the number of datasets processed without error.
+    With `config_out`, the config as the run read it is written there once the
+    datasets and seeds are resolved, before the first dataset runs."""
     if source not in FETCHERS:
         log.error(f"Unknown data_source '{source}'. Valid options: {list(FETCHERS)}")
         return 0
@@ -540,20 +614,31 @@ def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: 
                     if k not in ("batteries", "datasets", "seed")}
 
     label_seed, label_how = _resolve_seed(label_cfg, "label_generation.seed")
-    n_add_labels = label_cfg.get("n_labels", 0)
-    source_labeling = label_cfg.get("source_labeling", "labels0")
+    n_add_labels = label_cfg.get("n_labels", N_LABELS)
+    source_labeling = label_cfg.get("source_labeling", SOURCE_LABELING)
     clm_config: dict | None = label_cfg.get("clm_label")
 
     seed_lines.append(
         f"label_generation.seed = {label_seed} ({label_how}); label i uses seed + i")
 
-    jobs = _resolve_jobs(source, batteries, datasets_cfg, fetch_kwargs, clm_config)
+    jobs = _resolve_jobs(source, batteries, datasets_cfg, fetch_kwargs)
+    if config_out is not None:
+        _write_resolved_config(config_out, resolve_config(
+            config, source, batteries, datasets_cfg, jobs,
+            fetch_seed if source in SEEDED_SOURCES else None, fetch_kwargs, label_seed))
+    # After the config is written, so a failed run kept with --keep-failed has it.
+    # Other sources surface [CLM-104]/[CLM-105] per dataset.
+    if source == "byoc":
+        precheck_byoc_matching_ids(jobs, fetch_kwargs, clm_config)
 
     fetcher = FETCHERS[source]
-    n_ok = 0
-    n_unlabelled = 0
+    n_full = 0
+    n_short = 0
 
-    for battery, dataset in jobs:
+    for i, (battery, dataset) in enumerate(jobs, 1):
+        # Every line until the next header is this dataset's: the engine's do not
+        # name it.
+        log.info(f"Dataset {i} of {len(jobs)}: {battery}/{dataset}")
         try:
             df = fetcher(battery, dataset, fetch_seed, **fetch_kwargs)
             if df is None:
@@ -561,16 +646,17 @@ def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: 
 
             context = build_context(source, battery, dataset, df)
 
-            # Unlabelled datasets are still written and processed.
-            skipped = n_add_labels > 0 and not _label_dataset(
-                context, battery, dataset, label_cfg, n_add_labels,
-                source_labeling, clm_config, label_seed)
+            # A dataset short of its labels is still written and processed.
+            if n_add_labels > 0:
+                _label_dataset(context, battery, dataset, label_cfg, n_add_labels,
+                               source_labeling, clm_config, label_seed)
 
             _write_dataset(context, source, battery, dataset, source_labeling, clm_config,
                            csv_dir, png_dir, txt_dir, render_plots, seed_lines, label_seed)
-            n_ok += 1
-            if skipped:
-                n_unlabelled += 1
+            if len(context.generated_labels) < n_add_labels:
+                n_short += 1
+            else:
+                n_full += 1
         except ValueError as e:
             if _aborts_run(e, battery, dataset):
                 raise
@@ -578,26 +664,21 @@ def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: 
             log.error(f"Skipping {battery}/{dataset}: unexpected {type(e).__name__}: {e}")
 
     # Path-shaped names never became jobs; they were reported at resolution.
+    n_ok = n_full + n_short
     n_skipped = len(jobs) - n_ok
-    if n_skipped:
-        log.warning(f"{n_skipped} of the {len(jobs)} resolved dataset(s) were skipped "
+    if n_short or n_skipped:
+        log.warning(f"Of the {len(jobs)} resolved dataset(s): {n_full} written with all "
+                    f"labels, {n_short} written with not all labels, {n_skipped} skipped "
                     "(see the errors above).")
-    if n_unlabelled:
-        log.warning(
-            f"{n_unlabelled} of the {n_ok} processed dataset(s) were written WITHOUT a "
-            "generated label (see the errors above): those CSVs hold features and "
-            "ground-truth clusters only."
-        )
     return n_ok
 
 
 def build_run_dir(base_dir: Path, friendly_source: str) -> Path:
-    """One self-packaging folder per run: DDMMYY_Source_HHMMSS/
-    Creates the folder it returns, and returns only a folder it created.
-    Raises OSError when `base_dir`, or a folder above it, is a file.
+    """One folder per run: YYYYMMDD_HHMMSS_Source/, then _2, _3 for runs
+    started in the same second.
     """
     now = datetime.now()
-    stem = f"{now:%d%m%y}_{friendly_source}_{now:%H%M%S}"
+    stem = f"{now:%Y%m%d_%H%M%S}_{friendly_source}"
     candidate, n = base_dir / stem, 1
     while True:
         try:
@@ -622,18 +703,23 @@ def _file_in_the_way(path: Path) -> Path | None:
     return None
 
 
-def discard_run_dir_if_barren(run_dir: Path, config_copy: Path) -> bool:
-    """Remove a run folder that a failed run left.
+def discard_failed_run(run_dir: Path, keep_failed: bool) -> bool:
+    """Remove a failed run's folder, unless --keep-failed keeps its config and log.
+
+    Only a folder holding what a run starts with: empty csv/ and png/, and info/
+    with the run's config and log. Anything else, such as a dataset written
+    before the failure, keeps the folder.
     """
+    if keep_failed:
+        log.info(f"Failed run kept: its config and log are in '{run_dir / 'info'}'.")
+        return False
     if not run_dir.is_dir():
         return False
-
-    expected_subdirs = {"csv", "png", "txt"}
+    own = {f"{run_dir.name}{ext}" for ext in (".yaml", ".json", ".log")}
     for entry in run_dir.iterdir():
-        if entry.is_dir():
-            if entry.name not in expected_subdirs or any(entry.iterdir()):
-                return False
-        elif entry != config_copy:
+        allowed = own if entry.name == "info" else set()
+        if (entry.name not in ("csv", "png", "info") or not entry.is_dir()
+                or any(p.name not in allowed for p in entry.iterdir())):
             return False
 
     try:
@@ -641,34 +727,128 @@ def discard_run_dir_if_barren(run_dir: Path, config_copy: Path) -> bool:
     except OSError as e:
         # Never fatal: the run has already failed and reported why, and a folder
         # that could not be removed is untidy rather than wrong.
-        log.warning(f"Could not remove the empty run folder '{run_dir}': {e}")
+        log.warning(f"Could not remove the failed run's folder '{run_dir}': {e}")
         return False
 
-    log.info(f"No output was produced, so the empty run folder '{run_dir}' was removed.")
+    log.info(f"The failed run's folder '{run_dir}' was removed. "
+             "Run with --keep-failed to keep its config and log.")
     return True
 
 
+class _Terminated(BaseException):
+    """SIGTERM, which a scheduler sends to cancel a job or at its time limit. A
+    BaseException, like KeyboardInterrupt, so no `except Exception` catches it."""
+
+
+def _raise_terminated(signum: int, frame: object) -> None:
+    raise _Terminated
+
+
+def _run_config(config: str, flags: list[str], env: dict[str, str]) -> tuple[int, str]:
+    """One config as its own clmsynth process: its exit status and its output."""
+    proc = subprocess.run([sys.executable, "-m", "clmsynth.main", config, *flags],
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                          env=env, check=False)
+    # A child killed by a signal reports -N; the shell's 128 + N keeps it the highest.
+    code = proc.returncode if proc.returncode >= 0 else 128 - proc.returncode
+    return code, proc.stdout
+
+
+_RUN_LINE = re.compile(r" - INFO - Run (\S+) from config ")
+
+
+def _run_batch(configs: list[str], jobs: int, flags: list[str]) -> int:
+    """Each config in its own clmsynth process, `jobs` at a time, so each run keeps
+    its own folder, log and exit status. A run's output is printed whole when it
+    ends. Returns the highest exit status."""
+    env = dict(os.environ)
+    if jobs > 1:
+        # Otherwise each worker may start a BLAS thread per core.
+        for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+            env.setdefault(var, "1")
+    n = len(configs)
+    log.info(f"Batch of {n} config(s), {min(jobs, n)} at a time.")
+
+    results: dict[int, tuple[int, str]] = {}
+
+    def report(i: int, code: int, output: str) -> None:
+        results[i] = (code, output)
+        log.info(f"Config {i + 1} of {n} ended with exit {code}: {configs[i]}")
+        sys.stderr.write(output)
+
+    stopped = 0
+    pool = ThreadPoolExecutor(max_workers=jobs)
+    futures = {pool.submit(_run_config, config, flags, env): i
+               for i, config in enumerate(configs)}
+    # A scheduler or Ctrl-C signals every process of the job: each run stops and
+    # cleans up itself, and the batch starts nothing new.
+    previous_sigterm = signal.signal(signal.SIGTERM, _raise_terminated)
+    try:
+        for future in as_completed(futures):
+            report(futures[future], *future.result())
+    except KeyboardInterrupt:
+        stopped = 130
+    except _Terminated:
+        stopped = 143
+    finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)
+    if stopped:
+        log.warning("Stopping: no further config starts; waiting for the running ones.")
+    pool.shutdown(wait=True, cancel_futures=True)
+    for future, i in futures.items():
+        if i not in results and future.done() and not future.cancelled():
+            report(i, *future.result())
+
+    for i, config in enumerate(configs):
+        if i not in results:
+            log.warning(f"{config}: not started")
+            continue
+        code, output = results[i]
+        run = _RUN_LINE.search(output)
+        where = f"run {run.group(1)}" if run else "no run folder"
+        (log.info if code == 0 else log.warning)(f"{config}: exit {code}, {where}")
+    worst = max([stopped, *(code for code, _ in results.values())])
+    n_ok = sum(code == 0 for code, _ in results.values())
+    log.info(f"Batch: {n_ok} of {n} config(s) exited 0; exit status {worst}, the highest.")
+    return worst
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    """Config path, plus --no-viz."""
+    """Config paths, plus --jobs, --no-viz and --keep-failed."""
     parser = argparse.ArgumentParser(
         prog="clmsynth",
-        description="Generate CLM-labeled datasets from a configuration file.")
-    parser.add_argument("config", nargs="?", default="test_data_config.yaml",
-                        help="Configuration YAML (default: test_data_config.yaml).")
+        description="Generate CLM-labeled datasets from configuration files.")
+    parser.add_argument("configs", nargs="*", default=["test_data_config.yaml"],
+                        metavar="config",
+                        help="Configuration file: .json, or YAML with PyYAML installed "
+                             "(default: test_data_config.yaml). Several run as a batch, "
+                             "each in its own process.")
+    parser.add_argument("--jobs", type=int, default=1,
+                        help="How many configs of a batch run at once (default: 1).")
     parser.add_argument("--no-viz", action="store_true",
                         help="Skip plot rendering; the plotting stack is never imported.")
-    return parser.parse_args(argv)
+    parser.add_argument("--keep-failed", action="store_true",
+                        help="Keep a failed run's folder, with its config and the log of "
+                             "why it failed.")
+    args = parser.parse_args(argv)
+    if args.jobs < 1:
+        parser.error("--jobs must be 1 or more")
+    return args
 
 
 def main() -> None:
-    """CLI entry point: ``python -m clmsynth.main [config.yaml] [--no-viz]``
-    (or the ``clmsynth`` console script)."""
+    """CLI entry point: ``python -m clmsynth.main [config ...] [--jobs N] [--no-viz]
+    [--keep-failed]`` (or the ``clmsynth`` console script)."""
     # Parsed first: --help and a usage error print before any log line.
     args = _parse_args(sys.argv[1:])
     configure_cli_logging()
+    if len(args.configs) > 1:
+        flags = [flag for flag, on in (("--no-viz", args.no_viz),
+                                       ("--keep-failed", args.keep_failed)) if on]
+        sys.exit(_run_batch(args.configs, args.jobs, flags))
     log.info("Starting Test Data Orchestrator...")
 
-    config_path = args.config
+    config_path = args.configs[0]
     config = load_config(config_path)
     global_settings = config.get("global_settings") or {}
     problem = _not_a_mapping("global_settings", global_settings, "data_source: byoc")
@@ -676,18 +856,13 @@ def main() -> None:
         # Exit 1 before anything is created, like a config that cannot be loaded.
         log.critical(f"Configuration file '{config_path}': {problem}")
         sys.exit(1)
-    data_source = str(global_settings.get("data_source", "clustbench")).lower()
+    data_source = str(global_settings.get("data_source", DATA_SOURCE)).lower()
     render_plots = not args.no_viz
 
-    base_dir = Path(global_settings.get("output_dir", "OUTPUT"))
-    # Say where output is going BEFORE anything is created. `output_dir` is a
-    # configuration value, and a configuration is a shareable artifact (see
-    # SECURITY.md), so the folder a run writes into is not necessarily one the
-    # person running it chose. Reporting rather than restricting: a destination
-    # outside the working directory is legitimate.
+    base_dir = Path(global_settings.get("output_dir", OUTPUT_DIR))
+    # Reporting where `output_dir` is (a configuration is a shareable artifact, see
+    # SECURITY.md) rather than restricting.
     log.info(f"Output directory: '{resolved_for_report(base_dir)}'.")
-    if not render_plots:
-        log.info("Plot rendering is off: png/ stays empty and matplotlib is never imported.")
     try:
         run_dir = build_run_dir(base_dir, SOURCE_DISPLAY.get(data_source, data_source))
     except OSError as e:
@@ -703,39 +878,55 @@ def main() -> None:
                 "that file, or set global_settings.output_dir to another folder."
             )
         sys.exit(1)
-    csv_dir = run_dir / "csv"
-    png_dir = run_dir / "png"
-    txt_dir = run_dir / "txt"
-    csv_dir.mkdir(parents=True, exist_ok=True)
-    png_dir.mkdir(parents=True, exist_ok=True)
-    txt_dir.mkdir(parents=True, exist_ok=True)
+    csv_dir, png_dir, info_dir = run_dir / "csv", run_dir / "png", run_dir / "info"
+    for folder in (csv_dir, png_dir, info_dir):
+        folder.mkdir(exist_ok=True)
 
-    # Copy the exact config used into the run folder for provenance.
-    config_copy = run_dir / Path(config_path).name
-    shutil.copy(config_path, config_copy)
+    # The run's log and config sit in info/, named after the run folder.
+    log_file = logging.FileHandler(info_dir / f"{run_dir.name}.log", encoding="utf-8")
+    log_file.setFormatter(logging.Formatter(LOG_FORMAT))
+    log_file.addFilter(SingleLineFilter())
+    logging.getLogger().addHandler(log_file)
+    # Ties the folder, named by time and source only, to the config that made it.
+    log.info(f"Run {run_dir.name} from config '{resolved_for_report(config_path)}'.")
+    if not render_plots:
+        log.info("Plot rendering is off: png/ stays empty and matplotlib is never imported.")
 
+    # Not a copy of the file: the config as the run read it, written by
+    # run_pipeline in the format of the file it was given, which is the user's
+    # to keep and share.
+    config_file = info_dir / f"{run_dir.name}{'.json' if _is_json(config_path) else '.yaml'}"
+
+    exit_code = 0
+    previous_sigterm = signal.signal(signal.SIGTERM, _raise_terminated)
     try:
-        n_ok = run_pipeline(data_source, config, csv_dir, png_dir, txt_dir, render_plots)
+        n_ok = run_pipeline(data_source, config, csv_dir, png_dir, info_dir, render_plots,
+                            config_out=config_file)
+        if n_ok == 0:
+            log.error("No datasets were successfully processed.")
+            exit_code = 1
+        else:
+            log.info(f"Pipeline ready. {n_ok} dataset(s) processed. Output folder: '{run_dir}'.")
     except (ValueError, TypeError):
         # Coded [CLM-1xx] configuration error re-raised by run_pipeline, or a
         # malformed config value that reached an operator, which has
-        # already logged it at CRITICAL. Nothing was written, so nothing is kept:
-        # this is the path `precheck_byoc_matching_ids` describes as aborting
-        # before any output is written, and the run folder is the last thing
-        # standing between that claim and the filesystem.
-        discard_run_dir_if_barren(run_dir, config_copy)
-        sys.exit(2)
+        # already logged it at CRITICAL.
+        exit_code = 2
     except KeyboardInterrupt:
-        # Interrupted runs leave no empty folder.
         log.warning("Interrupted; stopping.")
-        discard_run_dir_if_barren(run_dir, config_copy)
-        sys.exit(130)
+        exit_code = 130
+    except _Terminated:
+        log.warning("Terminated; stopping.")
+        exit_code = 143
+    finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)
+        # Closed before the folder can be removed: Windows keeps an open file.
+        logging.getLogger().removeHandler(log_file)
+        log_file.close()
 
-    if n_ok == 0:
-        log.error("No datasets were successfully processed.")
-        discard_run_dir_if_barren(run_dir, config_copy)
-        sys.exit(1)
-    log.info(f"Pipeline ready. {n_ok} dataset(s) processed. Output folder: '{run_dir}'.")
+    if exit_code:
+        discard_failed_run(run_dir, args.keep_failed)
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":

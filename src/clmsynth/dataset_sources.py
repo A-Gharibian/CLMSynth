@@ -25,6 +25,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from ._compat import import_optional_dependency
+
 log = logging.getLogger(__name__)
 
 # Timeout (seconds) for each clustbench network fetch, so a hung GitHub endpoint
@@ -125,11 +127,11 @@ MDCGEN_CONFIGS: dict[str, dict[str, dict[str, Any]]] = {
     },
 }
 
-# --- "fabricated_data" source: wraps fabricated_generator.generate_synthetic_data.
+# --- "fabricated_data" source: wraps _fabricated_generator.generate_synthetic_data.
 SOURCE_METADATA["fabricated_data"] = {
     "fabricated": {
         "description": "Offline fallback using engineered features + perfect-separation "
-                        "labels (fabricated_generator.py). No network, no mdcgenpy.",
+                        "labels. No network, no mdcgenpy.",
         "examples": "baseline_2class, baseline_4class"
     },
 }
@@ -139,7 +141,7 @@ FABRICATED_CONFIGS: dict[str, dict[str, Any]] = {
         "n_samples": 500,
         "config_dict": {
             "feature_generators": {
-                "categorical_features": {"enable": True, "labels": ["Class_0", "Class_1"], "use_faker": False}
+                "categorical_features": {"enable": True, "labels": ["Class_0", "Class_1"]}
             },
             "ground_truths": {
                 "class_clustering": {"enforce_perfect_separation": True, "target_label": "Cohort_Class"}
@@ -151,8 +153,7 @@ FABRICATED_CONFIGS: dict[str, dict[str, Any]] = {
         "config_dict": {
             "feature_generators": {
                 "categorical_features": {"enable": True,
-                                          "labels": ["Class_0", "Class_1", "Class_2", "Class_3"],
-                                          "use_faker": False}
+                                          "labels": ["Class_0", "Class_1", "Class_2", "Class_3"]}
             },
             "ground_truths": {
                 "class_clustering": {"enforce_perfect_separation": True, "target_label": "Cohort_Class"}
@@ -171,7 +172,7 @@ FABRICATED_CONFIGS: dict[str, dict[str, Any]] = {
             "feature_generators": {
                 "categorical_features": {"enable": True,
                                           "labels": ["Class_0", "Class_1", "Class_2", "Class_3"],
-                                          "use_faker": False, "labels_only": True}
+                                          "labels_only": True}
             },
             "ground_truths": {"class_clustering": {"target_label": "Cohort_Class"}},
         },
@@ -344,16 +345,16 @@ def fetch_mdcgen_data(
 ) -> pd.DataFrame | None:
     """Generates one synthetic dataset via mdcgenpy (optional dependency)
     from the registered preset, seeded; None if unavailable or failing."""
-    # Import the SUBMODULE, not just the package: `import mdcgenpy` alone leaves
+    # The SUBMODULE, not just the package: `import mdcgenpy` alone leaves
     # `mdcgenpy.clusters` unbound (mdcgenpy/__init__.py does not import it), so
     # `mdcgenpy.clusters.ClusterGenerator` raised AttributeError on every run.
-    # The generic handler below report it as a generation failure.
     try:
-        from mdcgenpy.clusters import ClusterGenerator
+        clusters = import_optional_dependency("mdcgenpy.clusters",
+                                              repr(f"{dataset_group}/{dataset_name}"))
     except ImportError as e:
-        log.error(f"mdcgenpy is unavailable ({e}). Install it via: "
-                  "pip install git+https://github.com/CN-TU/mdcgenpy")
+        log.error(f"{e}.")
         return None
+    ClusterGenerator = clusters.ClusterGenerator
 
     if dataset_group not in SOURCE_METADATA["mdcgen"]:
         log.warning(f"Battery '{dataset_group}' is not in the recommended list, but attempting to generate anyway.")
@@ -388,7 +389,7 @@ def fetch_mdcgen_data(
 
 
 # ===========================================================================
-# Source 3: fabricated_data, offline fallback, wraps fabricated_generator.py
+# Source 3: fabricated_data, offline fallback, wraps _fabricated_generator.py
 # ===========================================================================
 
 def fetch_fabricated_data(
@@ -397,10 +398,10 @@ def fetch_fabricated_data(
         seed: int = 42,
         **kwargs
 ) -> pd.DataFrame | None:
-    """Generates one offline dataset via fabricated_generator; cluster ids are
+    """Generates one offline dataset via _fabricated_generator; cluster ids are
     integers 0...K-1, matching clustbench/mdcgen, so one clm_label config ports
     across sources without retyping cluster references."""
-    from . import fabricated_generator
+    from . import _fabricated_generator
 
     preset = FABRICATED_CONFIGS.get(dataset_name)
     if preset is None:
@@ -410,7 +411,7 @@ def fetch_fabricated_data(
     n_samples = int(kwargs.get("n_samples", preset["n_samples"]))
     log.info(f"Generating offline fabricated_data dataset '{dataset_name}' (n={n_samples}, seed={seed})...")
 
-    df = fabricated_generator.generate_synthetic_data(
+    df = _fabricated_generator.generate_synthetic_data(
         n_samples=n_samples,
         output_file=None,
         seed=seed,
@@ -425,10 +426,10 @@ def fetch_fabricated_data(
     # Cluster ids are emitted as integers 0...K-1, like every other source, so a
     # clm_label config's `clusters:`/`single_match.cluster` values port across
     # sources unchanged. The generator deliberately produces READABLE labels
-    # ("Class_0", or Faker company names when use_faker is set), collapsing
-    # those to codes is this adapter's job, not the generator's, which keeps its
-    # own standalone CSV human-readable. Cohort_Class is left as-is; build_context
-    # drops it, so only the integer labeling reaches the output frame.
+    # ("Class_0", ...); collapsing those to codes is this adapter's job, not the
+    # generator's, which keeps its own standalone CSV human-readable. Cohort_Class
+    # is left as-is; build_context drops it, so only the integer labeling reaches
+    # the output frame.
     gt = df["Cohort_Class"]
     codes = (gt.cat.codes if isinstance(gt.dtype, pd.CategoricalDtype)
              # qcut's category order is the percentile order, so cat.codes is
