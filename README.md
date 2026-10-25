@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](https://github.com/A-Gharibian/CLMSynth/blob/main/LICENSE.txt)
 [![CI](https://img.shields.io/github/actions/workflow/status/A-Gharibian/CLMSynth/ci.yml?branch=main&label=CI)](https://github.com/A-Gharibian/CLMSynth/actions/workflows/ci.yml)
 [![Cite](https://img.shields.io/badge/cite-CITATION.cff-blueviolet)](https://github.com/A-Gharibian/CLMSynth/blob/main/CITATION.cff)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21759538.svg)](https://doi.org/10.5281/zenodo.21759538)
+
 
 CLMSynth generates synthetic label columns on top of existing or generated clusters, 
 with mathematically controlled agreement
