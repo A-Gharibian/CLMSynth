@@ -202,7 +202,7 @@ def test_the_reachable_pair_range_is_reported_under_scope_pair(
     baseline_4class: N = 800 and cluster 0 holds 200, so
     phi_min = sqrt(600 / (200 * 799)) = 0.0613.
     """
-    from clmsynth.main import _clm_info_text
+    from clmsynth._visualization import _clm_info_text
 
     clm = {
         "num_classes": 4,
@@ -267,9 +267,10 @@ THREE_LABELS = {
         (
             {**THREE_LABELS, "target_metric": {"type": "mcc", "value": 0.99}},
             [
-                "    target_metric = mcc 0.99 requested, 0.6594 achieved (scope global)",
-                "    highest found = 0.6594 (alpha 0.7000)",
+                "    target_metric = mcc 0.99 requested, 0.6948 achieved (scope global)",
+                "    highest found = 0.6948 (alpha 0.7314)",
                 "    size ceiling  = 0.7071 (no labeling with these label counts scores higher)",
+                "      row 0: clusters [0] -> label 0, alpha 0.7375: 200 points (asks 200.6)",
             ],
             [],
         ),
@@ -296,18 +297,38 @@ THREE_LABELS = {
         (
             {"num_classes": 4, "balance": "balanced", "matching_mode": "perfect"},
             [],
-            ["target_metric =", "highest found", "size ceiling"],
+            ["target_metric =", "highest found", "size ceiling", "placed:"],
+        ),
+        (
+            {"num_classes": 4, "balance": "unbalanced",
+             "proportions": [0.25125, 0.25, 0.25, 0.24875], "matching_mode": "custom",
+             "assignment_matrix": [{"clusters": [0], "label": 0, "recall_target": 0.4},
+                                   {"clusters": [1], "label": 0, "recall_target": 0.4}],
+             "competing_noise": [{"cluster": 2, "label": 0, "share": 0.5, "favors": "random"},
+                                 {"cluster": 3, "label": 1, "share": 0.1, "favors": "random"}]},
+            [("    assignment_matrix placed:\n"
+              "      row 0: clusters [0] -> label 0, recall_target 0.4: 81 points (asks 80.4)\n"
+              "      row 1: clusters [1] -> label 0, recall_target 0.4: 80 points (asks 80.4)\n"
+              "    competing_noise placed:\n"
+              "      entry 0: cluster 2 -> label 0, share 0.5: 40 points (asks 100)\n"
+              "      entry 1: cluster 3 -> label 1, share 0.1: 20 points (asks 20)\n")],
+            ["target_metric ="],
         ),
     ],
-    ids=["global-mcc", "global-ari", "counts-can-move", "pair", "no-target"],
+    ids=["global-mcc", "global-ari", "counts-can-move", "pair", "no-target", "placed"],
 )
-def test_the_target_report_is_written_to_the_summary(clm, present, absent, tmp_path, no_plots):
-    """Under target_metric the summary txt lists, below each label's counts, what
-    the engine reported: the request and the delivered value, and under scope
-    'global' the highest value the search found and the size ceiling of the
-    label counts (a bound for ari, none when the counts can move). baseline_4class
-    is four clusters of 200, so three labels of 272/264/264 have the ceiling
-    0.7071. A label made without a target lists none of it.
+def test_the_report_is_written_to_the_summary(clm, present, absent, tmp_path, no_plots):
+    """The summary txt lists, below each label's counts, what the engine
+    reported: the points each assignment_matrix row and competing_noise entry
+    asks for and places, and under target_metric the request and the delivered
+    value, and under scope 'global' the highest value the search found and the
+    size ceiling of the label counts (a bound for ari, none when the counts can
+    move). baseline_4class is four clusters of 200, so three labels of
+    272/264/264 have the ceiling 0.7071, and row 0 asks 0.7375 x 272 = 200.6
+    points at the solved level, the last one that fits cluster 0's 200 points. A label made without a target lists no target lines,
+    and 'perfect' has no rows to list. Two rows of 0.4 of a 201-point label ask
+    80.4 + 80.4 and take 81 + 80; entry 0 asks half of cluster 2's 200 points
+    but label 0 has 40 left ([CLM-305]).
     """
     csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
     for d in (csv_dir, png_dir, txt_dir):
@@ -396,18 +417,41 @@ def test_float_rounding_in_proportions_is_tolerated():
     """[1/3, 1/3, 1/3] sums to 0.9999999999999999 in binary float.
 
     A naive `sum(p) != 1.0` check rejects the most natural way to write an even
-    three-way split, so the sum test has to carry a tolerance.
+    three-way split, so the sum test has to carry a tolerance. The counts still
+    partition the points where the tolerance amounts to whole points.
     """
+    for proportions, n in (
+        ([1 / 3, 1 / 3, 1 / 3], N),
+        ([0.5000005, 0.5], 4_000_000),
+        ([0.5000005, 0.5, 0.0], 4_000_000),
+        ([0.4999999, 0.25, 0.25], 100_000_000),
+    ):
+        counts = resolve_label_counts(
+            {
+                "num_classes": len(proportions),
+                "balance": "unbalanced",
+                "proportions": proportions,
+            },
+            n,
+            np.random.default_rng(0),
+        )
+        assert sum(counts) == n, (proportions, n, list(counts))
+
+
+@pytest.mark.parametrize(
+    "cfg",
+    [
+        {"proportions": [0.7, 0.3]},
+        {"skew_rule": "dominant_minority", "skew_params": {"dominant_share": 0.7}},
+    ],
+)
+def test_a_tie_between_written_values_goes_to_the_earlier_label(cfg):
+    """0.7 and 0.3 of 1435 points are 1004.5 and 430.5 as written; in floats 0.3's
+    share came out larger. The tie goes to the earlier label."""
     counts = resolve_label_counts(
-        {
-            "num_classes": 3,
-            "balance": "unbalanced",
-            "proportions": [1 / 3, 1 / 3, 1 / 3],
-        },
-        N,
-        np.random.default_rng(0),
+        {"num_classes": 2, "balance": "unbalanced", **cfg}, 1435, np.random.default_rng(0)
     )
-    assert sum(counts) == N
+    assert counts.tolist() == [1005, 430]
 
 
 def test_proportions_that_are_clearly_wrong_are_still_rejected():
@@ -493,6 +537,7 @@ def _skew_cfg(skew_rule, params, num_classes=4):
         (1, "dominant_minority", {"dominant_index": 0, "dominant_share": 0.9}, "ZeroDivisionError"),
         (4, "dirichlet", {"alpha": 0.0}, "ZeroDivisionError"),
         (4, "dirichlet", {"alpha": -1}, "numpy's bare ValueError: alpha < 0"),
+        (4, "dirichlet", {"alpha": 1e308}, "ZeroDivisionError: the draws' sum overflowed"),
         (4, "geometric", [0.5], "AttributeError, .get() on a list"),
     ],
     ids=[
@@ -503,6 +548,7 @@ def _skew_cfg(skew_rule, params, num_classes=4):
         "one-class",
         "alpha-zero",
         "alpha-negative",
+        "alpha-overflows",
         "params-not-a-mapping",
     ],
 )
@@ -528,8 +574,9 @@ def test_out_of_range_skew_params_are_coded(num_classes, skew_rule, params, was)
         ("dominant_minority", {"dominant_index": 0, "dominant_share": 1.0}),
         ("dominant_minority", {"dominant_index": 3, "dominant_share": 0.0}),
         ("dirichlet", {"alpha": 1e-300}),
+        ("dirichlet", {"alpha": 4e307}),
     ],
-    ids=["ratio-0", "share-1", "share-0", "alpha-denormal"],
+    ids=["ratio-0", "share-1", "share-0", "alpha-denormal", "alpha-huge"],
 )
 def test_legal_extremes_are_not_swept_up_by_the_guard(skew_rule, params):
     """The boundaries themselves stay valid.
@@ -622,7 +669,8 @@ def test_unreachable_tolerance_reports_non_convergence(caplog):
             },
             seed=1,
         )
-    assert "[CLM-306]" in caplog.text
+    assert any(getattr(r, "clm_code", None) == 306 and r.levelno == logging.WARNING
+               for r in caplog.records)
 
 
 def test_zero_max_iter_skips_the_refinement_without_crashing():
@@ -674,7 +722,7 @@ def test_byoc_duplicate_rows_are_not_silently_deduplicated(tmp_path):
             {
                 "f1": [1.0, 1.0, 1.0, 2.0, 2.0, 2.0],
                 "f2": [1.0, 1.0, 1.0, 2.0, 2.0, 2.0],
-                "cluster": ["A", "A", "A", "B", "B", "B"],
+                "cluster": [0, 0, 0, 1, 1, 1],
             }
         ),
     )
@@ -691,7 +739,7 @@ def test_byoc_duplicate_column_names_are_rejected(tmp_path, caplog):
     two originals it holds depends on their order in the file.
     """
     (tmp_path / "dup_cols.csv").write_text(
-        "f1,f1,cluster\n1.0,2.0,A\n3.0,4.0,B\n5.0,6.0,A\n7.0,8.0,A\n9.0,1.0,B\n2.0,3.0,B\n",
+        "f1,f1,cluster\n1.0,2.0,0\n3.0,4.0,1\n5.0,6.0,0\n7.0,8.0,0\n9.0,1.0,1\n2.0,3.0,1\n",
         encoding="utf-8",
     )
     with caplog.at_level(logging.ERROR, logger="clmsynth"):
@@ -707,75 +755,46 @@ def test_byoc_duplicate_column_names_are_rejected(tmp_path, caplog):
 # ---------------------------------------------------------------------------
 
 
-def test_unicode_cluster_ids_survive_load_and_labelling(tmp_path):
-    """Accented, Cyrillic and emoji cluster ids, end to end.
-
-    Cluster ids are dictionary keys throughout the engine, so they only have to
-    be hashable, but they also reach the CSV and the plot legend, which is
-    where an encoding assumption would surface.
-    """
-    result = write_byoc_csv(
-        tmp_path,
-        "unicode_clusters",
-        pd.DataFrame(
-            {
-                "f1": np.linspace(0, 1, 12),
-                "f2": np.linspace(1, 0, 12),
-                # RUF001 flags the Cyrillic letters as confusable with ASCII. Here that
-                # is the point: the ids are non-ASCII on purpose, and a "did you mean
-                # Latin?" autofix would delete the only thing this case tests.
-                "cluster": ["café"] * 4 + ["\U0001f600"] * 4 + ["Зебра"] * 4,  # noqa: RUF001
-            }
-        ),
-    )
-    assert result is not None
-    assert result["GroundTruth_labels0"].nunique() == 3
-
-    out = generate_clm_labels(
-        result["GroundTruth_labels0"].to_numpy(),
-        result[["f1", "f2"]].to_numpy(),
-        {"num_classes": 3, "matching_mode": "perfect"},
-        seed=1,
-    )
-    assert len(out) == 12
-
-
 @pytest.mark.parametrize(
     "frame,expect",
     [
         (
             pd.DataFrame(
-                {"f1": [1.0] * 6, "cluster": ["A"] * 3 + ["B"] * 3, "Cohort_Class": [0] * 6}
+                {"f1": [1.0] * 6, "cluster": [0] * 3 + [1] * 3, "Cohort_Class": [0] * 6}
             ),
             "reserved",
         ),
         (
             pd.DataFrame(
-                {"f1": [1.0] * 6, "cluster": ["A"] * 3 + ["B"] * 3, "GroundTruth_labels0": [0] * 6}
+                {"f1": [1.0] * 6, "cluster": [0] * 3 + [1] * 3, "GroundTruth_labels0": [0] * 6}
             ),
             "reserved",
         ),
         (
-            pd.DataFrame({"f1": [1.0] * 6, "cluster": ["A"] * 3 + ["B"] * 3, "Label_0": [0] * 6}),
+            pd.DataFrame({"f1": [1.0] * 6, "cluster": [0] * 3 + [1] * 3, "Label_0": [0] * 6}),
             "reserved",
         ),
-        (pd.DataFrame({"f1": [1.0] * 6, "cluster": ["A"] * 5 + ["B"]}), "fewer than 3"),
-        (pd.DataFrame({"f1": [1.0] * 6, "cluster": ["A"] * 6}), "distinct value"),
+        (pd.DataFrame({"f1": [1.0] * 6, "cluster": [0] * 5 + [1]}), "fewer than 3"),
+        (pd.DataFrame({"f1": [1.0] * 6, "cluster": [0] * 6}), "distinct value"),
         (
-            pd.DataFrame({"f1": [1.0] * 6, "cluster": ["A", "A", "A", "B", "B", None]}),
+            pd.DataFrame({"f1": [1.0] * 6, "cluster": [0, 0, 0, 1, 1, None]}),
             "[CLM-133]",
         ),
         (
-            pd.DataFrame({"f1": [1.0, 1.0, 1.0, 2.0, 2.0, None], "cluster": ["A"] * 3 + ["B"] * 3}),
+            pd.DataFrame({"f1": [1.0, 1.0, 1.0, 2.0, 2.0, None], "cluster": [0] * 3 + [1] * 3}),
             "missing value",
         ),
         (
-            pd.DataFrame({"f1": ["a", "b", "c", "d", "e", "f"], "cluster": ["A"] * 3 + ["B"] * 3}),
+            pd.DataFrame({"f1": ["a", "b", "c", "d", "e", "f"], "cluster": [0] * 3 + [1] * 3}),
             "non-numeric",
         ),
         (
-            pd.DataFrame({"f1": [1.0] * 6, "cluster": ["A"] * 3 + ["A "] * 3}),
-            "whitespace",
+            pd.DataFrame({"f1": [1.0] * 6, "cluster": ["A"] * 3 + ["B"] * 3}),
+            "are not integers, such as 'A'",
+        ),
+        (
+            pd.DataFrame({"f1": [1.0] * 6, "cluster": [1.0] * 3 + [2.0] * 3}),
+            "are not integers, such as 1.0",
         ),
     ],
     ids=[
@@ -787,7 +806,8 @@ def test_unicode_cluster_ids_survive_load_and_labelling(tmp_path):
         "nan-cluster",
         "nan-feature",
         "non-numeric-feature",
-        "whitespace-cluster-ids",
+        "string-cluster-ids",
+        "float-cluster-ids",
     ],
 )
 def test_byoc_import_requirements_are_enforced(tmp_path, caplog, frame, expect):
@@ -816,7 +836,7 @@ def test_byoc_import_requirements_are_enforced(tmp_path, caplog, frame, expect):
 def test_byoc_tag_columns_are_refused_when_they_make_no_sense(tmp_path, caplog, tags, expect):
     """A tag that is not there is a typo, and the cluster column cannot be one."""
     frame = pd.DataFrame(
-        {"f1": np.linspace(0, 1, 6), "site": list("aabbcc"), "cluster": ["A"] * 3 + ["B"] * 3}
+        {"f1": np.linspace(0, 1, 6), "site": list("aabbcc"), "cluster": [0] * 3 + [1] * 3}
     )
     frame.to_csv(tmp_path / "tagged.csv", index=False)
     with caplog.at_level(logging.ERROR, logger="clmsynth"):
@@ -838,7 +858,7 @@ def test_byoc_tag_columns_ride_along_outside_the_geometry(tmp_path):
             "f1": np.linspace(0, 1, 6),
             "f2": np.linspace(1, 0, 6),
             "site": site,
-            "cluster": ["A"] * 3 + ["B"] * 3,
+            "cluster": [0] * 3 + [1] * 3,
         }
     )
     frame.to_csv(tmp_path / "tagged.csv", index=False)
@@ -866,7 +886,7 @@ def test_byoc_standardize_leaves_a_tag_alone(tmp_path):
     """Min-max rescaling is a feature operation; a passenger is not rescaled."""
     outcome = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
     frame = pd.DataFrame(
-        {"f1": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], "outcome": outcome, "cluster": ["A"] * 3 + ["B"] * 3}
+        {"f1": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], "outcome": outcome, "cluster": [0] * 3 + [1] * 3}
     )
     frame.to_csv(tmp_path / "scaled.csv", index=False)
     result = fetch_byoc_data(
@@ -891,7 +911,7 @@ def test_byoc_boolean_column_is_a_feature_not_a_dropped_column(tmp_path):
         {
             "f1": np.linspace(0, 1, 6),
             "flagged": [True, False, True, False, True, False],
-            "cluster": ["A"] * 3 + ["B"] * 3,
+            "cluster": [0] * 3 + [1] * 3,
         }
     )
     frame.to_csv(tmp_path / "boolean.csv", index=False)
@@ -912,7 +932,7 @@ def test_byoc_import_reports_every_problem_at_once(tmp_path, caplog):
             pd.DataFrame(
                 {
                     "f1": ["a", "b", "c", "d"],
-                    "cluster": ["A", "A", "A", "B"],
+                    "cluster": [0, 0, 0, 1],
                     "Cohort_Class": [0, 1, 2, 3],
                 }
             ),
@@ -931,7 +951,7 @@ def test_byoc_accepts_a_well_formed_import(tmp_path):
             {
                 "f1": np.linspace(0, 1, 9),
                 "f2": np.linspace(1, 0, 9),
-                "cluster": ["A"] * 3 + ["B"] * 3 + ["C"] * 3,
+                "cluster": [0] * 3 + [1] * 3 + [2] * 3,
             }
         ),
     )
@@ -947,7 +967,7 @@ def test_emoji_feature_column_name_loads(tmp_path):
         pd.DataFrame(
             {
                 "\U0001f4c8_feature": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
-                "cluster": ["A", "A", "A", "B", "B", "B"],
+                "cluster": [0, 0, 0, 1, 1, 1],
             }
         ),
     )
@@ -976,28 +996,6 @@ def test_config_value_with_trailing_space_is_rejected():
     assert "[CLM-101]" in str(excinfo.value)
 
 
-def test_byoc_consistently_padded_cluster_ids_are_kept_as_written(tmp_path):
-    """The whitespace refusal is narrow: only ids that differ by whitespace alone.
-
-    'A' beside 'A ' is refused (see the import requirements above), because it
-    would silently add a cluster. An id padded the same way on every row names
-    one cluster unambiguously, so it is neither refused nor stripped.
-    """
-    result = write_byoc_csv(
-        tmp_path,
-        "padded_clusters",
-        pd.DataFrame(
-            {
-                "f1": list(range(10)),
-                "f2": list(range(10)),
-                "cluster": ["A "] * 5 + ["B "] * 5,
-            }
-        ),
-    )
-    assert result is not None
-    assert sorted(result["GroundTruth_labels0"].unique()) == ["A ", "B "]
-
-
 # ---------------------------------------------------------------------------
 # Unusable dataset input ([CLM-133]) and a valueless assignment_matrix
 # ---------------------------------------------------------------------------
@@ -1007,19 +1005,26 @@ def test_byoc_consistently_padded_cluster_ids_are_kept_as_written(tmp_path):
     "cluster_labels,coords,problem",
     [
         (np.concatenate([CLUSTERS[:980].astype(float), np.full(20, np.nan)]), COORDS, "missing"),
-        (np.array([0] * 500 + ["a"] * 500, dtype=object), COORDS, "mix strings and numbers"),
+        (np.concatenate([CLUSTERS[:980].astype(float), np.full(20, np.inf)]), COORDS, "infinite"),
+        ([0] * 500 + ["0"] * 500, COORDS, "500 of the 1000 cluster ids are not integers, such as '0'"),
+        (CLUSTERS.astype(str), COORDS, "are not integers, such as '0'"),
+        (CLUSTERS.astype(float), COORDS, "are not integers, such as 0.0"),
+        ([*CLUSTERS[:999].tolist(), True], COORDS, "1 of the 1000 cluster ids are not integers"),
         (CLUSTERS, COORDS[:900], "coords has 900 rows"),
     ],
-    ids=["nan-ids", "mixed-ids", "short-coords"],
+    ids=["nan-ids", "inf-ids", "mixed-list", "string-ids", "float-ids", "bool-in-list",
+         "short-coords"],
 )
 @pytest.mark.parametrize("mode", ["random", "custom"])
 def test_unusable_dataset_input_is_refused(cluster_labels, coords, problem, mode):
     """[CLM-133], judged per dataset like [CLM-127].
 
     NaN ids used to be merged into one zero-size cluster whose points were never
-    labelled (a numpy 'negative elements' crash, or labels under random), mixed
-    ids crashed the sort, and extra coords rows were silently dropped. byoc
-    refuses missing and mixed ids itself, so this guards the Python API.
+    labelled (a numpy 'negative elements' crash, or labels under random), and
+    extra coords rows were silently dropped. Ids are integers: numpy turned a
+    list holding 0 and "0" into one cluster, and a list holding True into one
+    cluster with 1. byoc refuses missing and non-integer ids itself, so this
+    guards the Python API.
     """
     cfg = {
         "num_classes": 2,
@@ -1032,6 +1037,27 @@ def test_unusable_dataset_input_is_refused(cluster_labels, coords, problem, mode
         generate_clm_labels(cluster_labels, coords, cfg, seed=1)
     assert getattr(excinfo.value, "code", None) == 133
     assert problem in str(excinfo.value)
+
+
+@pytest.mark.parametrize("container", [list, tuple])
+@pytest.mark.parametrize(
+    "cfg",
+    [
+        {"num_classes": 4, "matching_mode": "perfect"},
+        {"num_classes": 4, "balance": "balanced", "matching_mode": "single",
+         "single_match": {"cluster": 0, "label": 0}},
+        {"num_classes": 4, "balance": "balanced", "matching_mode": "custom",
+         "assignment_matrix": [{"label": 0, "clusters": [0], "recall_target": 0.5}]},
+        {"num_classes": 4, "balance": "balanced", "matching_mode": "random"},
+    ],
+    ids=["perfect", "single", "custom", "random"],
+)
+def test_ids_as_a_list_or_tuple_give_the_array_labels(cfg, container):
+    """Integer ids passed as a list or tuple give the labels they give as an
+    array. Every mode but random read each cluster as empty: perfect crashed, and
+    single and custom were refused as if the cluster held no points."""
+    out = generate_clm_labels(container(CLUSTERS.tolist()), COORDS, cfg, seed=1)
+    pd.testing.assert_series_equal(out, generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1))
 
 
 def test_valueless_assignment_matrix_with_a_target_is_a_missing_key():

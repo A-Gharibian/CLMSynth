@@ -6,8 +6,8 @@
 [![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14%20%7C%203.15-blue)](https://github.com/A-Gharibian/CLMSynth/blob/main/pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](https://github.com/A-Gharibian/CLMSynth/blob/main/LICENSE.txt)
 [![CI](https://img.shields.io/github/actions/workflow/status/A-Gharibian/CLMSynth/ci.yml?branch=main&label=CI)](https://github.com/A-Gharibian/CLMSynth/actions/workflows/ci.yml)
+[![Project status: active](https://img.shields.io/badge/repo%20status-active-brightgreen)](https://www.repostatus.org/#active)
 [![Cite](https://img.shields.io/badge/cite-CITATION.cff-blueviolet)](https://github.com/A-Gharibian/CLMSynth/blob/main/CITATION.cff)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21759538.svg)](https://doi.org/10.5281/zenodo.21759538)
 
 CLMSynth generates synthetic label columns on top of existing or generated clusters, 
 with mathematically controlled agreement
@@ -30,6 +30,13 @@ scripts `clmsynth`, `clmsynth-config`, and `clmsynth-wizard`. The `yaml` extra a
 PyYAML, which reads and writes config files other than `.json`; the wizard and
 `clmsynth-config` need it. `pip install clmsynth` alone runs the engine,
 `run_pipeline`, and `.json` configs.
+
+A first run that needs no network or extra uses the small `fabricated_data` config
+bundled in the wheel, and writes to `./OUTPUT`:
+
+```bash
+python -m clmsynth.main "$(python -c "from importlib.resources import files; print(files('clmsynth') / 'test_data_config_offline.json')")"
+```
 
 **Start with the wizard.** `clmsynth-wizard` asks a question per setting and
 writes a runnable config, which is the entry point that needs no files from the
@@ -65,6 +72,9 @@ Optional, depending on which source/utility you use:
 ```bash
 pip install git+https://github.com/CN-TU/mdcgenpy    # only needed for data_source: "mdcgen"
 ```
+
+`mdcgenpy` is GPL-3.0, so CLMSynth never ships it: you install it yourself. Every dependency
+CLMSynth ships is permissively licensed.
 
 ## Use directly 
 
@@ -104,7 +114,7 @@ local array can be built without going through the datasource route.
 
 ### Diagnostics
 Every error and warning the engine raises carries a `[CLM-###]` code
-(`1xx` config `ValueError`, `15x` `InfeasibleAllocationError`, `2xx` `KeyError`, and `3xx` Warnings),
+(`1xx` config `ValueError`, `15x` `InfeasibleAllocationError`, `2xx` `MissingConfigKey` (a `KeyError` subclass), and `3xx` Warnings),
 defined in `clm_errors.py`. The full catalog is available in the CLMSynth
 User Manual under the *Configuration Troubleshooting Reference* section. Each code
 has a reproducible case in `docs/troubleshooting_catalog/`, a YAML config and the
@@ -114,7 +124,10 @@ An invalid configuration 1xx error aborts the whole run for every dataset except
 [CLM-102/105/119/125/127/133], which are raised against each dataset's own cluster count,
 cluster IDs or feature columns, so a failure of configuration for one dataset does not apply to a batch of datasets.
 [CLM-120] (no recall level of a `target_metric` fits a dataset) leaves only that dataset's
-label out: the dataset is still written, and the run continues.
+label out: the dataset is still written, and the run continues. So does [CLM-154], a
+`target_metric` with `strict: true` that misses its tolerance.
+A missing required key (2xx) stops the run too: such a key has no default, so no dataset
+can be labelled.
 For byoc, [CLM-104] and [CLM-105] are additionally checked across the whole batch before
 any work begins, so an ID mismatch refuses the run before a file is written and names
 every erroneous dataset; everything else is reported per dataset, and the run continues.
@@ -140,7 +153,8 @@ CLMSynth is fully functional from a config file; the wizard helps to *create* on
 
 1. How to generate a config (edit `upstream_payload.yaml`, or pass your own file). The
    shipped payload labels `fcps/hepta` [[4]](#references) from `clustbench`: 212 points
-   in 3-D, 7 clusters, one rule per cluster.
+   in 3-D, 7 clusters, one rule per cluster. The `clm_label` block is checked with the
+   engine's own checks before it is written; what needs the dataset is checked by the run.
    ```bash
    python -m clmsynth.generate_config                    # reads upstream_payload.yaml, writes test_data_config.yaml
    python -m clmsynth.generate_config my_payload.yaml    # or an explicit payload (and optionally an output path)
@@ -158,7 +172,8 @@ CLMSynth is fully functional from a config file; the wizard helps to *create* on
    In a batch every config is a run of its own:
    `--jobs` (default 1) sets how many run at once. Above 1, each run gets `OMP_NUM_THREADS`,
    `OPENBLAS_NUM_THREADS` and `MKL_NUM_THREADS` of 1 unless you set them, so the runs do not each start a thread
-   per core.
+   per core. A SIGTERM to the batch process alone starts no further config and lets the running ones finish;
+   a scheduler, Ctrl-C or `timeout` signals the whole process group and stops them too.
 
 ## Output
 
@@ -184,12 +199,29 @@ OUTPUT/{YYYYMMDD}_{HHMMSS}_{Source}/
 - The base folder is `global_settings.output_dir` (default `OUTPUT`).
 - A run that fails before writing a dataset removes its folder. `--keep-failed`
   keeps it, with the config and the log of why it failed.
-- **Exit status:** 0 success, 1 the config could not be loaded or no dataset was
-  written, 2 a configuration or command-line error, 130 interrupted (Ctrl-C or
-  SIGINT), 143 terminated (SIGTERM). Any other
-  status comes from the shell, the scheduler or a wrapper such as `timeout` or
-  `xargs`; a `[CLM-nnn]` code with the same number is unrelated. A batch exits
-  with the highest status of its configs.
+- **Exit status:**
+  - 0: every dataset written with all its labels.
+  - 1: nothing written, for a reason beyond the config: a dataset its source
+    could not deliver (a failed download; a data CSV that is missing, unreadable
+    or refused by byoc's import checks, `[CLM-133]` among them), an output folder
+    that cannot be created, PyYAML missing for a `.yaml` config, a crash.
+  - 2: the command line or the config is wrong: a usage error, a missing or
+    malformed config, a missing required key (`[CLM-2xx]`), a `[CLM-1xx]` refusal
+    from the labeling. Nothing is written.
+    `clmsynth-config` exits 2 for a payload that is missing, malformed or of the
+    wrong shape, or whose `clm_label` block the engine refuses (`[CLM-1xx]`,
+    `[CLM-2xx]`).
+  - 3: incomplete: some datasets written, others skipped or without all their
+    labels; the run's last warning counts them. A failed download may succeed
+    when the job is resubmitted; anything else repeats until the config or the
+    data change.
+  - 130 interrupted (Ctrl-C or SIGINT), 143 terminated (SIGTERM).
+
+  Any other status comes from the shell, the scheduler or a wrapper such as
+  `timeout` or `xargs`; a `[CLM-nnn]` code with the same number is unrelated. A
+  batch reads its configs as a run reads its datasets: 0 when every config
+  exited 0, 3 when some wrote their datasets and others did not, otherwise 1, or
+  2 when every config exited 2. A signal's status comes first.
 - **Column naming:** ground-truth class labeling such as `Cluster_0`, `Cluster_1`, …
   (by position, `source_labeling: labels0` surfaces as `Cluster_0`); generated
   labels become `Label_0`, `Label_1`, … (0-indexed, one per `n_labels`).
@@ -246,7 +278,9 @@ label_generation:
   more than one column.
 - `standardize: true` min-max rescales the features to `[0, 1]` at import, applied once, before both the
    geometry/centroid math and the written CSV. Off by default.
-- Cluster IDs may be integers or strings; if you use `single_match`/`assignment_matrix`, match that ID type.
+- Cluster IDs are integers, in the file and wherever the config names a cluster (`single_match`,
+  `assignment_matrix`, `competing_noise`); `1.0`, `"C1"` or `true` is refused (`[CLM-133]` in the file,
+  `[CLM-141]` in the config). The column's name is free.
 
 ### `matching_mode` reference
 
@@ -255,8 +289,9 @@ label_generation:
    neither read nor validated (`[CLM-302]` warns when any is set).
 - `single` routes label `l*`'s point budget into cluster `k*`. 
    **Note:** the current implementation places up to `recall_target × m_{l*}` points of `l*` into `k*`,
-   so it requires `|k*| ≥ m_{l*}` (see Known limitations).
+   so it requires `|k*| ≥ m_{l*}`.
 - `random`, labels drawn from the resolved proportions, ignoring cluster structure entirely.
+   `centroid_dependence` is ignored there (`[CLM-311]`), so data without features runs.
 - `custom`, one or more explicit `assignment_matrix` rules, each routing a `recall_target` 
    fraction of one label's points into a set of clusters. Supports surjective (many clusters → one label),
    partial, and overlapping alignments. Unclaimed cluster capacity follows `spillover_rule`.
@@ -271,7 +306,10 @@ applied after it.
 
 - **`scope: "global"` (default)**, targets the whole-partition metric. A single
   global recall level is solved (coarse grid scan → Brent's method) so the achieved 
-  MCC or ARI meets the requested value within tolerance. If the target exceeds
+  MCC or ARI meets the requested value within tolerance. When the grid alone finds no
+  recall level that fits, or misses the target, the search also looks between two
+  neighbouring grid levels where the outcome changes: a level that fits next to one
+  refused with `[CLM-15x]`, or `[CLM-152]` next to another code. If the target exceeds
   what the geometry/proportions can
   reach, the solver returns its closest feasible value and logs a
   non-convergence warning. Works for `type: mcc` and `type: ari`.
@@ -283,6 +321,11 @@ applied after it.
   [article](https://doi.org/10.1016/j.softx.2026.103077)).
   The whole-partition `R_K` and ARI reported on the plots then serve as
   independent views of the same labeling.
+
+A miss is delivered as the closest value with a warning. With `strict: true`
+(either scope) a delivered value outside `value ± tolerance` is refused with
+`[CLM-154]` and the label is not written; without a `tolerance`, strict asks for
+the exact value.
 
 > **What metric is being solved.** The global MCC is the multiclass Gorodkin's
 > `R_K` that `clustering_mcc` computes (permutation-invariant via Hungarian
@@ -297,42 +340,7 @@ applied after it.
 > check one label's precision and recall (rather than its specificity). If you are
 > only interested in a single target label and cluster, prefer
 > `matching_mode: single` with `scope: pair` over a custom distribution coupled
-> with a binary MCC solver [[3]](#References). 
-
-## Known limitations
-
-- **`single` mode is budget-into-`k*`, not drain-`k*`-into-`l*`**. 
-It tries to place label `l*`'s full budget `m_{l*}` inside cluster `k*`, so without a
-  `target_metric` it raises `InfeasibleAllocationError` (`[CLM-150]`, naming the setting
-  `m_{l*}` comes from) whenever `|k*| < m_{l*}`,
-  e.g. pointing `single_match` at the *smallest* cluster with a large budget.
-- **Target metric can be unreachable (structural ceiling).** Under `scope: global` the
-  engine reports the highest value its search found and, when nothing can move the label
-  counts, their size ceiling: no labeling with those counts scores higher (for `ARI` a
-  bound that is not always reached). Both are reported, not acted on.
-- **Under `single`/`custom`, exact proportions need `spillover_rule: proportional_to_marginal`.**
-  `uniform`/`concentrated` deliberately do not preserve the target label counts, and
-  `[CLM-304]` reports the delivered counts when they differ from their targets.
-  (`random` always delivers the counts exactly; `perfect` uses the cluster sizes.)
-  - **`competing_noise` can also break proportions**. Each entry converts
-    leftover points of one cluster into one specific competing label. Under
-    `proportional_to_marginal` this only displaces spillover and the counts stay
-    exact, unless an entry gives a label more points than its target (`[CLM-304]`).
-    Either way, the achieved MCC/ARI differs from random-spillover noise.
-  - **`balance: balanced` also ignores `proportions`** (enforces uniform 1/M) and warns.
-    It is the default when `balance` is absent. Any value other than `balanced` or
-    `unbalanced`, including a case slip such as `Balanced`, is refused (`[CLM-132]`).
-    An unread `skew_rule`/`skew_params` (under `balanced`, or beside `proportions`) is
-    ignored without a warning.
-- **Reachable `scope: pair` values are a coarse ladder near the bottom of the
-  range.** The target label is sized to an integer number of points, so only a
-  discrete set of pair-MCC values is reachable. `[CLM-307]` warns only when a request falls
-  *outside* `[phi_min, 1]`; it says nothing about one falling between intervals inside
-  that range, which `[CLM-310]` reports instead.
-- **The target-metric search grid cannot see inside a narrow feasible band.**
-  Candidate recalls are bracketed on 11 grid points (step 0.1); only feasible
-  ones are usable, so the interval between the last feasible grid point and the
-  true feasibility boundary is never explored.
+> with a binary MCC solver [[3]](#References).
 
 ## Citing
 

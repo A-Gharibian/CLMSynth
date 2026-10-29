@@ -1,5 +1,5 @@
 $ python -m clmsynth.main InfeasibleAllocation_15x/CLM-151.yaml --no-viz
-# exit code: 0
+# exit code: 3
 
 INFO - Starting Test Data Orchestrator...
 INFO - Output directory: '{catalog}/_scratch/CLM-151'.
@@ -14,7 +14,7 @@ INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed
 INFO - Generating synthetic data (Seed: 42)...
 INFO - Applying perfect separation ground truth to categorical labels...
 INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
-ERROR - Skipping label generation for fabricated/baseline_4class: [CLM-151] Infeasible configuration: cluster 0 has 200 points but rules jointly claim 320 (per label: {0: 160, 1: 160}). Lower the competing recall_targets or spread them across more clusters.
+ERROR - Skipping label generation for fabricated/baseline_4class: [CLM-151] Infeasible configuration: cluster 0 has 200 points but rules jointly claim 320 (per label: {0: 160, 1: 160}), and no rounding of their counts to whole points fits. Lower the competing recall_targets or spread them across more clusters.
 INFO - Saved: _scratch/CLM-151/{run}/csv/fabricated_data-fabricated-baseline_4class.csv
 INFO - Saved summary: _scratch/CLM-151/{run}/info/fabricated_data-fabricated-baseline_4class.txt
 WARNING - Of the 1 resolved dataset(s): 0 written with all labels, 1 written with not all labels, 0 skipped (see the errors above).

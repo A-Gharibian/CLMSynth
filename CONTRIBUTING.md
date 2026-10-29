@@ -15,3 +15,7 @@ issues found on the release version must first be checked with the latest commit
 If you are using AI models to find issues, it is necessary to report the model used with it,
 this is for tracking which models were already used, and to be able to trace, comment inline
 or document issues that future runs should ignore.
+
+## Exclusion
+
+PRs introducing closed-source, corporate-backed, or unmaintained dependencies will be closed.

@@ -14,6 +14,12 @@ matplotlib.use("Agg")
 import clmsynth._visualization
 
 
+def pytest_report_collectionfinish(config):
+    """Which clmsynth the suite imports: the source tree or an installed copy.
+    Unlike `pytest_report_header`, this also prints under `-q`."""
+    return f"clmsynth {clmsynth.__version__}: {clmsynth.__file__}"
+
+
 @pytest.fixture
 def no_plots(monkeypatch):
     """Stop `run_pipeline` from rendering anything, returns True.

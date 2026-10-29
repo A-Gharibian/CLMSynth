@@ -1,14 +1,7 @@
 name: Release
 
-# The only workflow that runs at a tag. CI covers pushes and pull requests to
-# main and never sees a tag at all, which is why the tag/version precondition
-# lives here rather than there.
 on:
   push:
-    # Every v-tag triggers the workflow; the route step below decides which
-    # index it may reach, and refuses a tag matching neither shape. A glob
-    # cannot express PEP 440, so a malformed tag has to fail loudly here
-    # rather than silently fail to trigger anything at all.
     tags: ["v*"]
   workflow_dispatch:
 
@@ -19,16 +12,16 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false          # never abandon an upload half-done
 
-# Where a final release (X.Y.Z) is uploaded: testpypi or pypi. A release
-# candidate (X.Y.ZrcN) always goes to TestPyPI. While this is testpypi, no tag
-# reaches the real index; set it to pypi for a release meant for PyPI.
+# Where a final release (X.Y.Z) is uploaded: testpypi or pypi. Where a release
+# candidate (X.Y.ZrcN) is uploaded: testpypi, or none to build and verify it only,
+# its dist kept as this run's artifact.
 env:
   FINAL_RELEASE_INDEX: testpypi
+  RC_RELEASE_INDEX: testpypi
 
 jobs:
   # --------------------------------------------------------------------------
-  # Build once. Everything downstream consumes THIS artifact, so what is checked
-  # and what is published cannot drift apart.
+  # Build once.
   # --------------------------------------------------------------------------
   build:
     name: Build and verify
@@ -45,9 +38,9 @@ jobs:
           python-version: "3.13"
           cache: pip
 
-      # The precondition. Refuses to go further when the tag and the declared
-      # version disagree, or when any version declaration or release date has
-      # been left behind by the bump.
+      - name: Install PyYAML
+        run: pip install "PyYAML>=6.0.1"
+
       - name: Tag and metadata agree
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
@@ -56,13 +49,6 @@ jobs:
             python tools/check_release_metadata.py
           fi
 
-      # Exactly two shapes may publish. A PEP 440 release candidate (X.Y.ZrcN)
-      # rehearses on TestPyPI; a final release (digits and dots only) goes to
-      # the index FINAL_RELEASE_INDEX names, at the top of this file. Every other
-      # shape -- a beta, an alpha, a .devN or a .postN -- stops the workflow
-      # here, before any upload: there is no index for it. The tag is not
-      # re-parsed, because the precondition above already refused to continue
-      # unless it equals "v" plus this version.
       - name: Read the version and route the upload
         id: route
         run: |
@@ -71,11 +57,16 @@ jobs:
             *) echo "::error::FINAL_RELEASE_INDEX is '$FINAL_RELEASE_INDEX'; it must be testpypi or pypi. Nothing was uploaded."
                exit 1 ;;
           esac
+          case "$RC_RELEASE_INDEX" in
+            testpypi|none) ;;
+            *) echo "::error::RC_RELEASE_INDEX is '$RC_RELEASE_INDEX'; it must be testpypi or none. Nothing was uploaded."
+               exit 1 ;;
+          esac
           VERSION=$(python -c "import pathlib, tomllib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
           SHAPE=$(python -c "import re, sys; v = sys.argv[1]; print('rc' if re.fullmatch(r'[0-9]+(\.[0-9]+)*rc[0-9]+', v) else 'final' if re.fullmatch(r'[0-9]+(\.[0-9]+)*', v) else 'none')" "$VERSION")
           case "$SHAPE" in
-            rc)    TARGET=testpypi
-                   echo "$VERSION is a release candidate -> TestPyPI" ;;
+            rc)    TARGET=$RC_RELEASE_INDEX
+                   echo "$VERSION is a release candidate -> $TARGET (RC_RELEASE_INDEX)" ;;
             final) TARGET=$FINAL_RELEASE_INDEX
                    echo "$VERSION is a final release -> $TARGET (FINAL_RELEASE_INDEX)" ;;
             *)     echo "::error::$VERSION is neither a release candidate (X.Y.ZrcN) nor a final release (X.Y.Z). Only vX.Y.ZrcN and vX.Y.Z publish; nothing was uploaded."
@@ -93,9 +84,6 @@ jobs:
       - name: Check the built artifacts
         run: twine check dist/*
 
-      # Nothing else proves the wheel is usable: the test job installs the repo
-      # with `-e`, which puts the source tree on the path and so cannot detect a
-      # module or an entry point missing from the built artifact.
       - name: The wheel installs, imports, and brings its console scripts
         run: |
           python -m venv /tmp/probe

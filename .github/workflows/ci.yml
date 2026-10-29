@@ -2,7 +2,6 @@ name: CI
 
 permissions:
   contents: read
-# NOT the `pull-requests: write` from the generic example.
 on:
   push:
     branches: [main]
@@ -26,8 +25,6 @@ jobs:
       # Report every interpreter's result.
       fail-fast: false
       matrix:
-        # Must track requires-python (">=3.12,<3.16") in pyproject.toml. On 3.15
-        # the test extra installs no PyYAML, so the run covers the core without it.
         python-version: ["3.12", "3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@v7
@@ -38,17 +35,52 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      # Installs the package, so the suite imports the INSTALLED clmsynth rather
-      # than a copy on sys.path.
       - name: Install the package and the test extra
         run: pip install -e ".[test]"
 
       - name: Package imports and reports its version
         run: python -c "import clmsynth; print('clmsynth', clmsynth.__version__)"
 
-      # No path argument: [tool.pytest.ini_options] test paths points at tests/.
-      # Passing one here would mean the config and CI could disagree about what
-      # the suite is.
+      - name: Run the test suite
+        run: pytest -q
+
+  # --------------------------------------------------------------------------
+  # The suite at the oldest versions pyproject.toml accepts. The matrix above
+  # always installs the newest, so it never tests the floors.
+  # --------------------------------------------------------------------------
+  floors:
+    name: Tests (dependency floors, Python 3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # Every `name>=X` in dependencies and the yaml and test extras becomes
+      # `name==X`. A dependency without a floor stops the job here.
+      - name: Pin every dependency to its floor
+        run: |
+          python - <<'PY'
+          import re, tomllib
+
+          project = tomllib.load(open("pyproject.toml", "rb"))["project"]
+          extras = project["optional-dependencies"]
+          floors = {}
+          for spec in project["dependencies"] + extras["yaml"] + extras["test"]:
+              name, floor = re.match(r"([\w.-]+)>=([\w.]+)", spec.replace(" ", "")).groups()
+              floors[name] = floor
+          with open("floors.txt", "w") as f:
+              f.writelines(f"{name}=={floor}\n" for name, floor in floors.items())
+          PY
+          cat floors.txt
+
+      - name: Install the package and the test extra at the floors
+        run: pip install -c floors.txt -e ".[test]"
+
       - name: Run the test suite
         run: pytest -q
 
@@ -72,18 +104,13 @@ jobs:
       - name: Install the package and the dev toolchain
         run: pip install -e ".[dev]"
 
-      # `continue-on-error` is deliberately NOT set: these are gates.
       - name: Lint (ruff)
         run: ruff check src/ tests/ tools/
 
       - name: Typing (mypy)
-        # Reads files and settings from [tool.mypy]; no path argument, same
-        # reasoning as pytest above.
         run: mypy
 
       - name: Security analysis (bandit)
-        # -c is required for bandit to read [tool.bandit] out of pyproject.toml;
-        # without it the four judged findings recorded there come back.
         run: bandit -c pyproject.toml -r src/clmsynth -q
 
   # --------------------------------------------------------------------------
@@ -103,7 +130,7 @@ jobs:
           cache: pip
 
       - name: Install the build tools
-        run: pip install build twine
+        run: pip install build twine "PyYAML>=6.0.1"
 
       - name: Build the sdist and wheel
         run: python -m build
@@ -135,8 +162,9 @@ jobs:
               "pyproject.toml",
               "src/clmsynth/__init__.py",
               "docs/ROADMAP.md",
-              "docs/troubleshooting_catalog/engine_internals.md",
-              "docs/manual/CLMSynth_manual.tex",
+              "docs/engine_internals.md",
+              "docs/TESTING.md",
+              "docs/sources/manual/CLMSynth_manual.tex",
               "docs/troubleshooting_catalog/_data/127_65_clusters.csv",
               "docs/troubleshooting_catalog/_data/133_missing_cluster_ids.csv",
           ]
@@ -171,8 +199,5 @@ jobs:
           config=$(/tmp/probe/bin/python -c "from importlib.resources import files; print(files('clmsynth') / 'test_data_config_offline.json')")
           (cd /tmp && /tmp/probe/bin/clmsynth "$config" --no-viz)
 
-      # Six fixed declarations carry the version (codemeta three times over),
-      # plus every docs/**/*.tex with a `% !CLMSynth-version` banner. Three
-      # carry the release date. Shared with release.yml, which adds --tag.
       - name: Version and date agree across every declaration
         run: python tools/check_release_metadata.py

@@ -1,5 +1,5 @@
 $ python -m clmsynth.main ValueError_1xx/CLM-120.yaml --no-viz
-# exit code: 0
+# exit code: 3
 
 INFO - Starting Test Data Orchestrator...
 INFO - Output directory: '{catalog}/_scratch/CLM-120'.

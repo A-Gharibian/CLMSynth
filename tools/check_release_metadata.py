@@ -11,10 +11,17 @@ import sys
 import tomllib
 from typing import Any
 
+import yaml
+
 # The repository root is the nearest folder above this script holding
 # pyproject.toml, so the script keeps working wherever it is moved.
 REPO = next(p for p in pathlib.Path(__file__).resolve().parents
             if (p / "pyproject.toml").is_file())
+
+# PyPI name -> conda-forge name, where they differ.
+CONDA_NAMES = {"matplotlib": "matplotlib-base"}
+# A conda recipe disagreement is a warning up to this version and an error after it.
+CONDA_WARN_THROUGH = (0, 7, 9)
 
 def _capture(pattern: str, text: str, flags: int = 0) -> str:
     """sentinel"""
@@ -22,49 +29,102 @@ def _capture(pattern: str, text: str, flags: int = 0) -> str:
     return m.group(1) if m else "(absent)"
 
 
-def _cff_scalar(raw: str) -> str:
-    """One scalar as written after `key:`: unquoted, and a plain one without its
-    trailing comment."""
-    raw = raw.strip()
-    single = re.fullmatch(r"'((?:[^']|'')*)'\s*(?:#.*)?", raw)
-    if single:
-        return single.group(1).replace("''", "'")
-    double = re.fullmatch(r'("(?:[^"\\]|\\.)*")\s*(?:#.*)?', raw)
-    if double:
-        return str(json.loads(double.group(1)))
-    return re.split(r"\s+#", raw, maxsplit=1)[0].strip()
+def read_yaml(text: str) -> Any:
+    """A YAML file with every scalar as text, as written: a date or a version
+    stays the string the file holds."""
+    return yaml.load(text, Loader=yaml.BaseLoader)
 
 
-def read_cff(text: str) -> dict[str, Any]:
-    """The top-level scalars of a CITATION.cff, and `identifiers` as a list of
-    mappings, without PyYAML, which is optional. Only the forms the file uses: a
-    scalar on its key's line, and a block list of `key: value` entries. A value
-    written any other way reads as absent, which the check reports as a
-    disagreement instead of passing over it."""
-    out: dict[str, Any] = {}
-    identifiers: list[dict[str, str]] | None = None
-    for line in text.splitlines():
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        top = re.match(r"([A-Za-z][\w-]*):(.*)$", line)     # a key at column 0
-        if top:
-            key, rest = top.groups()
-            identifiers = None
-            value = rest.strip()
-            if not value or value.startswith("#"):
-                if key == "identifiers":
-                    identifiers = out[key] = []
-            elif not value.startswith(("[", "{", ">", "|")):  # flow or block: not read
-                out[key] = _cff_scalar(rest)
-            continue
-        entry = re.match(r"\s*(-\s+)?([A-Za-z][\w-]*):(.*)$", line)
-        if identifiers is None or entry is None:
-            continue        # inside another block, which the check does not read
-        if entry.group(1):
-            identifiers.append({})
-        if identifiers:
-            identifiers[-1][entry.group(2)] = _cff_scalar(entry.group(3))
+def read_recipe(text: str) -> dict[str, list[str]]:
+    """The values of a conda recipe by dotted key path (`about.summary`). A list
+    item is filed under its list's path, and a mapping inside a list adds its keys
+    to that path (`tests.python.imports`)."""
+    found: dict[str, list[str]] = {}
+
+    def walk(node: Any, path: str) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                walk(value, f"{path}.{key}" if path else key)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item, path)
+        elif node not in (None, ""):
+            found.setdefault(path, []).append(node)
+
+    walk(read_yaml(text), "")
+    return found
+
+
+def _requirements(specs: list[str]) -> dict[str, str]:
+    """conda-forge name -> version constraint without spaces, from PyPI or conda specs."""
+    out = {}
+    for spec in specs:
+        m = re.match(r"\s*([A-Za-z0-9][\w.-]*)\s*(.*)$", spec)
+        if m:
+            name = re.sub(r"[-_.]+", "-", m.group(1)).lower()
+            out[CONDA_NAMES.get(name, name)] = m.group(2).replace(" ", "")
     return out
+
+
+def recipe_faults(text: str) -> tuple[str, list[str]]:
+    """The version a conda recipe pins, and where the recipe disagrees with
+    pyproject.toml or the package."""
+    pyproject = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    project = pyproject["project"]
+    recipe = read_recipe(text)
+    pinned = (recipe.get("context.version") or recipe.get("package.version") or ["(absent)"])[0]
+    faults = []
+
+    def says(key: str) -> str:
+        return ", ".join(recipe.get(key, [])) or "(absent)"
+
+    urls = project.get("urls", {})
+    python_min = re.search(r">=\s*([\d.]+)", project.get("requires-python", ""))
+    restated = {
+        "about.homepage": urls.get("Homepage"),
+        "about.repository": urls.get("Repository"),
+        "about.documentation": urls.get("Documentation"),
+        "about.summary": project.get("description"),
+        "about.license": project.get("license"),
+        "about.license_file": ", ".join(project.get("license-files", [])),
+        "context.python_min": python_min.group(1) if python_min else None,
+    }
+    for key, want in restated.items():
+        if want and says(key) != want:
+            faults.append(f"{key}: pyproject says {want!r}, the recipe says {says(key)!r}")
+    if not recipe.get("about.description"):
+        faults.append("about.description is missing")
+
+    for key, specs, what in (
+        ("requirements.host", pyproject.get("build-system", {}).get("requires", []),
+         "a build requirement"),
+        ("requirements.run", project.get("dependencies", []), "a dependency"),
+    ):
+        want_reqs = _requirements(specs)
+        have_reqs = _requirements(recipe.get(key, []))
+        for name, spec in want_reqs.items():
+            if have_reqs.get(name) != spec:
+                faults.append(f"{key} {name}: pyproject says {spec!r}, "
+                              f"the recipe says {have_reqs.get(name, '(absent)')!r}")
+        for name in sorted(have_reqs.keys() - want_reqs.keys() - {"python", "pip"}):
+            faults.append(f"{key} {name}: not {what} in pyproject")
+
+    scripts = project.get("scripts", {})
+    entry_points = {}
+    for entry in recipe.get("build.python.entry_points", []):
+        name, _, target = entry.partition("=")
+        entry_points[name.strip()] = target.strip()
+    for name in sorted(scripts.keys() | entry_points.keys()):
+        if scripts.get(name) != entry_points.get(name):
+            faults.append(f"entry point {name}: pyproject says "
+                          f"{scripts.get(name, '(absent)')!r}, "
+                          f"the recipe says {entry_points.get(name, '(absent)')!r}")
+
+    for module in recipe.get("tests.python.imports", []):
+        path = REPO / "src" / module.replace(".", "/")
+        if not (path.with_suffix(".py").is_file() or (path / "__init__.py").is_file()):
+            faults.append(f"tests.python.imports {module}: the package has no such module")
+    return pinned, faults
 
 
 def collect() -> tuple:
@@ -78,7 +138,7 @@ def collect() -> tuple:
 
     # Read as fields, not grepped: a quoted value ('2026-09-17') or a DOI under
     # `identifiers` is the same fact as its plain or top-level form.
-    cff = read_cff((REPO / "CITATION.cff").read_text(encoding="utf-8"))
+    cff = read_yaml((REPO / "CITATION.cff").read_text(encoding="utf-8"))
     found["CITATION.cff"] = cff.get("version", "(absent)")
 
     codemeta = json.loads((REPO / "codemeta.json").read_text(encoding="utf-8"))
@@ -143,6 +203,8 @@ def collect() -> tuple:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", help="git tag being released, e.g. v0.7.0")
+    parser.add_argument("--recipe", type=pathlib.Path,
+                        help="a conda recipe (recipe.yaml, v1 format) to check against pyproject")
     args = parser.parse_args()
 
     version, found, dates, release_date, dep_faults, doi = collect()
@@ -169,9 +231,23 @@ def main() -> int:
 
     print(f"  {'software DOI (CITATION.cff, codemeta.json)':45s} {doi}")
 
+    conda_faults: list[str] = []
+    if args.recipe is not None:
+        pinned, conda_faults = recipe_faults(args.recipe.read_text(encoding="utf-8"))
+        print(f"  {'conda recipe pins':45s} {pinned}")
+
     if dep_faults:
         print("\nmetadata disagreements")
         for fault in dep_faults:
+            print(f"  {fault}")
+
+    release = tuple(int(n) for n in re.findall(r"\d+", version)[:3])
+    conda_wrong = bool(conda_faults) and release > CONDA_WARN_THROUGH
+    if conda_faults:
+        through = ".".join(map(str, CONDA_WARN_THROUGH))
+        print("\nconda recipe disagreements"
+              + ("" if conda_wrong else f" (warnings through {through})"))
+        for fault in conda_faults:
             print(f"  {fault}")
 
     tag_wrong = False
@@ -183,7 +259,8 @@ def main() -> int:
         if tag_wrong:
             print(f"\ntag {args.tag} does not match the declared version {version}")
 
-    return 1 if (disagree or release_date is None or stale or tag_wrong or dep_faults) else 0
+    return 1 if (disagree or release_date is None or stale or tag_wrong or dep_faults
+                 or conda_wrong) else 0
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ INFO - BYOC input directory: '{catalog}/_data'.
 INFO - Saved resolved config: _scratch/CLM-133/{run}/info/{run}.yaml
 INFO - Dataset 1 of 1: local/133_missing_cluster_ids
 ERROR - byoc: '133_missing_cluster_ids.csv' is not a usable import, 1 problem(s):
-ERROR -   - [CLM-133] the dataset cannot be labelled: 2 of the 40 values in the cluster column 'cluster' are missing (blank cells); they would never be labelled. Every point needs one cluster id, the ids must be all numbers or all strings, and coords, when given, needs one row per point.
+ERROR -   - [CLM-133] the dataset cannot be labelled: 2 of the 40 values in the cluster column 'cluster' are missing (blank cells) or infinite; they would never be labelled. Every point needs one cluster id, the ids must be integers, and coords, when given, needs one row per point.
 WARNING - Of the 1 resolved dataset(s): 0 written with all labels, 0 written with not all labels, 1 skipped (see the errors above).
 ERROR - No datasets were successfully processed.
 INFO - The failed run's folder '_scratch/CLM-133/{run}' was removed. Run with --keep-failed to keep its config and log.

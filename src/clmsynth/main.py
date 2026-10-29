@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # main.py
 """Pipeline entry point.
 
@@ -9,6 +10,7 @@ Several config files run as a batch, each in its own process.
 """
 
 import argparse
+import difflib
 import json
 import logging
 import os
@@ -17,11 +19,11 @@ import shutil
 import signal
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import numpy as np
 import pandas as pd
@@ -30,8 +32,9 @@ from . import __version__
 from ._cli_logging import LOG_FORMAT, SingleLineFilter, configure_cli_logging
 from ._compat import import_optional_dependency
 from .byoc_source import fetch_byoc_data
+from .clm_errors import InfeasibleAllocationError, MissingConfigKey
 from .clm_label_engine import (
-    InfeasibleAllocationError,
+    _check_config,
     pair_reachable_range,
     validate_matching_ids,
 )
@@ -45,21 +48,38 @@ from .dataset_sources import (
     resolve_selection,
     resolved_for_report,
 )
+from .generate_config import _write_then_replace, write_text_atomic
 from .label_context import DatasetContext, build_context
-from .label_generator import generate_additional_labels
+from .label_generator import _require_clm_config, generate_additional_labels
 from .metrics import clustering_ari, clustering_mcc
 from .resolved_config import (
     DATA_SOURCE,
     N_LABELS,
     OUTPUT_DIR,
     SOURCE_LABELING,
+    _is_int,
     plain,
     resolve_config,
 )
 
-log = logging.getLogger(__name__)
+__all__ = [
+    "FETCHERS",
+    "FETCHER_SUITE_KEYS",
+    "PER_DATASET_CODES",
+    "SEEDED_SOURCES",
+    "SOURCE_DISPLAY",
+    "SUITE_KEYS",
+    "build_run_dir",
+    "discard_failed_run",
+    "load_config",
+    "main",
+    "precheck_byoc_matching_ids",
+    "run_pipeline",
+]
 
-FETCHERS = {
+log: logging.Logger = logging.getLogger(__name__)
+
+FETCHERS: Final[Mapping[str, Callable[..., pd.DataFrame | None]]] = {
     "clustbench": lambda group, name, seed, **kw: fetch_clustbench_data(dataset_group=group, dataset_name=name, **kw),
     "mdcgen": lambda group, name, seed, **kw: fetch_mdcgen_data(dataset_group=group, dataset_name=name, seed=seed, **kw),
     "fabricated_data": lambda group, name, seed, **kw: fetch_fabricated_data(dataset_group=group, dataset_name=name, seed=seed, **kw),
@@ -69,50 +89,31 @@ FETCHERS = {
 # and byoc reads a file, so the seed reaches neither.
 SEEDED_SOURCES = ("mdcgen", "fabricated_data")
 
+# The <source>_suite keys run_pipeline takes for every source, and those each
+# fetcher reads. A key outside them is refused: byoc and fabricated_data would
+# run a misspelt key on the default it meant to change, and clustbench would
+# fail every dataset on it. mdcgen is not listed: its other keys go on to
+# mdcgenpy.
+SUITE_KEYS = ("batteries", "datasets", "seed")
+FETCHER_SUITE_KEYS: Final[Mapping[str, tuple[str, ...]]] = {
+    "clustbench": ("base_url",),
+    "byoc": ("input_dir", "cluster_column", "tag_columns", "standardize"),
+    "fabricated_data": ("n_samples",),
+}
+
+# Codes judged against one dataset's K, ids or features: that dataset is
+# skipped and the run goes on.
+PER_DATASET_CODES = (102, 105, 119, 125, 127, 133)
+
 # Display names for the run folder, plot titles and summaries, capitalized apart
 # from the data_source keys. Clustbench is the package that fetches; its
 # datasets come from many authors.
-SOURCE_DISPLAY = {
+SOURCE_DISPLAY: Final[Mapping[str, str]] = {
     "clustbench": "Clustbench",
     "mdcgen": "MDCGen",
     "fabricated_data": "Fabricated",
     "byoc": "BYOC",
 }
-
-
-def _clm_info_text(clm_config: dict) -> str:
-    """Right-margin annotation: the CLM knobs that shaped this generated label.
-
-    Only what the engine read for it, so every value shown has passed its checks:
-    'perfect' takes the label sizes from the clusters, 'balanced' ignores
-    proportions ([CLM-301]), and 'random' places nothing by centroid. Built only
-    for a label the engine generated.
-    """
-    mode = clm_config.get("matching_mode", "-")
-    props = clm_config.get("proportions") or []
-    cd = clm_config.get("centroid_dependence", {}) or {}
-    tm = clm_config.get("target_metric")
-
-    lines = ["CLM config"]
-    if mode == "perfect":
-        lines.append("sizes: from clusters")
-    elif clm_config.get("balance") == "unbalanced" and props:
-        lines.append("proportions:")
-        vals = [f"{float(p):.3g}" for p in props]
-        for i in range(0, len(vals), 2):          # two values per line
-            lines.append("  " + ", ".join(vals[i:i + 2]))
-    else:
-        lines.append(f"balance: {clm_config.get('balance', '-')}")
-    if mode != "random" and cd.get("enabled"):
-        lines.append("centrality:")
-        lines.append(f"  {cd.get('favors', 'core')}/{cd.get('profile', 'linear')}")
-    else:
-        lines.append("centrality: off")
-    if tm:
-        lines.append(f"target: {tm.get('type')}={tm.get('value')}")
-    else:
-        lines.append(f"matching: {mode}")
-    return "\n".join(lines)
 
 
 def _write_summary_txt(path: Path, friendly: str, source: str, battery: str, dataset: str,
@@ -121,8 +122,9 @@ def _write_summary_txt(path: Path, friendly: str, source: str, battery: str, dat
                        pair_lines: list[str] | None = None) -> None:
     """One txt per dataset: the configuration used, the seeds that reproduce it
     (a drawn seed is otherwise only in the log), the reachable pair MCC under
-    scope 'pair', the MCC/ARI shown on the plots, and under target_metric what
-    the engine reported for each label."""
+    scope 'pair', the MCC/ARI shown on the plots, and per label what each
+    assignment_matrix row and competing_noise entry placed and what target_metric
+    reached."""
     gt_disp = gt_col if gt_col else "(none)"
     out = [
         f"Source : {friendly} ({source})",
@@ -152,11 +154,13 @@ def _write_summary_txt(path: Path, friendly: str, source: str, battery: str, dat
             out.append(f"{r['name']}:  (no ground-truth labeling to compare against)")
         out.append(f"    seed = {label_seed + i}")
         out.append(f"    label counts = {r['counts']}")
-        if r.get("target"):
-            out += [f"    {line}" for line in _target_lines(r["target"])]
+        report = r.get("report") or {}
+        out += [f"    {line}" for line in _placed_lines(report)]
+        if "type" in report:
+            out += [f"    {line}" for line in _target_lines(report)]
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    write_text_atomic(path, "\n".join(out) + "\n")
     log.info(f"Saved summary: {path}")
 
 def _is_plain_name(name) -> bool:
@@ -167,9 +171,6 @@ def _is_plain_name(name) -> bool:
     so a separator or a `..` in one reaches outside the folders the configuration
     declared. The registry sources filter their names against a known list and are
     safe by construction.
-    No `[CLM-###]` code: those describe the cluster-label matching model, and a
-    dataset name being path-shaped is a property of the file layout, not of the
-    labeling.
     """
     text = str(name)
     if not text or text in (".", ".."):
@@ -199,14 +200,17 @@ def _drop_path_shaped_names(jobs: list) -> list:
 
 def _byoc_cluster_ids(input_dir, dataset: str, cluster_column: str):
     """
-    Returns the cluster ids, or None when the file cannot be read it.
+    Returns the cluster ids, or None when the file cannot be read or its ids are
+    not integers, which the import refuses ([CLM-133]).
     """
     path = (Path(input_dir) / f"{dataset}.csv") if input_dir else Path(f"{dataset}.csv")
     try:
         column = pd.read_csv(path, usecols=[cluster_column])[cluster_column]
     except Exception:
         return None
-    return sorted(column.dropna().unique().tolist(), key=str)
+    if not pd.api.types.is_integer_dtype(column):
+        return None
+    return sorted(column.unique().tolist())
 
 
 def _configured_cluster_ids(clm_config: dict) -> list:
@@ -225,7 +229,8 @@ def _configured_cluster_ids(clm_config: dict) -> list:
     return []
 
 
-def precheck_byoc_matching_ids(jobs, fetch_kwargs: dict, clm_config: dict | None) -> None:
+def precheck_byoc_matching_ids(jobs: list[tuple[str, str]], fetch_kwargs: dict[str, Any],
+                               clm_config: dict[str, Any] | None) -> None:
     """Resolve [CLM-105] for every BYOC dataset before any work begins.
     [CLM-104] is checked once, before the loop.
     Raises the first offending dataset's coded error, after logging every one of
@@ -271,8 +276,7 @@ def precheck_byoc_matching_ids(jobs, fetch_kwargs: dict, clm_config: dict | None
 
 
 def _not_a_mapping(key: str, section: object, example: str) -> str | None:
-    """The message for a config section that is not a mapping, or None. A list or
-    a string crashed on the first .get() with a traceback."""
+    """The message for a config section that is not a mapping, or None."""
     if isinstance(section, Mapping):
         return None
     return f"'{key}' must be a mapping of settings such as '{example}', got {section!r}."
@@ -284,14 +288,14 @@ def _is_json(path: str | Path) -> bool:
     return Path(path).suffix.lower() == ".json"
 
 
-def load_config(config_path: str) -> dict:
-    """Loads the pipeline config; exits 1 with a message if absent, unreadable,
-    malformed or empty."""
+def load_config(config_path: str) -> dict[str, Any]:
+    """Loads the pipeline config; exits 2 with a message if absent, malformed or
+    empty, and 1 if a YAML config finds no PyYAML."""
     path = Path(config_path)
     if not path.is_file():
         log.critical(f"Configuration file not found at '{config_path}'. "
                      f"Run clmsynth-wizard or clmsynth-config first.")
-        sys.exit(1)
+        sys.exit(2)
     # utf-8-sig drops a BOM (Notepad, PowerShell 5.1), as PyYAML does and json does not.
     text = path.read_text(encoding="utf-8-sig")
     # Each parser's message carries the line and column of the mistake.
@@ -300,7 +304,7 @@ def load_config(config_path: str) -> dict:
             config = json.loads(text) if text.strip() else None
         except json.JSONDecodeError as e:
             log.critical(f"Configuration file '{config_path}' is not valid JSON: {e}")
-            sys.exit(1)
+            sys.exit(2)
     else:
         try:
             yaml = import_optional_dependency("yaml", f"Reading {config_path!r}")
@@ -311,12 +315,12 @@ def load_config(config_path: str) -> dict:
             config = yaml.safe_load(text)
         except yaml.YAMLError as e:
             log.critical(f"Configuration file '{config_path}' is not valid YAML: {e}")
-            sys.exit(1)
+            sys.exit(2)
     # An empty file parses to None; anything non-mapping means main()'s config.get(...)
     if not isinstance(config, dict):
         log.critical(f"Configuration file '{config_path}' is empty or not a mapping of "
                      "settings.")
-        sys.exit(1)
+        sys.exit(2)
     return config
 
 
@@ -339,60 +343,13 @@ def _write_resolved_config(path: Path, resolved: Mapping[str, Any]) -> None:
             yaml = import_optional_dependency("yaml", "Writing it")
             text = _RESOLVED_HEADER.format(version=__version__) + yaml.safe_dump(
                 data, sort_keys=False, default_flow_style=False, allow_unicode=True)
-        path.write_text(text, encoding="utf-8")
+        write_text_atomic(path, text)
     except Exception as e:
         # A full disk, PyYAML missing, or a value no writer represents, which a
         # dict run can pass.
         log.error(f"Could not write the resolved config '{path}': {e}")
         return
     log.info(f"Saved resolved config: {path}")
-
-
-def _render_dataset_plots(final_df: pd.DataFrame, context: DatasetContext,
-                          png_dir: Path, stem: str, gt_col: str | None,
-                          source_labeling: str, plot_title: str,
-                          label_results: list[dict[str, Any]],
-                          clm_config: dict | None) -> None:
-    """Best-effort PNGs for one dataset."""
-    # Deferred so --no-viz never imports matplotlib.
-    from ._visualization import plot_feature_scatter
-
-    feature_cols = list(context.features.columns)
-    if len(feature_cols) < 2:
-        log.warning(f"'{stem}' has fewer than 2 features; skipping plots.")
-        return
-    x_col, y_col = feature_cols[0], feature_cols[1]
-
-    if gt_col is not None and gt_col in final_df.columns:
-        if not plot_feature_scatter(
-            final_df, x_col=x_col, y_col=y_col,
-            hue_col=gt_col,
-            output_path=str(png_dir / f"{stem}-{gt_col}.png"),
-            title=plot_title,
-            subtitle=f"ground-truth clusters ({gt_col})",
-        ):
-            log.warning(f"'{stem}': ground-truth plot failed; CSV/labels are unaffected.")
-    else:
-        log.warning(f"ground-truth for '{source_labeling}' not found for '{stem}'; skipping plot.")
-
-    # Subtitle metrics compare each generated label against the SAME ground-truth
-    # labeling the CLM engine keyed off (source_labeling), reusing label_results.
-    # Only with a generated label to annotate: a skipped one may have stopped on
-    # the very key the box would read.
-    clm_info = _clm_info_text(clm_config) if clm_config and label_results else None
-    for r in label_results:
-        subtitle = None
-        if r["mcc"] is not None:
-            subtitle = f"MCC {r['mcc']:.3f}  ·  ARI {r['ari']:.3f}   (vs {gt_col})"
-        if not plot_feature_scatter(
-            final_df, x_col=x_col, y_col=y_col,
-            hue_col=r["name"],
-            output_path=str(png_dir / f"{stem}-{r['name']}.png"),
-            title=plot_title,
-            subtitle=subtitle,
-            info_text=clm_info,
-        ):
-            log.warning(f"'{stem}': plot for '{r['name']}' failed; CSV/labels are unaffected.")
 
 
 def _resolve_jobs(source: str, batteries: list[str], datasets_cfg, fetch_kwargs: dict) -> list:
@@ -412,6 +369,21 @@ def _resolve_jobs(source: str, batteries: list[str], datasets_cfg, fetch_kwargs:
     return jobs
 
 
+def _precheck_clm_config(clm_config: Any) -> None:
+    """The labelling's checks on clm_label that need no dataset, run before any
+    dataset is fetched. A refusal stops the run as it would at the first dataset;
+    its warnings come with each label. An uncoded error is left to the per-dataset
+    handling, which reports it."""
+    try:
+        _require_clm_config(clm_config)
+        _check_config(clm_config, warn=False)
+    except Exception as e:
+        if getattr(e, "code", None) is None:
+            return
+        log.critical(f"Configuration error, aborting run: {e}")
+        raise
+
+
 def _label_dataset(context: DatasetContext, battery: str, dataset: str,
                    label_cfg: Mapping[str, Any], n_add_labels: int, source_labeling: str,
                    clm_config: dict | None, seed: int) -> None:
@@ -424,6 +396,8 @@ def _label_dataset(context: DatasetContext, battery: str, dataset: str,
             clm_config=clm_config, noise=label_cfg.get("noise", 0.1), seed=seed,
         )
         return
+    except MissingConfigKey:
+        raise
     except (KeyError, InfeasibleAllocationError) as e:
         error = e
     except ValueError as e:
@@ -449,8 +423,29 @@ def _score_labels(final_df: pd.DataFrame, context: DatasetContext,
             ari = float(clustering_ari(final_df[gt_col], final_df[label_name]))
         counts = final_df[label_name].value_counts().sort_index().to_dict()
         label_results.append({"name": label_name, "mcc": mcc, "ari": ari, "counts": counts,
-                              "target": context.label_reports.get(label_name)})
+                              "report": context.label_reports.get(label_name)})
     return label_results
+
+
+def _placed_lines(report: Mapping[str, Any]) -> list[str]:
+    """What each assignment_matrix row and competing_noise entry placed, for the
+    summary txt, beside the points it asks for. Under target_metric scope 'global'
+    the rows ask at the solved level, alpha."""
+    lines = []
+    if report.get("assignment_matrix"):
+        lines.append("assignment_matrix placed:")
+        for i, row in enumerate(report["assignment_matrix"]):
+            level = (f"alpha {report['alpha']:.4f}" if "alpha" in report
+                     else f"recall_target {row['recall_target']}")
+            lines.append(f"  row {i}: clusters {row['clusters']} -> label {row['label']}, "
+                         f"{level}: {row['placed']} points (asks {round(row['asks'], 2)})")
+    if report.get("competing_noise"):
+        lines.append("competing_noise placed:")
+        for i, entry in enumerate(report["competing_noise"]):
+            lines.append(f"  entry {i}: cluster {entry['cluster']} -> label {entry['label']}, "
+                         f"share {entry['share']}: {entry['placed']} points "
+                         f"(asks {round(entry['asks'], 2)})")
+    return lines
 
 
 def _target_lines(report: Mapping[str, Any]) -> list[str]:
@@ -466,7 +461,7 @@ def _target_lines(report: Mapping[str, Any]) -> list[str]:
     ceiling = report["ceiling"]
     if ceiling is None:
         lines.append("size ceiling  = none: the label counts can move (spillover_rule "
-                     "'uniform'/'concentrated' or competing_noise)")
+                     "'uniform'/'concentrated')")
     elif kind == "mcc":
         lines.append(f"size ceiling  = {ceiling:.4f} (no labeling with these label counts "
                      "scores higher)")
@@ -511,8 +506,10 @@ def _write_dataset(context: DatasetContext, source: str, battery: str, dataset: 
     """CSV, summary and plots for one dataset."""
     final_df = context.to_dataframe()
     stem = f"{source}-{battery}-{dataset}"
-    final_df.to_csv(csv_dir / f"{stem}.csv", index=False)
-    log.info(f"Saved: {csv_dir / f'{stem}.csv'}")
+    csv_path = csv_dir / f"{stem}.csv"
+    # Stopped mid-write, a run leaves no partial CSV under the final name.
+    _write_then_replace(csv_path, lambda tmp: final_df.to_csv(tmp, index=False))
+    log.info(f"Saved: {csv_path}")
 
     friendly = SOURCE_DISPLAY.get(source, source)
     plot_title = f"{friendly}: {battery}/{dataset}"
@@ -527,16 +524,18 @@ def _write_dataset(context: DatasetContext, source: str, battery: str, dataset: 
                        pair_lines=_pair_range_lines(clm_config, final_df, gt_col))
 
     if render_plots:
-        _render_dataset_plots(final_df, context, png_dir, stem, gt_col,
-                              source_labeling, plot_title, label_results,
-                              clm_config)
+        # Deferred so --no-viz never imports matplotlib.
+        from ._visualization import render_dataset_plots
+
+        render_dataset_plots(final_df, list(context.features.columns), png_dir, stem,
+                             gt_col, source_labeling, plot_title, label_results,
+                             clm_config)
 
 
 def _aborts_run(e: ValueError, battery: str, dataset: str) -> bool:
     """Log the error; True for configuration-wide errors."""
     code = getattr(e, "code", None)
-    # Judged against THIS dataset's K, ids or features.
-    if code in (102, 105, 119, 125, 127, 133):
+    if code in PER_DATASET_CODES:
         log.error(f"Skipping {battery}/{dataset}: {e}")
         return False
     if code is not None and not isinstance(e, InfeasibleAllocationError):
@@ -562,13 +561,36 @@ def _resolve_seed(block: Mapping[str, Any], name: str) -> tuple[int, str]:
     return seed, "set in the config"
 
 
+def _unknown_suite_keys(source: str, suite: Mapping[str, Any]) -> str | None:
+    """The refusal naming the `<source>_suite` keys the source does not take,
+    with the closest key it does take as a suggestion; None when there are none
+    or the source is unchecked."""
+    if source not in FETCHER_SUITE_KEYS:
+        return None
+    takes = (*SUITE_KEYS, *FETCHER_SUITE_KEYS[source])
+    unknown = []
+    for key in suite:
+        if key not in takes:
+            close = difflib.get_close_matches(str(key), takes, n=1)
+            unknown.append(f"'{key}'" + (f" (did you mean '{close[0]}'?)" if close else ""))
+    if not unknown:
+        return None
+    return (f"Unknown key(s) in '{source}_suite': {', '.join(unknown)}. "
+            f"'{source}_suite' takes: {', '.join(takes)}.")
+
+
 def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: Path,
                  png_dir: Path, txt_dir: Path, render_plots: bool = True,
-                 config_out: Path | None = None) -> int:
+                 config_out: Path | None = None,
+                 report: dict[str, int] | None = None) -> int:
     """Runs every configured dataset through fetch, label generation, and
     output writing. Returns the number of datasets processed without error.
     With `config_out`, the config as the run read it is written there once the
-    datasets and seeds are resolved, before the first dataset runs."""
+    datasets and seeds are resolved, before the first dataset runs.
+    With `report`, a run that reaches its datasets fills it with how many were
+    `resolved`, written with all labels (`full`) or not all (`short`), and
+    skipped by a per-dataset `[CLM-###]` code (`refused`); it stays empty when
+    the config is refused first."""
     if source not in FETCHERS:
         log.error(f"Unknown data_source '{source}'. Valid options: {list(FETCHERS)}")
         return 0
@@ -586,6 +608,10 @@ def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: 
         if problem:
             log.error(problem)
             return 0
+    problem = _unknown_suite_keys(source, source_config)
+    if problem:
+        log.error(problem)
+        return 0
 
     batteries_cfg = source_config.get("batteries")
     if not batteries_cfg:
@@ -610,8 +636,7 @@ def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: 
     # Every other key is forwarded straight to the fetcher as extra kwargs
     # (e.g. mdcgen's `cp`/`out`, fabricated_data's `n_samples`, clustbench's
     # `base_url`).
-    fetch_kwargs = {k: v for k, v in source_config.items()
-                    if k not in ("batteries", "datasets", "seed")}
+    fetch_kwargs = {k: v for k, v in source_config.items() if k not in SUITE_KEYS}
 
     label_seed, label_how = _resolve_seed(label_cfg, "label_generation.seed")
     n_add_labels = label_cfg.get("n_labels", N_LABELS)
@@ -627,13 +652,16 @@ def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: 
             config, source, batteries, datasets_cfg, jobs,
             fetch_seed if source in SEEDED_SOURCES else None, fetch_kwargs, label_seed))
     # After the config is written, so a failed run kept with --keep-failed has it.
-    # Other sources surface [CLM-104]/[CLM-105] per dataset.
+    # Other sources surface [CLM-105] per dataset.
+    if not (_is_int(n_add_labels) and n_add_labels <= 0):
+        _precheck_clm_config(clm_config)
     if source == "byoc":
         precheck_byoc_matching_ids(jobs, fetch_kwargs, clm_config)
 
     fetcher = FETCHERS[source]
     n_full = 0
     n_short = 0
+    n_refused = 0
 
     for i, (battery, dataset) in enumerate(jobs, 1):
         # Every line until the next header is this dataset's: the engine's do not
@@ -657,9 +685,15 @@ def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: 
                 n_short += 1
             else:
                 n_full += 1
+        except MissingConfigKey as e:
+            # A required key with no default: no dataset can be labelled.
+            log.critical(f"Configuration error, aborting run: {e}")
+            raise
         except ValueError as e:
             if _aborts_run(e, battery, dataset):
                 raise
+            if getattr(e, "code", None) in PER_DATASET_CODES:
+                n_refused += 1
         except Exception as e:
             log.error(f"Skipping {battery}/{dataset}: unexpected {type(e).__name__}: {e}")
 
@@ -670,6 +704,8 @@ def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: 
         log.warning(f"Of the {len(jobs)} resolved dataset(s): {n_full} written with all "
                     f"labels, {n_short} written with not all labels, {n_skipped} skipped "
                     "(see the errors above).")
+    if report is not None:
+        report.update(resolved=len(jobs), full=n_full, short=n_short, refused=n_refused)
     return n_ok
 
 
@@ -749,18 +785,31 @@ def _run_config(config: str, flags: list[str], env: dict[str, str]) -> tuple[int
     proc = subprocess.run([sys.executable, "-m", "clmsynth.main", config, *flags],
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                           env=env, check=False)
-    # A child killed by a signal reports -N; the shell's 128 + N keeps it the highest.
+    # A child killed by a signal reports -N; a shell reports it as 128 + N.
     code = proc.returncode if proc.returncode >= 0 else 128 - proc.returncode
     return code, proc.stdout
 
 
 _RUN_LINE = re.compile(r" - INFO - Run (\S+) from config ")
 
+def _batch_status(codes: list[int]) -> int:
+    """A batch read like a run whose datasets are its configs: 0 when every config
+    exited 0, 3 when some wrote their datasets and others did not, else 1 before
+    2. Any status outside 0 to 3, a signal's 128 + N or a wrapper's, comes first."""
+    foreign = [code for code in codes if not 0 <= code <= 3]
+    if foreign:
+        return max(foreign)
+    if all(code == 0 for code in codes):
+        return 0
+    if any(code in (0, 3) for code in codes):
+        return 3
+    return 1 if 1 in codes else 2
+
 
 def _run_batch(configs: list[str], jobs: int, flags: list[str]) -> int:
     """Each config in its own clmsynth process, `jobs` at a time, so each run keeps
     its own folder, log and exit status. A run's output is printed whole when it
-    ends. Returns the highest exit status."""
+    ends. Returns the batch's exit status (`_batch_status`)."""
     env = dict(os.environ)
     if jobs > 1:
         # Otherwise each worker may start a BLAS thread per core.
@@ -807,10 +856,11 @@ def _run_batch(configs: list[str], jobs: int, flags: list[str]) -> int:
         run = _RUN_LINE.search(output)
         where = f"run {run.group(1)}" if run else "no run folder"
         (log.info if code == 0 else log.warning)(f"{config}: exit {code}, {where}")
-    worst = max([stopped, *(code for code, _ in results.values())])
-    n_ok = sum(code == 0 for code, _ in results.values())
-    log.info(f"Batch: {n_ok} of {n} config(s) exited 0; exit status {worst}, the highest.")
-    return worst
+    codes = [code for code, _ in results.values()]
+    status = _batch_status([*codes, stopped] if stopped else codes)
+    n_ok = codes.count(0)
+    log.info(f"Batch: {n_ok} of {n} config(s) exited 0; exit status {status}.")
+    return status
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -836,6 +886,17 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return args
 
 
+def _exit_status(outcome: Mapping[str, int]) -> int:
+    """0 when every dataset was written with all its labels, 3 when only some
+    were; 2 when the config fits none (refused before its datasets, or each one
+    refused by a code), 1 when nothing was written for another reason."""
+    if not outcome.get("resolved"):
+        return 2
+    if outcome["full"] + outcome["short"] == 0:
+        return 2 if outcome["refused"] == outcome["resolved"] else 1
+    return 0 if outcome["full"] == outcome["resolved"] else 3
+
+
 def main() -> None:
     """CLI entry point: ``python -m clmsynth.main [config ...] [--jobs N] [--no-viz]
     [--keep-failed]`` (or the ``clmsynth`` console script)."""
@@ -853,9 +914,9 @@ def main() -> None:
     global_settings = config.get("global_settings") or {}
     problem = _not_a_mapping("global_settings", global_settings, "data_source: byoc")
     if problem:
-        # Exit 1 before anything is created, like a config that cannot be loaded.
+        # Exit 2 before anything is created, like a config that cannot be loaded.
         log.critical(f"Configuration file '{config_path}': {problem}")
-        sys.exit(1)
+        sys.exit(2)
     data_source = str(global_settings.get("data_source", DATA_SOURCE)).lower()
     render_plots = not args.no_viz
 
@@ -867,7 +928,7 @@ def main() -> None:
         run_dir = build_run_dir(base_dir, SOURCE_DISPLAY.get(data_source, data_source))
     except OSError as e:
         # No `[CLM-###]` code: where a run writes is a property of the file
-        # layout, not of the labeling. Exit 1, like a config that cannot be loaded.
+        # layout, not of the labeling. Exit 1, as for any folder that cannot be written.
         blocker = _file_in_the_way(base_dir)
         if blocker is None:
             log.critical(f"Cannot create the output folder '{resolved_for_report(base_dir)}': {e}")
@@ -898,19 +959,20 @@ def main() -> None:
     config_file = info_dir / f"{run_dir.name}{'.json' if _is_json(config_path) else '.yaml'}"
 
     exit_code = 0
+    outcome: dict[str, int] = {}
     previous_sigterm = signal.signal(signal.SIGTERM, _raise_terminated)
     try:
         n_ok = run_pipeline(data_source, config, csv_dir, png_dir, info_dir, render_plots,
-                            config_out=config_file)
+                            config_out=config_file, report=outcome)
+        exit_code = _exit_status(outcome)
         if n_ok == 0:
             log.error("No datasets were successfully processed.")
-            exit_code = 1
         else:
             log.info(f"Pipeline ready. {n_ok} dataset(s) processed. Output folder: '{run_dir}'.")
-    except (ValueError, TypeError):
-        # Coded [CLM-1xx] configuration error re-raised by run_pipeline, or a
-        # malformed config value that reached an operator, which has
-        # already logged it at CRITICAL.
+    except (ValueError, TypeError, MissingConfigKey):
+        # Coded [CLM-1xx] or [CLM-2xx] configuration error re-raised by
+        # run_pipeline, or a malformed config value that reached an operator,
+        # which has already logged it at CRITICAL.
         exit_code = 2
     except KeyboardInterrupt:
         log.warning("Interrupted; stopping.")
@@ -925,7 +987,8 @@ def main() -> None:
         log_file.close()
 
     if exit_code:
-        discard_failed_run(run_dir, args.keep_failed)
+        if exit_code != 3:
+            discard_failed_run(run_dir, args.keep_failed)
         sys.exit(exit_code)
 
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # label_generator.py
 """Dispatch between the pipeline and the CLM engine: generates
 `n_labels` synthetic label columns for one DatasetContext."""
@@ -10,6 +11,8 @@ import pandas as pd
 from .clm_errors import clm_missing
 from .clm_label_engine import generate_clm_labels
 from .label_context import DatasetContext
+
+__all__ = ["generate_additional_labels"]
 
 
 def generate_additional_labels(
@@ -50,8 +53,8 @@ def generate_additional_labels(
     -------
     None
         ``context`` is modified in place; read the result from
-        ``context.generated_labels`` or ``context.to_dataframe()``, and under
-        ``target_metric`` the engine's report from ``context.label_reports``.
+        ``context.generated_labels`` or ``context.to_dataframe()``, and the
+        engine's report from ``context.label_reports``.
 
     Raises
     ------
@@ -62,7 +65,7 @@ def generate_additional_labels(
         missing or empty.
     InfeasibleAllocationError
         If the configuration is valid but the requested counts cannot fit the
-        cluster capacities.
+        cluster capacities, or ``target_metric.strict`` refuses a missed target.
 
     Examples
     --------
@@ -83,17 +86,21 @@ def generate_additional_labels(
 
     cluster_labels = context.ground_truths[source_labeling].to_numpy()
     coords = context.features.to_numpy()
-
-    # A missing key, so the dataset is still written, without a label. No dataset
-    # name here: main names it, as for every other code.
-    if not clm_config:
-        raise clm_missing(207, where="label_generation", key="clm_label")
+    clm_config = _require_clm_config(clm_config)
 
     for i in range(n_labels):
         report: dict[str, Any] = {}
         series = generate_clm_labels(cluster_labels, coords, clm_config, seed=seed + i,
                                      report=report)
         context.add_generated_label(context.next_generated_label_name(), series, report=report)
+
+
+def _require_clm_config(clm_config: dict[str, Any] | None) -> dict[str, Any]:
+    """clm_config, or [CLM-207] when it is missing or empty."""
+    # A missing key, as for any other required key of the block.
+    if not clm_config:
+        raise clm_missing(207, where="label_generation", key="clm_label")
+    return clm_config
 
 
 def _legacy_noise_flip(base, noise, seed):

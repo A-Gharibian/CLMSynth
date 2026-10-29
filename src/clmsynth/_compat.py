@@ -1,11 +1,14 @@
+# SPDX-License-Identifier: MIT
 # _compat.py
-"""Optional dependencies. Each is imported where it is used."""
+"""Optional dependencies imported where it is used."""
 
 import importlib
+from collections.abc import Mapping
 from types import ModuleType
+from typing import Final
 
 # Import name -> the package as users know it, and how to install it.
-INSTALL: dict[str, tuple[str, str]] = {
+INSTALL: Final[Mapping[str, tuple[str, str]]] = {
     "yaml": ("PyYAML", 'pip install "clmsynth[yaml]"'),
     # Not on PyPI, so it cannot be an extra.
     "mdcgenpy": ("mdcgenpy", "pip install git+https://github.com/CN-TU/mdcgenpy"),

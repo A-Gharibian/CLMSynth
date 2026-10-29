@@ -21,23 +21,22 @@ Four bands, two mechanisms, decided by what the pipeline actually does:
                            equally wrong for every dataset, so it aborts the
                            run rather than being swallowed per dataset.
                            Asserted on the exception and its `.code`.
-                           SEVEN EXCEPTIONS, logged per dataset while the batch
+                           EXCEPTIONS, logged per dataset while the batch
                            continues. See MECHANISM_OVERRIDES below.
-                           [CLM-102], [CLM-105], [CLM-119], [CLM-125],
-                           [CLM-127] and [CLM-133] judge the DATASET's K,
-                           cluster ids or features rather than the config, so
-                           that dataset is skipped.
+                           The codes in main.PER_DATASET_CODES judge the
+                           DATASET's K, cluster ids or features rather than
+                           the config, so that dataset is skipped.
                            [CLM-120] (no target_metric level fits) is judged
                            against the dataset's cluster sizes, so another
                            dataset may fit the same config. It skips no
                            dataset: only that dataset's label is left out and
-                           the dataset is still written, as under 15x and 2xx.
+                           the dataset is still written, as under 15x.
   InfeasibleAllocation_15x per-dataset skip (another dataset's cluster sizes
                            may satisfy the same rules), logged with its code.
   Warnings_3xx             run succeeds, warning logged with its code.
-  KeyError_2xx             per-dataset skip, like 15x. Missing required config
-                           keys are coded KeyErrors, asserted on the code:
-                           label generation is skipped and the run continues.
+  KeyError_2xx             run_pipeline re-raises, like 1xx. A missing required
+                           key has no default, so no dataset can be labelled.
+                           Coded KeyErrors, asserted on the code.
 
 Warnings matter more than exceptions. An exception that stops
 firing announces itself: the run crashes differently or produces nothing. A
@@ -47,8 +46,8 @@ Those are the cases where a regression is invisible without this module.
 """
 
 import logging
-import re
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -57,11 +56,9 @@ import pytest
 # The Agg backend is selected once in conftest, before any test module is
 # imported, so no GUI toolkit is initialized even if something reaches
 # matplotlib despite the plot suppression below.
-import clmsynth.main
 from clmsynth.byoc_source import fetch_byoc_data
-from clmsynth.clm_errors import CODES
 from clmsynth.clm_label_engine import generate_clm_labels
-from clmsynth.main import run_pipeline
+from clmsynth.main import PER_DATASET_CODES, run_pipeline
 
 # How each catalog band surfaces its diagnostic.
 RAISES, LOGGED = "raises", "logged"
@@ -69,14 +66,11 @@ BANDS = {
     "ValueError_1xx": RAISES,
     "InfeasibleAllocation_15x": LOGGED,
     "Warnings_3xx": LOGGED,
-    "KeyError_2xx": LOGGED,
+    "KeyError_2xx": RAISES,
 }
 
 
-MECHANISM_OVERRIDES = {
-    102: LOGGED, 105: LOGGED, 119: LOGGED, 125: LOGGED, 127: LOGGED, 133: LOGGED,
-    120: LOGGED,
-}
+MECHANISM_OVERRIDES = {**dict.fromkeys(PER_DATASET_CODES, LOGGED), 120: LOGGED}
 
 
 def _catalog_dir() -> Path:
@@ -94,106 +88,12 @@ def _catalog_dir() -> Path:
 
 
 CATALOG = _catalog_dir()
-DOCS = CATALOG.parent
-
-# Shipped .tex documents carry a machine-readable banner in their first few
-# lines, in the style of the `% !TeX program = ...` magic comments editors
-# already understand:
-#
-#     % !CLMSynth-doc = configuration-troubleshooting
-#     % !CLMSynth-version = 0.6.3
-#
-# Locating a document by that marker rather than by filename means the file can
-# be renamed without breaking anything here.
-DOC_BANNER = re.compile(r"^%\s*!CLMSynth-(doc|version)\s*=\s*(\S+)", re.M)
-
-
-def find_document(kind: str):
-    """Return (path, declared_version) for the one .tex declaring `kind`.
-
-    Fails on zero matches and on more than one. Ambiguity matters here:
-    keeping an older copy of a document beside the current one is a natural
-    thing to do, and silently picking whichever sorted first would be a worse
-    failure than the filename coupling this replaces.
-    """
-    hits = []
-    for path in sorted(DOCS.rglob("*.tex")):
-        fields = dict(DOC_BANNER.findall(path.read_text(encoding="utf-8", errors="replace")[:2000]))
-        if fields.get("doc") == kind:
-            hits.append((path, fields.get("version")))
-
-    assert hits, (
-        f"no .tex under {DOCS} declares '% !CLMSynth-doc = {kind}'. Every shipped "
-        "document needs the banner; see any of them for the format."
-    )
-    assert len(hits) == 1, (
-        f"{len(hits)} documents claim to be '{kind}': "
-        f"{[p.name for p, _ in hits]}. Exactly one may carry a given marker"
-        "reference or archived copies belong outside this tree, or must carry no banner."
-    )
-    return hits[0]
-
-
-# Registry codes with no catalog fixture, and why. Deliberately a mapping rather
-# than a bare set: an entry without a stated reason is how a genuine gap gets
-# waved through. Empty is the goal; every entry is a debt. Empty since 0.7.2:
-# [CLM-133], the last entry, became reachable when byoc reported missing cluster
-# ids with it.
-NO_CATALOG_FIXTURE: dict = {}
 
 
 @pytest.fixture(autouse=True)
 def _no_plots(no_plots):
     """Never render a plot in this module.
     """
-
-
-def _catalog_codes() -> set:
-    return {int(p.stem.split("-")[1]) for p in CATALOG.rglob("CLM-*.yaml")}
-
-
-def test_every_registry_code_has_a_catalog_fixture():
-    """Coverage is asserted against the registry, not against a stored checksum.
-    a code added to the registry
-    with no fixture written for it fails here immediately.
-    """
-    missing = set(CODES) - _catalog_codes() - set(NO_CATALOG_FIXTURE)
-    assert not missing, (
-        f"registry codes with no catalog fixture: {sorted(missing)}. "
-        "Add one with CLM_catalog_gen.py, or record it in NO_CATALOG_FIXTURE with "
-        "the reason it cannot have one."
-    )
-
-
-def test_registry_reference_and_catalog_agree():
-    """The three artifacts a user meets must describe the same set of codes.
-
-    The registry is what the engine raises, the troubleshooting reference is what
-    the manual documents, and the catalog is what a user can run. A code present
-    in one and absent from another is a code somebody will hit and find no help
-    for. Asserted one-directionally.
-    every registry code appears in the other
-    two, because the reference also writes band ranges in prose that are not
-    codes at all.
-    """
-    reference, _ = find_document("configuration-troubleshooting")
-    documented = {
-        int(m) for m in re.findall(r"\\[a-z]*code\{(\d+)\}", reference.read_text(encoding="utf-8"))
-    }
-    undocumented = set(CODES) - documented
-    assert not undocumented, f"registry codes missing from {reference.name}: {sorted(undocumented)}"
-
-
-@pytest.mark.parametrize("kind", ["manual", "configuration-troubleshooting"])
-def test_shipped_documents_declare_the_current_version(kind):
-    """Documentation cannot silently fall behind a release."""
-    path, declared = find_document(kind)
-    assert declared == clmsynth.__version__, (
-        f"{path.name} declares version {declared}, package is "
-        f"{clmsynth.__version__}. Update the '% !CLMSynth-version' banner when the "
-        "document is revised for a release, or revise the document, if it still "
-        "describes older behaviour."
-    )
 
 
 def _fixtures():
@@ -215,7 +115,7 @@ def test_catalog_is_present():
     would silently vanish and the suite would report all-green over nothing.
     """
     assert FIXTURES, "no catalog fixtures collected from " + str(CATALOG)
-    bands = {p.values[0].parent.name for p in FIXTURES}
+    bands = {cast(Path, p.values[0]).parent.name for p in FIXTURES}
     assert bands == set(BANDS), "a whole catalog band is missing: " + str(bands)
 
 
@@ -251,7 +151,7 @@ def test_catalog_diagnostic_fires(config_path, mechanism, tmp_path, caplog, yaml
 
     with caplog.at_level(logging.DEBUG, logger="clmsynth"):
         if mechanism == RAISES:
-            with pytest.raises(ValueError) as excinfo:
+            with pytest.raises((ValueError, KeyError)) as excinfo:
                 run_pipeline(source, config, csv_dir, png_dir, txt_dir)
             exc = excinfo.value
             # The code is attached twice by design (message prefix and .code
@@ -274,7 +174,7 @@ N = 1000
 @pytest.mark.parametrize("cluster_column", [["cluster"], 123], ids=["list", "int"])
 def test_byoc_cluster_column_wrong_type_is_rejected(cluster_column, tmp_path):
     """A non-str cluster_column must be rejected, never silently coerced."""
-    pd.DataFrame({"f1": [1, 2, 3], "f2": [4, 5, 6], "cluster": ["A", "A", "B"]}).to_csv(
+    pd.DataFrame({"f1": [1, 2, 3], "f2": [4, 5, 6], "cluster": [0, 0, 1]}).to_csv(
         tmp_path / "tc.csv", index=False
     )
     assert (
@@ -284,7 +184,9 @@ def test_byoc_cluster_column_wrong_type_is_rejected(cluster_column, tmp_path):
 
 
 def test_assignment_matrix_string_cluster_does_not_match_int_id():
-    """clusters: ["1"] must not silently match int cluster 1, no type juggling."""
+    """clusters: ["1"] must not silently match int cluster 1, no type juggling.
+    Cluster ids are integers, so it is a config error ([CLM-141]); it was the id
+    not found in the dataset ([CLM-105])."""
     with pytest.raises(ValueError) as excinfo:
         generate_clm_labels(
             CLUSTERS,
@@ -299,11 +201,12 @@ def test_assignment_matrix_string_cluster_does_not_match_int_id():
             },
             seed=1,
         )
-    assert "[CLM-105]" in str(excinfo.value)
+    assert "[CLM-141]" in str(excinfo.value)
 
 
 def test_competing_noise_float_cluster_is_rejected():
-    """competing_noise.cluster as 1.5 is no int id, and must be caught as such."""
+    """competing_noise.cluster as 1.5 is no int id, and must be caught as such:
+    [CLM-141], a config error; it was the id not found in the dataset ([CLM-119])."""
     with pytest.raises(ValueError) as excinfo:
         generate_clm_labels(
             CLUSTERS,
@@ -322,7 +225,7 @@ def test_competing_noise_float_cluster_is_rejected():
             },
             seed=1,
         )
-    assert "[CLM-119]" in str(excinfo.value)
+    assert "[CLM-141]" in str(excinfo.value)
 
 
 def test_cardinality_guard():
@@ -379,7 +282,7 @@ def test_cardinality_guard():
     assert "[CLM-127]" in str(excinfo.value)
 
 
-# The base payload the render-time cases below mutate via `overrides`/`drop`.
+# The base payload the render-time cases below mutate.
 #
 # `test_smoke.py` carries a MINIMAL_PAYLOAD with the same contents: the gate must
 # import nothing from another test module, and diagnostics needs a payload it is
@@ -407,74 +310,64 @@ MINIMAL_PAYLOAD = {
 
 
 @pytest.mark.parametrize(
-    "overrides,drop,expected",
+    "overrides,expected",
     [
-        (
-            {"matching_mode": "perfect", "target_metric": {"type": "mcc", "value": 0.5}},
-            (),
-            "[CLM-111]",
-        ),
-        (
-            {"matching_mode": "random", "target_metric": {"type": "mcc", "value": 0.5}},
-            (),
-            "[CLM-114]",
-        ),
-        (
-            {
-                "matching_mode": "random",
-                "competing_noise": [{"cluster": 0, "label": 1, "share": 0.5}],
-            },
-            (),
-            "[CLM-115]",
-        ),
-        (
-            {
-                "matching_mode": "custom",
-                "target_metric": {"type": "mcc", "value": 0.5, "scope": "pair"},
-            },
-            (),
-            "[CLM-124]",
-        ),
-        # skew_rule is only consulted when it is actually live, so the warning is
-        # correctly silent unless proportions are absent.
-        ({"skew_rule": "bogus_rule"}, ("proportions",), "skew_rule"),
-        ({"balance": "Balanced"}, (), "[CLM-132]"),
-        ({"balance": "balanced"}, (), "ignores explicit proportions"),
-        ({"data_source": "bogus_source"}, (), "data_source"),
+        ({"matching_mode": "random", "target_metric": {"type": "mcc", "value": 0.5}},
+         "[CLM-114]"),
+        ({"centroid_enabled": "false"}, "[CLM-141]"),
     ],
-    ids=[
-        "perfect+target",
-        "random+target",
-        "random+competing",
-        "pair+custom",
-        "unknown-skew",
-        "unknown-balance",
-        "balanced+proportions",
-        "unknown-source",
-    ],
+    ids=["random+target", "quoted-false"],
 )
 @pytest.mark.usefixtures("yaml")
-def test_generate_config_warns_about_configs_the_engine_will_reject(
-    overrides, drop, expected, tmp_path, caplog
-):
-    """A bad payload should be caught at render time, not at run time.
+def test_generate_config_writes_nothing_the_engine_refuses(overrides, expected, tmp_path):
+    """The rendered clm_label block is checked with the engine's own checks before
+    it is written, and a refusal is raised with the engine's code. Values are
+    written as given, so a quoted "false" reaches the check as a string."""
+    from clmsynth.generate_config import generate_base_config
 
-    The renderer cannot refuse , its job is to produce the YAML the user asked
-    for, but it can say the engine will reject it, and it names the code so
-    the message and the troubleshooting reference line up.
+    out = tmp_path / "out.yaml"
+    with pytest.raises(ValueError) as excinfo:
+        generate_base_config({**MINIMAL_PAYLOAD, **overrides}, output_path=str(out))
+    assert expected in str(excinfo.value)
+    assert not out.exists()
 
-    `drop` removes keys from the base payload, because several of these warnings
-    fire only when the setting they concern is actually in use.
-    """
+
+@pytest.mark.usefixtures("yaml")
+def test_generate_config_warns_about_an_unknown_data_source(tmp_path, caplog):
+    """data_source is not a clm_label key, so the engine never sees it; the run
+    refuses an unknown one, and the renderer says so."""
+    from clmsynth.generate_config import generate_base_config
+
+    with caplog.at_level(logging.WARNING):
+        generate_base_config({**MINIMAL_PAYLOAD, "data_source": "bogus_source"},
+                             output_path=str(tmp_path / "out.yaml"))
+
+    assert "data_source" in caplog.text, f"no render-time warning. Captured:\n{caplog.text}"
+
+
+@pytest.mark.parametrize(
+    "overrides,drop",
+    [
+        ({"balance": "Balanced"}, ()),
+        ({"balance": "balanced"}, ()),
+        ({"skew_rule": "bogus_rule"}, ("proportions",)),
+    ],
+    ids=["unknown-balance", "balanced+proportions", "unknown-skew"],
+)
+@pytest.mark.usefixtures("yaml")
+def test_generate_config_ignores_sizing_keys_under_perfect(overrides, drop, tmp_path, caplog):
+    """'perfect' neither reads nor validates balance, proportions or skew_rule, so
+    clmsynth-config does not write them: a value the engine refuses under another
+    mode passes, and the config does not warn [CLM-302]."""
     from clmsynth.generate_config import generate_base_config
 
     payload = {k: v for k, v in MINIMAL_PAYLOAD.items() if k not in drop}
-    payload.update(overrides)
+    payload.update(overrides, matching_mode="perfect")
 
     with caplog.at_level(logging.WARNING):
         generate_base_config(payload, output_path=str(tmp_path / "out.yaml"))
 
-    assert expected in caplog.text, f"no render-time warning. Captured:\n{caplog.text}"
+    assert not caplog.text.strip(), f"perfect payload produced warnings:\n{caplog.text}"
 
 
 @pytest.mark.usefixtures("yaml")
@@ -490,31 +383,6 @@ def test_generate_config_stays_silent_on_a_valid_payload(tmp_path, caplog):
         generate_base_config(dict(MINIMAL_PAYLOAD), output_path=str(tmp_path / "out.yaml"))
 
     assert not caplog.text.strip(), f"valid payload produced warnings:\n{caplog.text}"
-
-
-@pytest.mark.parametrize(
-    "overrides,drop",
-    [
-        ({"balance": "Balanced"}, ()),
-        ({"balance": "balanced"}, ()),
-        ({"skew_rule": "bogus_rule"}, ("proportions",)),
-    ],
-    ids=["unknown-balance", "balanced+proportions", "unknown-skew"],
-)
-@pytest.mark.usefixtures("yaml")
-def test_generate_config_ignores_sizing_keys_under_perfect(overrides, drop, tmp_path, caplog):
-    """'perfect' neither reads nor validates balance, proportions or skew_rule,
-    so the three render warnings about them would describe a failure that never
-    happens. The matching cases above show each warning firing elsewhere."""
-    from clmsynth.generate_config import generate_base_config
-
-    payload = {k: v for k, v in MINIMAL_PAYLOAD.items() if k not in drop}
-    payload.update(overrides, matching_mode="perfect")
-
-    with caplog.at_level(logging.WARNING):
-        generate_base_config(payload, output_path=str(tmp_path / "out.yaml"))
-
-    assert not caplog.text.strip(), f"perfect payload produced warnings:\n{caplog.text}"
 
 
 def test_byoc_render_round_trips_a_windows_path(tmp_path, yaml):

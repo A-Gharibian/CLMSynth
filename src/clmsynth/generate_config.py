@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # generate_config.py
 """Renders config_template.YAML_TEMPLATE into a runnable pipeline config.
 The input is a flat "upstream payload" mapping (see upstream_payload.yaml).
@@ -9,18 +10,44 @@ import logging
 import os
 import sys
 import uuid
+from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import Any
 
 from ._cli_logging import configure_cli_logging
 from ._compat import import_optional_dependency
-from .config_template import YAML_TEMPLATE
+from .clm_errors import MissingConfigKey
+from .config_template import PERFECT_SIZING, SIZING_TEMPLATE, YAML_TEMPLATE
 
-log = logging.getLogger(__name__)
+__all__ = [
+    "VALID_SOURCES",
+    "format_list_or_all",
+    "format_yaml_snippet",
+    "generate_base_config",
+    "main",
+    "write_text_atomic",
+]
 
-# Tuples, not sets: `in` must not hash a payload value, which may be a list.
-VALID_SKEW_RULES = ("geometric", "dominant_minority", "dirichlet")
-VALID_BALANCE = ("balanced", "unbalanced")
+log: logging.Logger = logging.getLogger(__name__)
+
+# A tuple, not a set: `in` must not hash a payload value, which may be a list.
 VALID_SOURCES = ("clustbench", "mdcgen", "fabricated_data", "byoc")
+
+
+def _write_then_replace(path: str | Path, write: Callable[[Path], object]) -> None:
+    """Runs `write` on a temporary file beside `path`, then os.replace swaps it in,
+    so `path` never holds part of the new content. The temporary file is removed
+    when `write` fails or is interrupted. A symlinked `path` is followed, so the
+    link survives."""
+    target = Path(path).resolve()
+    tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        write(tmp)
+        os.replace(tmp, target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
+        raise
 
 
 def write_text_atomic(path: str | Path, text: str) -> None:
@@ -32,23 +59,18 @@ def write_text_atomic(path: str | Path, text: str) -> None:
     goes to a temporary file in the same folder and os.replace swaps it in. A
     symlinked `path` is followed, so the link survives.
     """
-    target = Path(path).resolve()
-    # open(..., "x") rather than tempfile.mkstemp, which creates the file 0600:
-    # the config would lose the read permission the umask gives everyone else.
-    tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
-    try:
+    def write(tmp: Path) -> None:
+        # open(..., "x") rather than tempfile.mkstemp, which creates the file 0600:
+        # the config would lose the read permission the umask gives everyone else.
         with open(tmp, "x", encoding="utf-8") as file:
             file.write(text)
             file.flush()
             os.fsync(file.fileno())
-        os.replace(tmp, target)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            tmp.unlink(missing_ok=True)
-        raise
+
+    _write_then_replace(path, write)
 
 
-def format_yaml_snippet(data, indent_level=6):
+def format_yaml_snippet(data: dict[str, Any] | list[Any], indent_level: int = 6) -> str:
     """Converts a dict/list into a formatted YAML string for injection.
     indent_level=6 matches single_match/assignment_matrix sitting two
     levels deep (label_generation -> clm_label -> field)."""
@@ -60,7 +82,7 @@ def format_yaml_snippet(data, indent_level=6):
     return "\n".join(" " * indent_level + line for line in snippet.split("\n"))
 
 
-def format_list_or_all(value) -> str:
+def format_list_or_all(value: str | Iterable[object]) -> str:
     """Renders a batteries/datasets value: the literal "all" or a YAML list."""
     if value == "all":
         return '"all"'
@@ -71,14 +93,24 @@ def format_list_or_all(value) -> str:
 
 def _yaml_scalar(value) -> str:
     """Renders one payload value as a YAML scalar: bools lowercased, strings
-    quoted, numbers as-is. Booleans are checked first, since bool is a subclass
-    of int and would otherwise render as True/False rather than true/false."""
+    quoted, None as null, numbers as-is. Booleans are checked first, since bool
+    is a subclass of int and would otherwise render as True/False rather than
+    true/false."""
     if isinstance(value, bool):
         return "true" if value else "false"
+    if value is None:
+        return "null"
     if isinstance(value, str):
         # JSON strings are valid YAML double-quoted scalars.
         return json.dumps(value)
     return str(value)
+
+
+def _yaml_list(value) -> str:
+    """A list as a YAML flow sequence, and anything else as given."""
+    if isinstance(value, (list, tuple)):
+        return f"[{', '.join(_yaml_scalar(v) for v in value)}]"
+    return _yaml_scalar(value)
 
 
 def _optional_block(lines: list[str]) -> str:
@@ -89,10 +121,16 @@ def _optional_block(lines: list[str]) -> str:
     return ("\n" + "\n".join(lines)) if lines else ""
 
 
-def generate_base_config(upstream_data: dict, output_path: str = "test_data_config.yaml"):
+def generate_base_config(upstream_data: dict[str, Any],
+                         output_path: str = "test_data_config.yaml") -> None:
     """Generates the configuration using upstream dynamic data: JSON for a .json
-    output path, YAML otherwise."""
+    output path, YAML otherwise. The clm_label block is written as given and
+    checked as generate_clm_labels checks it, without a dataset; a refusal is
+    raised with its [CLM-###] code (ValueError or MissingConfigKey) and nothing
+    is written."""
     import yaml
+
+    from .clm_label_engine import _check_config
 
     def pick(key, default):
         """Payload value, or the default when absent or null."""
@@ -105,52 +143,28 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
                     "main.py's FETCHERS dict will reject this at runtime.")
 
     mode = pick("matching_mode", "custom")
-    balance = pick("balance", "unbalanced")
-    skew_rule = pick("skew_rule", "geometric")
-    has_proportions = bool(pick("proportions", []))
-
-    # 'perfect' never reads balance, proportions or skew_rule, so the engine neither
-    # checks nor applies them there, and none of these three warnings applies.
-    sizing_read = mode != "perfect"
-    if sizing_read and balance not in VALID_BALANCE:
-        log.warning(f"balance {balance!r} is not one of 'balanced'/'unbalanced': the engine "
-                    "rejects it ([CLM-132]). Matching is case-sensitive and exact.")
-    if sizing_read and balance == "balanced" and has_proportions:
-        log.warning(
-            "balance='balanced' with 'proportions' also set: the engine enforces a "
-            "uniform 1/M split and ignores explicit proportions. Set balance to "
-            "'unbalanced' to have your proportions used directly."
+    if mode == "perfect":
+        sizing = PERFECT_SIZING
+    else:
+        skew_params = pick("skew_params", {})
+        sizing = SIZING_TEMPLATE.format(
+            proportions=_yaml_list(pick("proportions", [])),
+            balance=_yaml_scalar(pick("balance", "unbalanced")),
+            skew_rule=_yaml_scalar(pick("skew_rule", "geometric")),
+            skew_params=_optional_block(
+                ["    skew_params:"]
+                + [f"      {k}: {_yaml_scalar(v)}" for k, v in skew_params.items()]
+                if skew_params else []),
         )
-    if (sizing_read and balance == "unbalanced" and not has_proportions
-            and skew_rule not in VALID_SKEW_RULES):
-        log.warning(f"skew_rule '{skew_rule}' is not implemented by clm_label_engine.py "
-                    f"(valid: {VALID_SKEW_RULES}). This config will fail at runtime unless fixed.")
 
     # --- optional clm_label blocks ------------------------------------------
 
     target_metric = pick("target_metric", {})
     competing_noise = pick("competing_noise", [])
 
-    if target_metric and mode not in ("single", "custom"):
-        log.warning(f"target_metric is set but matching_mode is '{mode}': the engine rejects "
-                    "this ([CLM-111]/[CLM-114]). Use 'single'/'custom', or drop target_metric.")
-    if target_metric.get("scope") == "pair" and (
-            target_metric.get("type") != "mcc" or mode != "single"):
-        log.warning("target_metric.scope 'pair' requires type 'mcc' and matching_mode 'single' "
-                    "([CLM-123]/[CLM-124]); this config will fail at runtime unless fixed.")
-    if competing_noise and mode == "random":
-        log.warning("competing_noise is set with matching_mode 'random': the engine rejects this "
-                    "([CLM-115]). Use 'single' or 'custom'.")
-
-    skew_params = pick("skew_params", {})
-    skew_params_block = _optional_block(
-        ["    skew_params:"] + [f"      {k}: {_yaml_scalar(v)}" for k, v in skew_params.items()]
-        if skew_params else []
-    )
-
     concentrated = pick("concentrated_labels", [])
     concentrated_block = _optional_block(
-        [(f"    concentrated_labels: [{', '.join(str(x) for x in concentrated)}]"
+        [(f"    concentrated_labels: {_yaml_list(concentrated)}"
           "  # spillover_rule 'concentrated' only")] if concentrated else []
     )
 
@@ -159,7 +173,8 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
         competing_lines = [
             "",
             "    # STRUCTURED COMPETING NOISE (single/custom only). Converts a share of ONE",
-            "    # cluster's UNCLAIMED points to one competing label; bypasses 'proportions'.",
+            "    # cluster's UNCLAIMED points to one competing label, at most what that",
+            "    # label has left under spillover_rule 'proportional_to_marginal'.",
             "    competing_noise:",
         ]
         for entry in competing_noise:
@@ -185,14 +200,12 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
 
     steepness = pick("centroid_steepness", None)
     steepness_block = _optional_block(
-        [f"      steepness: {steepness}  # exponential profile only"]
+        [f"      steepness: {_yaml_scalar(steepness)}  # exponential profile only"]
         if steepness is not None and pick("centroid_profile", "exponential") == "exponential" else []
     )
 
-    proportions_str = f"[{', '.join(map(str, pick('proportions', [])))}]"
-    single_match_yaml = format_yaml_snippet(pick("single_match", {"cluster": None, "label": None}))
+    single_match_yaml = format_yaml_snippet(pick("single_match", {}))
     assignment_matrix_yaml = format_yaml_snippet(pick("assignment_matrix", []))
-    centroid_enabled = "true" if pick("centroid_enabled", True) else "false"
 
     if data_source == "byoc":
         tags = pick("tag_columns", [])
@@ -223,21 +236,18 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
         noise=pick("noise", 0.1),
         label_seed=pick("label_seed", 42),
 
-        num_classes=pick("num_classes", 4),
-        proportions=proportions_str,
-        balance=balance,
-        skew_rule=skew_rule,
-        matching_mode=mode,
+        num_classes=_yaml_scalar(pick("num_classes", 4)),
+        sizing=sizing,
+        matching_mode=_yaml_scalar(mode),
         single_match=single_match_yaml,
         assignment_matrix=assignment_matrix_yaml,
-        split_rule=pick("split_rule", "proportional_to_size"),
-        spillover_rule=pick("spillover_rule", "proportional_to_marginal"),
-        centroid_enabled=centroid_enabled,
-        centroid_profile=pick("centroid_profile", "exponential"),
-        centroid_favors=pick("centroid_favors", "core"),
+        split_rule=_yaml_scalar(pick("split_rule", "proportional_to_size")),
+        spillover_rule=_yaml_scalar(pick("spillover_rule", "proportional_to_marginal")),
+        centroid_enabled=_yaml_scalar(pick("centroid_enabled", False)),
+        centroid_profile=_yaml_scalar(pick("centroid_profile", "exponential")),
+        centroid_favors=_yaml_scalar(pick("centroid_favors", "core")),
 
         # Optional blocks: '' unless the payload asked for them.
-        skew_params=skew_params_block,
         concentrated_labels=concentrated_block,
         competing_noise=competing_block,
         target_metric=target_block,
@@ -249,6 +259,7 @@ def generate_base_config(upstream_data: dict, output_path: str = "test_data_conf
     except yaml.YAMLError as e:
         log.critical(f"Rendered configuration is not valid YAML: {e}")
         sys.exit(1)
+    _check_config(config["label_generation"]["clm_label"])
 
     # The suffix picks the format, as clmsynth reads it. JSON has no comments, so
     # the template's stay behind.
@@ -286,25 +297,36 @@ def main() -> None:
         log.critical(f"Payload file '{payload_path}' not found. It ships with the "
                      f"repository and the sdist, not the wheel. Pass a payload path, "
                      f"or run clmsynth-wizard instead.")
-        sys.exit(1)
+        sys.exit(2)
     except yaml.YAMLError as e:
         log.critical(f"Payload file '{payload_path}' is not valid YAML: {e}")
-        sys.exit(1)
+        sys.exit(2)
 
     if not isinstance(payload, dict):
         log.critical(f"Payload file '{payload_path}' must contain a YAML mapping.")
-        sys.exit(1)
+        sys.exit(2)
 
     if os.path.exists(output_path) and os.path.samefile(payload_path, output_path):
         log.critical(f"Output path '{output_path}' is the payload file; writing the config "
                      "there would replace the payload. Pass a different output path.")
-        sys.exit(1)
+        sys.exit(2)
 
     try:
         generate_base_config(upstream_data=payload, output_path=output_path)
     except KeyboardInterrupt:
         log.warning("Interrupted; nothing written.")
         sys.exit(130)
+    except (AttributeError, TypeError) as e:
+        # Raised while rendering, before anything is written.
+        log.critical(f"Payload file '{payload_path}': a value has the wrong shape "
+                     f"({type(e).__name__}: {e}). target_metric and skew_params take a "
+                     "mapping, competing_noise a list of mappings. Nothing was written.")
+        sys.exit(2)
+    except (ValueError, MissingConfigKey) as e:
+        if getattr(e, "code", None) is None:
+            raise
+        log.critical(f"Payload file '{payload_path}': {e} Nothing was written.")
+        sys.exit(2)
 
 
 if __name__ == "__main__":

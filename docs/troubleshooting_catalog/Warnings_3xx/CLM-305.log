@@ -14,7 +14,7 @@ INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed
 INFO - Generating synthetic data (Seed: 42)...
 INFO - Applying perfect separation ground truth to categorical labels...
 INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
-WARNING - [CLM-305] competing_noise: cluster 0 has no unclaimed points (or share rounds to 0); entry {'cluster': 0, 'label': 1, 'share': 0.5, 'favors': 'random'} has no effect.
+WARNING - [CLM-305] competing_noise: entry {'cluster': 0, 'label': 1, 'share': 0.5, 'favors': 'random'} has no effect: cluster 0 has no unclaimed points.
 INFO - CLM labels generated. Target counts: [200, 200, 200, 200], achieved: [200, 200, 200, 200].
 INFO - [fabricated_data/fabricated/baseline_4class] Attached generated label 'Label_0'.
 INFO - Saved: _scratch/CLM-305/{run}/csv/fabricated_data-fabricated-baseline_4class.csv

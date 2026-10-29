@@ -1,0 +1,49 @@
+# [CLM-154] target_metric strict: the delivered value is outside the tolerance
+# Regenerated against the shipped engine by tools/CLM_catalog_gen.py
+# in the CLMSynth source repository.
+# Reproduce: cd to this catalog's root, then
+#     python -m clmsynth.main InfeasibleAllocation_15x/CLM-154.yaml --no-viz
+global_settings:
+  data_source: fabricated_data
+  output_dir: _scratch/CLM-154
+fabricated_data_suite:
+  batteries:
+  - fabricated
+  datasets:
+  - baseline_4class
+  seed: 42
+label_generation:
+  n_labels: 1
+  source_labeling: labels0
+  noise: 0.1
+  seed: 42
+  clm_label:
+    num_classes: 3
+    proportions:
+    - 0.34
+    - 0.33
+    - 0.33
+    balance: unbalanced
+    skew_rule: geometric
+    matching_mode: custom
+    assignment_matrix:
+    - clusters:
+      - 0
+      label: 0
+    - clusters:
+      - 1
+      label: 1
+    - clusters:
+      - 2
+      label: 2
+    split_rule: proportional_to_size
+    spillover_rule: proportional_to_marginal
+    centroid_dependence:
+      enabled: true
+      profile: linear
+      favors: core
+    target_metric:
+      type: mcc
+      value: 0.99
+      max_iter: 15
+      strict: true

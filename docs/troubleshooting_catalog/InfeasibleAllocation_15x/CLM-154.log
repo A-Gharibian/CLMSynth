@@ -1,0 +1,26 @@
+$ python -m clmsynth.main InfeasibleAllocation_15x/CLM-154.yaml --no-viz
+# exit code: 3
+
+INFO - Starting Test Data Orchestrator...
+INFO - Output directory: '{catalog}/_scratch/CLM-154'.
+INFO - Run {run} from config '{catalog}/InfeasibleAllocation_15x/CLM-154.yaml'.
+INFO - Plot rendering is off: png/ stays empty and matplotlib is never imported.
+INFO - Available 'fabricated_data' dataset batteries:
+INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels. No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
+INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
+INFO - Saved resolved config: _scratch/CLM-154/{run}/info/{run}.yaml
+INFO - Dataset 1 of 1: fabricated/baseline_4class
+INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed=42)...
+INFO - Generating synthetic data (Seed: 42)...
+INFO - Applying perfect separation ground truth to categorical labels...
+INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
+WARNING - target_metric: 3 probed recall level(s) in [0.800, 1.000] are infeasible; at alpha=0.800: [CLM-150] Infeasible rule: label 0 needs 217.6 of its 272 points in clusters [0], which hold only 200 points total. Under target_metric this is the search's recall level alpha=0.800, not a recall_target to lower; levels up to 0.735 fit here. For a higher level, make label 0 smaller (its 272 points come from proportions[0] = 0.34), or give the rule more clusters.
+WARNING - [CLM-306] target_metric: did not converge within tolerance after 15 of 15 iterations. Best found: alpha=0.7000, achieved=0.6594 (target=0.990, tol=0.0). Size ceiling for these label counts: mcc=0.7071; the target is above it, so no labeling with these counts reaches it.
+INFO - CLM labels generated. Target counts: [272, 264, 264], achieved: [272, 264, 264].
+INFO - target_metric: final achieved mcc=0.6594 (target was 0.99, alpha=0.7000).
+INFO - target_metric: highest mcc the search found is 0.6594 (alpha=0.7000); size ceiling 0.7071, which no labeling with these label counts exceeds.
+ERROR - Skipping label generation for fabricated/baseline_4class: [CLM-154] target_metric strict: the delivered labeling scores mcc=0.659410, 0.331 from the requested 0.99 (tolerance 0.0), so the label is not written. Highest the search found: 0.6594 (alpha=0.7000). Size ceiling for these label counts: mcc=0.7071; the target is above it, so no labeling with these counts reaches it.
+INFO - Saved: _scratch/CLM-154/{run}/csv/fabricated_data-fabricated-baseline_4class.csv
+INFO - Saved summary: _scratch/CLM-154/{run}/info/fabricated_data-fabricated-baseline_4class.txt
+WARNING - Of the 1 resolved dataset(s): 0 written with all labels, 1 written with not all labels, 0 skipped (see the errors above).
+INFO - Pipeline ready. 1 dataset(s) processed. Output folder: '_scratch/CLM-154/{run}'.

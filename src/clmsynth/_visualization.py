@@ -1,10 +1,14 @@
+# SPDX-License-Identifier: MIT
 # _visualization.py
 """Scatter-plot rendering for the pipeline outputs."""
 
+import json
 import logging
 import os
+import re
 import threading
 from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -13,6 +17,8 @@ from matplotlib import colormaps
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
+
+from .metrics import clustering_ari, clustering_mcc
 
 log = logging.getLogger(__name__)
 
@@ -158,3 +164,127 @@ def plot_feature_scatter(
             plt.close(fig)
         if output_path:
             _RENDER_LOCK.release()
+
+
+def _clm_info_text(clm_config: dict) -> str:
+    """Right-margin annotation: the CLM knobs that shaped this generated label.
+
+    Only what the engine read for it, so every value shown has passed its checks:
+    'perfect' takes the label sizes from the clusters, 'balanced' ignores
+    proportions ([CLM-301]), and 'random' places nothing by centroid. Built only
+    for a label the engine generated.
+    """
+    mode = clm_config.get("matching_mode", "-")
+    props = clm_config.get("proportions") or []
+    cd = clm_config.get("centroid_dependence", {}) or {}
+    tm = clm_config.get("target_metric")
+
+    lines = ["CLM config"]
+    if mode == "perfect":
+        lines.append("sizes: from clusters")
+    elif clm_config.get("balance") == "unbalanced" and props:
+        lines.append("proportions:")
+        vals = [f"{float(p):.3g}" for p in props]
+        for i in range(0, len(vals), 2):          # two values per line
+            lines.append("  " + ", ".join(vals[i:i + 2]))
+    else:
+        lines.append(f"balance: {clm_config.get('balance', '-')}")
+    if mode != "random" and cd.get("enabled"):
+        lines.append("centrality:")
+        lines.append(f"  {cd.get('favors', 'core')}/{cd.get('profile', 'linear')}")
+    else:
+        lines.append("centrality: off")
+    if tm:
+        lines.append(f"target: {tm.get('type')}={tm.get('value')}")
+    else:
+        lines.append(f"matching: {mode}")
+    return "\n".join(lines)
+
+
+def render_dataset_plots(final_df: pd.DataFrame, feature_cols: list[str],
+                         png_dir: Path, stem: str, gt_col: str | None,
+                         source_labeling: str, plot_title: str,
+                         label_results: list[dict[str, Any]],
+                         clm_config: dict | None) -> None:
+    """Best-effort PNGs for one dataset, during the run or afterwards from its
+    folder (plot_run_folder)."""
+    if len(feature_cols) < 2:
+        log.warning(f"'{stem}' has fewer than 2 features; skipping plots.")
+        return
+    x_col, y_col = feature_cols[0], feature_cols[1]
+
+    if gt_col is not None and gt_col in final_df.columns:
+        if not plot_feature_scatter(
+            final_df, x_col=x_col, y_col=y_col,
+            hue_col=gt_col,
+            output_path=str(png_dir / f"{stem}-{gt_col}.png"),
+            title=plot_title,
+            subtitle=f"ground-truth clusters ({gt_col})",
+        ):
+            log.warning(f"'{stem}': ground-truth plot failed; CSV/labels are unaffected.")
+    else:
+        log.warning(f"ground-truth for '{source_labeling}' not found for '{stem}'; skipping plot.")
+
+    # Subtitle metrics compare each generated label against the SAME ground-truth
+    # labeling the CLM engine keyed off (source_labeling), reusing label_results.
+    # Only with a generated label to annotate: a skipped one may have stopped on
+    # the very key the box would read.
+    clm_info = _clm_info_text(clm_config) if clm_config and label_results else None
+    for r in label_results:
+        subtitle = None
+        if r["mcc"] is not None:
+            subtitle = f"MCC {r['mcc']:.3f}  ·  ARI {r['ari']:.3f}   (vs {gt_col})"
+        if not plot_feature_scatter(
+            final_df, x_col=x_col, y_col=y_col,
+            hue_col=r["name"],
+            output_path=str(png_dir / f"{stem}-{r['name']}.png"),
+            title=plot_title,
+            subtitle=subtitle,
+            info_text=clm_info,
+        ):
+            log.warning(f"'{stem}': plot for '{r['name']}' failed; CSV/labels are unaffected.")
+
+
+_SUMMARY_CONFIG = "===== CLM label configuration =====\n"
+
+
+def plot_run_folder(run_dir: str | Path) -> int:
+    """Draws a finished run's plots into its png/ as the run would have, e.g. after
+    --no-viz, from csv/ and the summaries in info/. Returns the datasets plotted."""
+    run_dir = Path(run_dir)
+    n = 0
+    for csv_path in sorted((run_dir / "csv").glob("*.csv")):
+        stem = csv_path.stem
+        txt = run_dir / "info" / f"{stem}.txt"
+        if not txt.is_file():
+            log.warning(f"'{stem}' has no summary '{txt}'; skipping its plots.")
+            continue
+        text = txt.read_text(encoding="utf-8")
+        # The summary opens with Source, Dataset, Rows and Ground-truth labeling.
+        head = {k.strip(): v for k, v in (line.split(": ", 1)
+                                          for line in text.splitlines()[:4])}
+        title = f"{head['Source'].rpartition(' (')[0]}: {head['Dataset']}"
+        source_labeling, _, gt = head["Ground-truth labeling"].partition("  ->  ")
+        gt_col = None if gt == "(none)" else gt
+        try:
+            clm_config = json.JSONDecoder().raw_decode(
+                text, text.index(_SUMMARY_CONFIG) + len(_SUMMARY_CONFIG))[0]
+        except json.JSONDecodeError:   # legacy noise mode, no clm_label config
+            clm_config = None
+
+        df = pd.read_csv(csv_path)
+        # Tag columns lose their prefix in the CSV and count as features here; the
+        # plots use the first two columns, which are features when there are two.
+        features = [c for c in df.columns if not re.fullmatch(r"(Cluster|Label)_\d+", c)]
+        label_results = []
+        for label in (c for c in df.columns if re.fullmatch(r"Label_\d+", c)):
+            mcc = ari = None
+            if gt_col is not None:
+                mcc = float(clustering_mcc(df[gt_col], df[label]))
+                ari = float(clustering_ari(df[gt_col], df[label]))
+            label_results.append({"name": label, "mcc": mcc, "ari": ari})
+
+        render_dataset_plots(df, features, run_dir / "png", stem, gt_col, source_labeling,
+                             title, label_results, clm_config)
+        n += 1
+    return n

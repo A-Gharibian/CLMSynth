@@ -1,42 +1,14 @@
+# SPDX-License-Identifier: MIT
 # _questions.py
 """The wizard's questions, as data.
 
 This module holds the question set the CLI wizard asks, one :class:`Question`
-per prompt, separated from the wizard that reads them. Two consumers:
-
-* ``_config_wizard.py`` pulls each question by key and drives it through the
-  terminal prompt helpers. The wizard is a *deletable* convenience, a config
-  creator and nothing more; removing it leaves CLMSynth fully functional from a
-  config file. The schema, being the reusable half, stays.
-* a future in-package ``help`` command, which iterates the schema to surface the
-  same ``explain`` text without asking anything.
-
-**Plain data only.** No pandas or matplotlib is imported here, and none
-must be: a front end or help command that imports this module should pay for
-nothing but the dataclass. The dataset-registry lookups the wizard needs stay in
-``_config_wizard.py`` against ``dataset_sources``; they are dynamic and belong with
-the control flow, not here.
-
-**Ranges are carried, not hard-coded at a call site.** Two kinds of bound:
-
-* ``lo`` / ``hi`` (and ``lo_strict``) are the *UI* bounds the prompt helper
-  enforces while re-asking.
-* ``engine_min`` / ``engine_max`` (and ``engine_min_strict``) name the constraint
-  the engine's own validator owns for that value. Where both are present they
-  must agree; a UI bound *wider* than the engine's is a config the wizard builds
-  happily and the engine refuses, which is the outcome the wizard exists to
-  prevent. ``tests/test_07_text_wizard.py`` asserts the agreement by probing just
-  outside every ``engine_*`` bound and requiring the engine to reject it.
-
-The two target-metric ``value`` bounds are deliberately UI-only (no ``engine_*``):
-MCC and ARI are mathematically defined on ``[-1, 1]``, but a negative *target* is
-something the program does not promise to solve for, so the wizard floors it at
-``0.0`` while the engine is left exactly as it is.
+per prompt, separated from the wizard that reads them.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 Kind = Literal["str", "int", "float", "bool", "choice",
                "int_list", "float_list", "str_list", "selection", "id", "ids"]
@@ -85,7 +57,7 @@ def _skew_live(rule: str) -> Callable[[dict], bool]:
     return pred
 
 
-_QUESTIONS: list[Question] = [
+_QUESTIONS: Final[Sequence[Question]] = [
     # -- 1. Data source -----------------------------------------------------
     Question(
         "global_settings.data_source", "choice", "Data source",
@@ -255,7 +227,8 @@ _QUESTIONS: list[Question] = [
                 "  proportional_to_marginal : fill them so final sizes EXACTLY match your\n"
                 "                             proportions (recommended, keeps your split).\n"
                 "  uniform                  : spread evenly, this CHANGES your proportions.\n"
-                "  concentrated             : dump all leftovers into one label.",
+                "  concentrated             : dump all leftovers into one label, this also\n"
+                "                             CHANGES your proportions.",
         default="proportional_to_marginal",
         choices=("proportional_to_marginal", "uniform", "concentrated")),
     # engine_max (each label < M) is dynamic in M, so the wizard applies it at
@@ -275,8 +248,9 @@ _QUESTIONS: list[Question] = [
                 "filler labels from the spillover rule. This instead forces a share of ONE\n"
                 "cluster's leftover points to a single competing label, placed at that\n"
                 "cluster's edge (or center). Consequences to be aware of:\n"
-                "  - it BYPASSES your proportions: final label sizes will no longer match\n"
-                "    them (same caveat as the uniform/concentrated spillover rules);\n"
+                "  - your proportions come first: under the default spillover rule a\n"
+                "    label's entries place at most what your rules leave of it, so an\n"
+                "    entry can place fewer points than its share asks;\n"
                 "  - it CHANGES the agreement score: structured noise scores differently\n"
                 "    from random noise, comparing the two is exactly what it is for;\n"
                 "  - it only shapes points not already claimed by the rules above.",
@@ -388,7 +362,7 @@ _QUESTIONS: list[Question] = [
     Question("run.now", "bool", "Run the pipeline now?", default=True),
 ]
 
-SCHEMA: dict[str, Question] = {q.key: q for q in _QUESTIONS}
+SCHEMA: Final[Mapping[str, Question]] = {q.key: q for q in _QUESTIONS}
 
 if len(SCHEMA) != len(_QUESTIONS):                       # pragma: no cover - authoring guard
     counts: dict[str, int] = {}

@@ -11,6 +11,10 @@ wizard_config.yaml
 ignore/
 /clmsynth/
 
+# Packages in preparation, not part of a release yet.
+/src/clmsynth/_config_gen/
+/src/clmsynth/_input_sources/
+
 # PyCharm/IntelliJ inspection exports.
 
 .descriptions.xml

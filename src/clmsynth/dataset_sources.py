@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # dataset_sources.py
 """
 Consolidated cluster/dataset generation module. Four sources:
@@ -17,17 +18,20 @@ This also keeps the engine pure MIT without inheriting the licenses from upstrea
 import gzip
 import io
 import logging
+import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from pathlib import Path
-from typing import Any
+from typing import Any, Final, Literal
 
 import numpy as np
 import pandas as pd
 
 from ._compat import import_optional_dependency
 
-log = logging.getLogger(__name__)
+log: logging.Logger = logging.getLogger(__name__)
 
 # Timeout (seconds) for each clustbench network fetch, so a hung GitHub endpoint
 # can't stall the pipeline forever (no circuit breaker otherwise).
@@ -37,7 +41,7 @@ CLUSTBENCH_TIMEOUT = 30
 # Shared registry, one dict per concern, keyed by source name.
 # ===========================================================================
 
-SOURCE_METADATA: dict[str, dict[str, dict[str, str]]] = {
+SOURCE_METADATA: Final[Mapping[str, Mapping[str, Mapping[str, str]]]] = {
     "clustbench": {
         "wut": {
             "description": "Warsaw University of Technology. Covers spatial, density-based, and overlapping clusters.",
@@ -59,6 +63,27 @@ SOURCE_METADATA: dict[str, dict[str, dict[str, str]]] = {
             "description": "Assorted community datasets, including those specifically designed to test HDBSCAN.",
             "examples": "hdbscan, chameleon_t8_8k"
         },
+        "uci": {
+            "description": "UCI Machine Learning Repository. Eight real classification datasets in 7 to 60 "
+                           "dimensions, whose classes clustering often finds hard.",
+            "examples": "ecoli, wine, yeast"
+        },
+        "mnist": {
+            "description": "MNIST handwritten digits and Fashion-MNIST articles: 28x28 greyscale images "
+                           "as 784 features, 10 classes.",
+            "examples": "digits, fashion"
+        },
+        "g2mg": {
+            "description": "Two equal-sized Gaussian clusters, 2048 points in 1 to 128 dimensions, named "
+                           "g2mg_<dim>_<scale>; the _1_ ones have a single feature.",
+            "examples": "g2mg_2_10, g2mg_4_20"
+        },
+        "h2mg": {
+            "description": "Two equal-sized Gaussian-like hubs, each point on a sphere around its "
+                           "cluster's center, 2048 points in 1 to 128 dimensions, named "
+                           "h2mg_<dim>_<scale>; the _1_ ones have a single feature.",
+            "examples": "h2mg_2_10, h2mg_4_20"
+        },
     },
     "mdcgen": {
         "basic": {
@@ -74,10 +99,23 @@ SOURCE_METADATA: dict[str, dict[str, dict[str, str]]] = {
             "examples": "overlapping_2d, noisy_3d"
         },
     },
-    # "fabricated_data" is populated once, below, right next to its fetcher and configs.
+    "fabricated_data": {
+        "fabricated": {
+            "description": "Offline fallback using engineered features + perfect-separation "
+                            "labels. No network, no mdcgenpy.",
+            "examples": "baseline_2class, baseline_4class"
+        },
+    },
+    "byoc": {
+        "local": {
+            "description": "Bring-your-own-clusters: your CSV with feature columns and exactly "
+                            "one cluster-id column (named by byoc_suite.cluster_column).",
+            "examples": "the CSV path(s) listed in byoc_suite.datasets"
+        },
+    },
 }
 
-CLUSTBENCH_DATASETS: dict[str, list[str]] = {
+CLUSTBENCH_DATASETS: Final[Mapping[str, Sequence[str]]] = {
     "wut": [
         "circles", "cross", "graph", "isolation", "labirynth", "mk1", "mk2",
         "mk3", "mk4", "olympic", "smile", "stripes", "trajectories",
@@ -112,7 +150,7 @@ CLUSTBENCH_DATASETS: dict[str, list[str]] = {
              for s in range(10, 91, 10)],
 }
 
-MDCGEN_CONFIGS: dict[str, dict[str, dict[str, Any]]] = {
+MDCGEN_CONFIGS: Final[Mapping[str, Mapping[str, Mapping[str, Any]]]] = {
     "basic": {
         "blobs_2d_5c": {"m": 1000, "n": 2, "k": 5},
         "blobs_3d_10c": {"m": 2000, "n": 3, "k": 10},
@@ -128,15 +166,7 @@ MDCGEN_CONFIGS: dict[str, dict[str, dict[str, Any]]] = {
 }
 
 # --- "fabricated_data" source: wraps _fabricated_generator.generate_synthetic_data.
-SOURCE_METADATA["fabricated_data"] = {
-    "fabricated": {
-        "description": "Offline fallback using engineered features + perfect-separation "
-                        "labels. No network, no mdcgenpy.",
-        "examples": "baseline_2class, baseline_4class"
-    },
-}
-
-FABRICATED_CONFIGS: dict[str, dict[str, Any]] = {
+FABRICATED_CONFIGS: Final[Mapping[str, Mapping[str, Any]]] = {
     "baseline_2class": {
         "n_samples": 500,
         "config_dict": {
@@ -160,12 +190,9 @@ FABRICATED_CONFIGS: dict[str, dict[str, Any]] = {
             },
         },
     },
-    # Cluster ids and no feature space at all. The CLM engine accepts
-    # this (recall targets, proportions, allocation and spillover are pure
-    # counting, and generate_clm_labels documents coords as optional), but no
-    # config could express it, because every other preset and source emits
-    # features. Spatial placement is the one thing that needs geometry,
-    # so combining this preset with centroid_dependence raises [CLM-125].
+    # Cluster ids and no feature space at all. Spatial placement is the one thing
+    # that needs geometry, so combining this preset with centroid_dependence raises
+    # [CLM-125] in every mode but random.
     "labels_only_4class": {
         "n_samples": 800,
         "config_dict": {
@@ -179,7 +206,7 @@ FABRICATED_CONFIGS: dict[str, dict[str, Any]] = {
     },
 }
 
-SOURCE_DATASETS: dict[str, dict[str, list[str]]] = {
+SOURCE_DATASETS: Final[Mapping[str, Mapping[str, Sequence[str]]]] = {
     "clustbench": CLUSTBENCH_DATASETS,
     "mdcgen": {group: list(cfgs.keys()) for group, cfgs in MDCGEN_CONFIGS.items()},
     "fabricated_data": {"fabricated": list(FABRICATED_CONFIGS.keys())},
@@ -188,15 +215,7 @@ SOURCE_DATASETS: dict[str, dict[str, list[str]]] = {
     "byoc": {"local": []},
 }
 
-SOURCE_METADATA["byoc"] = {
-    "local": {
-        "description": "Bring-your-own-clusters: your CSV with feature columns and exactly "
-                        "one cluster-id column (named by byoc_suite.cluster_column).",
-        "examples": "the CSV path(s) listed in byoc_suite.datasets"
-    },
-}
-
-HEAVY_BATTERIES: dict[str, set[str]] = {
+HEAVY_BATTERIES: Final[Mapping[str, AbstractSet[str]]] = {
     "clustbench": {"mnist", "g2mg", "h2mg"},
     "mdcgen": {"high_dim"},
     "fabricated_data": set(),
@@ -213,7 +232,7 @@ def get_available_batteries(source: str) -> list[str]:
     return list(SOURCE_METADATA.get(source, {}).keys())
 
 
-def resolve_selection(source: str, batteries_cfg) -> list[str]:
+def resolve_selection(source: str, batteries_cfg: Literal["all"] | Iterable[str]) -> list[str]:
     """Resolves the config's batteries value ("all" or a list) to real names."""
     all_batteries = SOURCE_DATASETS.get(source, {})
     if batteries_cfg == "all":
@@ -221,14 +240,15 @@ def resolve_selection(source: str, batteries_cfg) -> list[str]:
     return [b for b in batteries_cfg if b in all_batteries]
 
 
-def get_datasets_for_battery(source: str, battery: str, datasets_cfg) -> list[str]:
+def get_datasets_for_battery(source: str, battery: str,
+                             datasets_cfg: Literal["all"] | Iterable[str]) -> list[str]:
     """Resolves the config's datasets value within one battery; byoc (dynamic,
     empty registry) trusts the config's explicit list."""
     all_names = SOURCE_DATASETS.get(source, {}).get(battery, [])
     if not all_names:                       # dynamic source (byoc): trust the config's list
         return [] if datasets_cfg == "all" else list(datasets_cfg)
     if datasets_cfg == "all":
-        return all_names
+        return list(all_names)
     return [d for d in datasets_cfg if d in all_names]
 
 
@@ -245,7 +265,7 @@ def print_battery_info(source: str) -> None:
         log.info(f"  - '{battery}': {info['description']} (Examples: {info['examples']})")
 
 
-def resolved_for_report(path_value) -> str:
+def resolved_for_report(path_value: str | Path) -> str:
     """Absolute form, or the raw value."""
     try:
         return str(Path(path_value).resolve())
@@ -283,17 +303,27 @@ def fetch_clustbench_labelings(
         max_labelings: int = 10,
 ) -> dict[str, np.ndarray]:
     """Downloads every reference labeling (labels0, labels1, ...) of one
-    clustbench dataset, stopping at the first missing index."""
+    clustbench dataset, up to the first index the server does not have (404).
+    A labeling that fails otherwise is skipped and named in one warning."""
     target_path = f"{base_url}/{dataset_group}/{dataset_name}"
     labeling: dict[str, np.ndarray] = {}
+    failed: list[str] = []
     for i in range(max_labelings):
         label_name = f"labels{i}"
         try:
             labeling[label_name] = _loadtxt_url(f"{target_path}.{label_name}.gz", dtype="int")
-        except Exception:
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                failed.append(f"{label_name} ({e})")
+                continue
             if i == 0:
                 log.error(f"No reference labels found for {dataset_group}/{dataset_name}.")
             break
+        except Exception as e:
+            failed.append(f"{label_name} ({e})")
+    if failed:
+        log.warning(f"{dataset_group}/{dataset_name}: could not fetch {', '.join(failed)}; "
+                    f"continuing with {len(labeling)} labeling(s).")
     return labeling
 
 
@@ -341,7 +371,7 @@ def fetch_mdcgen_data(
         dataset_group: str = "basic",
         dataset_name: str = "blobs_2d_5c",
         seed: int = 1,
-        **kwargs
+        **kwargs: Any
 ) -> pd.DataFrame | None:
     """Generates one synthetic dataset via mdcgenpy (optional dependency)
     from the registered preset, seeded; None if unavailable or failing."""
@@ -361,15 +391,12 @@ def fetch_mdcgen_data(
 
     log.info(f"Generating synthetic clustering dataset: {dataset_group}/{dataset_name}...")
 
-    config = MDCGEN_CONFIGS.get(dataset_group, {}).get(dataset_name, {})
-    if not config:
+    preset = MDCGEN_CONFIGS.get(dataset_group, {}).get(dataset_name, {})
+    if not preset:
         log.error(f"No configuration mapping found for {dataset_group}/{dataset_name}.")
         return None
 
-    config = config.copy()
-    if kwargs:
-        config.update(kwargs)
-    config["seed"] = seed  # confirmed kwarg name: ClusterGenerator.__init__(self, seed=1, ...)
+    config = {**preset, **kwargs, "seed": seed}
 
     try:
         cluster_gen = ClusterGenerator(**config)
@@ -396,7 +423,7 @@ def fetch_fabricated_data(
         dataset_group: str = "fabricated",
         dataset_name: str = "baseline_2class",
         seed: int = 42,
-        **kwargs
+        **kwargs: Any
 ) -> pd.DataFrame | None:
     """Generates one offline dataset via _fabricated_generator; cluster ids are
     integers 0...K-1, matching clustbench/mdcgen, so one clm_label config ports
@@ -423,13 +450,6 @@ def fetch_fabricated_data(
                   "must be True). Skipping, label_generation has nothing to key off.")
         return None
 
-    # Cluster ids are emitted as integers 0...K-1, like every other source, so a
-    # clm_label config's `clusters:`/`single_match.cluster` values port across
-    # sources unchanged. The generator deliberately produces READABLE labels
-    # ("Class_0", ...); collapsing those to codes is this adapter's job, not the
-    # generator's, which keeps its own standalone CSV human-readable. Cohort_Class
-    # is left as-is; build_context drops it, so only the integer labeling reaches
-    # the output frame.
     gt = df["Cohort_Class"]
     codes = (gt.cat.codes if isinstance(gt.dtype, pd.CategoricalDtype)
              # qcut's category order is the percentile order, so cat.codes is

@@ -9,10 +9,5 @@ INFO - Available 'fabricated_data' dataset batteries:
 INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels. No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
 INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
 INFO - Saved resolved config: _scratch/CLM-121/{run}/info/{run}.yaml
-INFO - Dataset 1 of 1: fabricated/baseline_4class
-INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed=42)...
-INFO - Generating synthetic data (Seed: 42)...
-INFO - Applying perfect separation ground truth to categorical labels...
-INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
 CRITICAL - Configuration error, aborting run: [CLM-121] proportions has 3 entries but num_classes is 4; it must have exactly one entry per label. Labels [3] would be left with no share of the data.
 INFO - The failed run's folder '_scratch/CLM-121/{run}' was removed. Run with --keep-failed to keep its config and log.

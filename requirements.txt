@@ -3,11 +3,11 @@
 # numpy and scipy below both declare >=3.12.
 
 numpy==2.5.4
-pandas==3.0.6
+pandas==3.1.0
 scipy==1.18.1
 scikit-learn==1.9.1
 matplotlib==3.11.2
 
 # --- Optional ---
 PyYAML==6.0.3                            # config files other than .json
-# git+https://github.com/CN-TU/mdcgenpy    # data_source: "mdcgen";
+git+https://github.com/CN-TU/mdcgenpy           # data_source: "mdcgen";

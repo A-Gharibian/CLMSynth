@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # resolved_config.py
 """The configuration a run used, as the run read it.
 
@@ -11,18 +12,31 @@ reproduces the run's CSVs.
 Only well-formed blocks are resolved. A missing required key stays missing and a
 malformed value stays as written, so the engine refuses the resolved config
 exactly as it refused the original.
-
-The engine keeps its own defaults where it reads them; the tables below restate
-them, and tests/test_08_resolved_config.py re-runs resolved configs to catch the
-two drifting apart.
 """
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Final
 
 import numpy as np
 
 from .clm_label_engine import BALANCE_VALUES, MATCHING_MODES
+
+__all__ = [
+    "BALANCE",
+    "CENTROID",
+    "DATA_SOURCE",
+    "NOISE_ENTRY",
+    "N_LABELS",
+    "OUTPUT_DIR",
+    "RESOLVED_CONFIG_NAME",
+    "SKEW_PARAMS",
+    "SOURCE_LABELING",
+    "SPILLOVER_RULE",
+    "SPLIT_RULE",
+    "TARGET_METRIC",
+    "plain",
+    "resolve_config",
+]
 
 RESOLVED_CONFIG_NAME = "resolved_config.yaml"
 
@@ -36,15 +50,15 @@ SOURCE_LABELING = "labels0"
 BALANCE = "balanced"
 SPLIT_RULE = "proportional_to_size"
 SPILLOVER_RULE = "proportional_to_marginal"
-SKEW_PARAMS: dict[str, dict[str, Any]] = {
+SKEW_PARAMS: Final[Mapping[str, Mapping[str, Any]]] = {
     "geometric": {"ratio": 0.5},
     "dominant_minority": {"dominant_index": 0, "dominant_share": 0.5},
     "dirichlet": {"alpha": 1.0},
 }
-CENTROID: dict[str, Any] = {"enabled": False, "profile": "linear", "favors": "core",
-                            "steepness": 3.0}
-NOISE_ENTRY: dict[str, Any] = {"share": 1.0, "favors": "boundary"}
-TARGET_METRIC: dict[str, Any] = {"scope": "global", "tolerance": 0.01, "max_iter": 40}
+CENTROID: Final[Mapping[str, Any]] = {"enabled": False, "profile": "linear", "favors": "core",
+                                      "steepness": 3.0}
+NOISE_ENTRY: Final[Mapping[str, Any]] = {"share": 1.0, "favors": "boundary"}
+TARGET_METRIC: Final[Mapping[str, Any]] = {"scope": "global", "tolerance": 0.01, "max_iter": 40}
 
 
 def resolve_config(config: Mapping[str, Any], source: str, batteries: list[str],
@@ -102,14 +116,8 @@ def _resolve_clm(clm: Any) -> Any:
     out["matching_mode"] = mode
 
     if mode == "random":
-        # Only the placement check reads past the counts: [CLM-125] needs coords for
-        # an enabled centroid_dependence, and a competing_noise or target_metric is
-        # refused ([CLM-115], [CLM-114]).
-        cd = clm.get("centroid_dependence") or {}
-        if not isinstance(cd, Mapping):
-            out["centroid_dependence"] = clm["centroid_dependence"]
-        else:
-            out["centroid_dependence"] = {"enabled": cd.get("enabled", CENTROID["enabled"])}
+        # Only the refusals read past the counts: a competing_noise or target_metric
+        # is refused ([CLM-115], [CLM-114]). centroid_dependence is not read ([CLM-311]).
         for key in ("competing_noise", "target_metric"):
             if clm.get(key):
                 out[key] = clm[key]
@@ -126,7 +134,9 @@ def _resolve_clm(clm: Any) -> Any:
         out.update(_resolve_matrix(clm, bool(tm)))
         out["split_rule"] = clm.get("split_rule", SPLIT_RULE)
 
-    spill = clm.get("spillover_rule", SPILLOVER_RULE)
+    spill = clm.get("spillover_rule")
+    if spill is None:       # absent or empty: the default runs
+        spill = SPILLOVER_RULE
     out["spillover_rule"] = spill
     # Absent, it is the largest label of each dataset: decided per dataset, not here.
     if spill == "concentrated" and clm.get("concentrated_labels") is not None:
@@ -195,7 +205,9 @@ def _resolve_target(tm: Any) -> Any:
         return tm                                            # [CLM-122]
     out = _present(tm, "type", "value")
     out["scope"] = scope
-    out["tolerance"] = tm.get("tolerance", TARGET_METRIC["tolerance"])
+    strict = isinstance(tm.get("strict"), (bool, np.bool_)) and bool(tm["strict"])
+    out["tolerance"] = tm.get("tolerance", 0.0 if strict else TARGET_METRIC["tolerance"])
+    out.update(_present(tm, "strict"))
     if scope == "global":
         out["max_iter"] = tm.get("max_iter", TARGET_METRIC["max_iter"])
         # Absent or empty, each label's search runs on that label's own seed: not

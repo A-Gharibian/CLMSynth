@@ -1,5 +1,5 @@
 $ python -m clmsynth.main KeyError_2xx/CLM-207.yaml --no-viz
-# exit code: 0
+# exit code: 2
 
 INFO - Starting Test Data Orchestrator...
 INFO - Output directory: '{catalog}/_scratch/CLM-207'.
@@ -9,13 +9,5 @@ INFO - Available 'fabricated_data' dataset batteries:
 INFO -   - 'fabricated': Offline fallback using engineered features + perfect-separation labels. No network, no mdcgenpy. (Examples: baseline_2class, baseline_4class)
 INFO - Resolved 1 dataset(s) across 1 batter(y/ies) from source 'fabricated_data'.
 INFO - Saved resolved config: _scratch/CLM-207/{run}/info/{run}.yaml
-INFO - Dataset 1 of 1: fabricated/baseline_4class
-INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed=42)...
-INFO - Generating synthetic data (Seed: 42)...
-INFO - Applying perfect separation ground truth to categorical labels...
-INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
-ERROR - Skipping label generation for fabricated/baseline_4class: [CLM-207] assignment_matrix row 0: 'clusters' is required.
-INFO - Saved: _scratch/CLM-207/{run}/csv/fabricated_data-fabricated-baseline_4class.csv
-INFO - Saved summary: _scratch/CLM-207/{run}/info/fabricated_data-fabricated-baseline_4class.txt
-WARNING - Of the 1 resolved dataset(s): 0 written with all labels, 1 written with not all labels, 0 skipped (see the errors above).
-INFO - Pipeline ready. 1 dataset(s) processed. Output folder: '_scratch/CLM-207/{run}'.
+CRITICAL - Configuration error, aborting run: [CLM-207] assignment_matrix row 0: 'clusters' is required.
+INFO - The failed run's folder '_scratch/CLM-207/{run}' was removed. Run with --keep-failed to keep its config and log.

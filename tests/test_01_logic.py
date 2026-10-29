@@ -169,9 +169,13 @@ def test_f6_pair_scope_with_the_only_other_label_at_zero():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("coords", [None, np.array([])], ids=["none", "empty"])
+@pytest.mark.parametrize(
+    "coords",
+    [None, np.array([]), np.zeros((len(CLUSTERS), 1)), np.zeros(len(CLUSTERS))],
+    ids=["none", "empty", "one-feature", "flat"])
 def test_centroid_placement_without_coords_is_coded(coords):
-    """Placement needs geometry; asking for it without coords is a config error.
+    """Placement needs geometry with at least two features; asking for it without
+    coords, or with one feature per point, is a config error.
 
     The point is the *type*: reaching the placement stage without coords would
     raise AttributeError on a None, which tells the user nothing.
@@ -328,6 +332,7 @@ def test_pair_scope_honours_the_requested_tolerance(tolerance, expect_warning, c
     assert ("[CLM-310]" in caplog.text) is expect_warning, (
         f"tolerance={tolerance} should {'' if expect_warning else 'not '}have reported a miss"
     )
+    assert ("holds a whole number of points" in caplog.text) is expect_warning, caplog.text
 
 
 def test_balanced_ignores_explicit_proportions():
@@ -426,6 +431,7 @@ def _rows(**row0):
         ({"target_metric": {**_TM, "probe_seed": 7.0}}, 141),
         ({"target_metric": {**_TM, "probe_seed": -1}}, 141),
         ({"target_metric": {**_TM, "probe_seed": "7"}}, 141),
+        ({"target_metric": {**_TM, "strict": "yes"}}, 141),
         (
             {"centroid_dependence": {"enabled": True, "profile": "exponential",
                                      "steepness": _NAN}},
@@ -496,6 +502,7 @@ def _rows(**row0):
         "probe-seed-float",
         "probe-seed-negative",
         "probe-seed-string",
+        "strict-string",
         "steepness-nan",
         "steepness-true",
         "proportions-nan",
@@ -794,6 +801,28 @@ def test_perfect_never_reads_the_sizing_keys(sizing, caplog):
     assert "[CLM-302]" in caplog.text
 
 
+def test_random_never_reads_centroid_dependence(caplog):
+    """'random' places no point by its distance to a centroid, so data without
+    features is labelled, the block is not validated, and [CLM-311] says so
+    unless it is switched off. Both used to be refused with [CLM-125], spatial
+    competing_noise too, which is [CLM-115] under random."""
+    cfg = {"num_classes": 4, "matching_mode": "random", "balance": "balanced"}
+    expected = generate_clm_labels(CLUSTERS, None, cfg, seed=1)
+    for cd, warns in (({"enabled": True}, True), ({"enabled": "no", "favors": "x"}, True),
+                      ("yes", True), ({"enabled": False, "favors": "x"}, False)):
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="clmsynth"):
+            out = generate_clm_labels(CLUSTERS, None, {**cfg, "centroid_dependence": cd},
+                                      seed=1)
+        assert out.equals(expected), cd
+        assert ("[CLM-311]" in caplog.text) is warns, cd
+
+    noise = {**cfg, "competing_noise": [{"cluster": 0, "label": 1, "favors": "core"}]}
+    with pytest.raises(ValueError) as excinfo:
+        generate_clm_labels(CLUSTERS, None, noise, seed=1)
+    assert getattr(excinfo.value, "code", None) == 115
+
+
 @pytest.mark.parametrize(
     "cfg,expected",
     [
@@ -855,8 +884,8 @@ def test_mode_errors_are_reported_before_sizing_errors(cfg, expected):
 def test_spillover_reports_a_broken_marginal(rule, deviates, caplog):
     """[CLM-304] fires exactly when the delivered counts left their target.
 
-    The catalog holds one fixture per code, so the spillover arm of 304 (the
-    competing_noise arm owns the fixture) can only be covered here.
+    The catalog holds one fixture per code, a uniform run, so the other two rules
+    are covered here.
     """
     cfg = base_custom_cfg(spillover_rule=rule)
     with caplog.at_level(logging.WARNING, logger="clmsynth"):
@@ -867,28 +896,40 @@ def test_spillover_reports_a_broken_marginal(rule, deviates, caplog):
 
 
 @pytest.mark.parametrize(
-    "label1_recall,deviates", [(0.9, False), (1.0, True)], ids=["room-left", "past-target"]
+    "label1_recall,shares,placed,warned",
+    [
+        (0.9, {0: 0.75}, {0: 30}, None),
+        (0.95, {0: 0.75}, {0: 15}, "places 15 of the 30 points its share asks"),
+        (1.0, {0: 0.75}, {0: 0}, "has no effect: label 1 has 0 of its 300 points left"),
+        (0.99, {0: 0.0375, 2: 0.075}, {0: 2, 2: 1}, None),
+    ],
+    ids=["all-left", "part-left", "none-left", "rounding"],
 )
-def test_competing_noise_reports_only_counts_it_moved(label1_recall, deviates, caplog):
-    """[CLM-304]'s competing_noise arm checks the delivered counts too.
+def test_competing_noise_takes_what_its_label_has_left(
+    label1_recall, shares, placed, warned, caplog
+):
+    """Under proportional_to_marginal the label counts come before competing_noise.
 
-    It used to fire whenever noise was placed. Under proportional_to_marginal the
-    spillover pool is each label's target minus what is already placed, so noise
-    on a label with room left only displaces spillover. The counts move only
-    when the noise takes a label past its target: here 20 points of label 1 in
-    cluster 0, on top of 270 (room left) or 300 (full) in cluster 1.
+    Label 1 holds 300 points and its rule places label1_recall of them in cluster
+    1. Its entries convert a share of the 40 points cluster 0 leaves unclaimed
+    (20 of 200 in cluster 2), and together they place at most what the rule left:
+    30 of 30, 15 of 15, none of 0. They used to place their whole share and take
+    the label past its target ([CLM-304]); [CLM-305] now says what an entry did
+    not place. Rounding never passes what is left: 1.5 + 1.5 of 3 is 2 + 1, not
+    2 + 2, the earlier entry keeping the tie. Each case leaves label 1 nothing for
+    spillover, so every label-1 point outside cluster 1 is an entry's.
     """
     matrix = [{"label": i, "clusters": [i], "recall_target": 0.9} for i in range(4)]
     matrix[1]["recall_target"] = label1_recall
-    cfg = base_custom_cfg(
-        assignment_matrix=matrix,
-        competing_noise=[{"cluster": 0, "label": 1, "share": 0.5, "favors": "random"}],
-    )
+    noise = [{"cluster": k, "label": 1, "share": s, "favors": "random"} for k, s in shares.items()]
+    cfg = base_custom_cfg(assignment_matrix=matrix, competing_noise=noise)
     with caplog.at_level(logging.WARNING, logger="clmsynth"):
-        out = generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
-    counts = list(np.bincount(np.asarray(out), minlength=4))
-    assert (counts != [400, 300, 200, 100]) is deviates, counts
-    assert ("[CLM-304]" in caplog.text) is deviates, caplog.text
+        out = np.asarray(generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1))
+    assert list(np.bincount(out, minlength=4)) == [400, 300, 200, 100]
+    assert "[CLM-304]" not in caplog.text, caplog.text
+    assert ("[CLM-305]" in caplog.text) is (warned is not None), caplog.text
+    assert warned is None or warned in caplog.text, caplog.text
+    assert {k: int(np.sum(out[CLUSTERS == k] == 1)) for k in placed} == placed
 
 
 # The target_metric search cases below run on four clusters of 200, the catalog's
@@ -942,8 +983,8 @@ def reported_by_306(caplog) -> float:
             [(152, 11, "0.000", "1.000")],
         ),
         (
-            {"proportions": [0.375, 0.25, 0.25, 0.125]},
-            [(152, 7, "0.000", "0.600"), (150, 4, "0.700", "1.000")],
+            {"proportions": [0.275, 0.45, 0.15, 0.125]},
+            [(152, 9, "0.000", "0.558"), (150, 9, "0.559", "1.000")],
         ),
     ],
     ids=["one-code", "two-codes"],
@@ -957,10 +998,11 @@ def test_a_target_with_no_feasible_level_names_what_blocked_the_levels(
     Every blocked probe now keeps its error, and before [CLM-120] the search
     logs one line per code, lowest alpha first, naming the levels it blocked.
     one-code: no rule touches cluster 0, so the two entries over-claim its 200
-    unclaimed points at every level. two-codes: label 0 holds 300 points; the
-    entries over-claim whatever its rule leaves of cluster 0 until the rule fills
-    the cluster at alpha 2/3, which the grid does not probe, and from 0.7 up the
-    rule needs more than the cluster's 200 points. Nothing is delivered, and no
+    unclaimed points at every level. two-codes: the entries over-claim what
+    label 0's rule leaves of cluster 0 until it fills the cluster at alpha 0.91,
+    but from 0.559 up label 1's rule needs more than cluster 1's 200 points. The
+    search probes between 0.5 and 0.6, where the code changes, finds no level
+    that fits, and the lines count those probes too. Nothing is delivered, and no
     [CLM-306] is logged: there is no closest level to report.
     """
     cfg = equal_cfg(
@@ -975,6 +1017,34 @@ def test_a_target_with_no_feasible_level_names_what_blocked_the_levels(
     assert getattr(excinfo.value, "code", None) == 120, str(excinfo.value)
     assert blocked_lines(caplog) == blocked, caplog.text
     assert "[CLM-306]" not in caplog.text, caplog.text
+
+
+@pytest.mark.parametrize(
+    "overrides,target",
+    [
+        (
+            {"proportions": [0.375, 0.25, 0.25, 0.125], "competing_noise": over_claiming_noise()},
+            0.635,
+        ),
+        ({"proportions": [0.3625, 0.2125, 0.2125, 0.2125]}, 0.6945),
+    ],
+    ids=["band", "edge"],
+)
+def test_the_search_finds_the_levels_that_fit_between_grid_levels(overrides, target, caplog):
+    """The refinement stays between grid levels that fit, so a target reached only
+    between two grid levels was lost. band: label 0 holds 300 points; below alpha
+    0.665 the entries over-claim what its rule leaves of cluster 0 ([CLM-152]),
+    above 0.67 the rule needs more than the cluster's 200 points ([CLM-150]), so
+    no grid level fits and the run ended in [CLM-120]. edge: label 0 holds 290
+    points, levels fit up to 0.693, and the grid's last that fits, 0.6, leaves
+    the search at 0.6035 with [CLM-306]. The search now probes the grid step where
+    the outcome changes and delivers the target.
+    """
+    cfg = equal_cfg(target_metric={"type": "mcc", "value": target}, **overrides)
+    with caplog.at_level(logging.WARNING, logger="clmsynth"):
+        out = generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, seed=42).to_numpy()
+    assert clustering_mcc(EQUAL, out) == pytest.approx(target, abs=0.01)
+    assert "[CLM-306]" not in caplog.text and "[CLM-120]" not in caplog.text, caplog.text
 
 
 def test_over_claiming_noise_without_a_target_still_raises_152():
@@ -993,8 +1063,9 @@ def test_over_claiming_noise_without_a_target_still_raises_152():
 
 
 def test_a_missed_target_delivers_the_closest_label_and_names_the_blocked_levels(caplog):
-    """Label 0 holds 776 of 800 points, so from alpha 0.3 up its rule needs more
+    """Label 0 holds 776 of 800 points, so from alpha 0.259 up its rule needs more
     than cluster 0's 200 points ([CLM-150]), and no feasible level reaches 0.5.
+    The search probes between the grid levels 0.2 and 0.3, where that starts.
 
     The miss used to be reported twice and without its cause: [CLM-306] and
     [CLM-309] for the same value, nothing about the blocked levels. Now the
@@ -1009,7 +1080,7 @@ def test_a_missed_target_delivers_the_closest_label_and_names_the_blocked_levels
     with caplog.at_level(logging.WARNING, logger="clmsynth"):
         out = generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, seed=42).to_numpy()
 
-    assert blocked_lines(caplog) == [(150, 8, "0.300", "1.000")], caplog.text
+    assert blocked_lines(caplog) == [(150, 11, "0.259", "1.000")], caplog.text
     messages = [r.getMessage() for r in caplog.records]
     first_blocked = next(i for i, m in enumerate(messages) if BLOCKED_LINE.match(m))
     missed = [i for i, m in enumerate(messages) if "[CLM-306]" in m]
@@ -1025,7 +1096,8 @@ def test_150_under_a_target_names_the_search_level_not_a_recall_target(caplog):
 
     Its advice used to say "The rule's recall_target=0.3 is feasible up to ...
     Lower it", pointing at a key the search ignores, and printed a grid level
-    raw (0.7000000000000001). It now names the level, to three places, and the
+    raw (0.7000000000000001). It now names the level, to three places (the lowest
+    one blocked, 0.259375, found between the grid levels 0.2 and 0.3), and the
     highest level that fits: 200 of label 0's 776 points is 0.2577, rounded down.
     """
     cfg = equal_cfg(
@@ -1035,7 +1107,7 @@ def test_150_under_a_target_names_the_search_level_not_a_recall_target(caplog):
         generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, seed=42)
 
     line = next(r.getMessage() for r in caplog.records if BLOCKED_LINE.match(r.getMessage()))
-    assert "search's recall level alpha=0.300" in line, line
+    assert "search's recall level alpha=0.259" in line, line
     assert "levels up to 0.257 fit here" in line, line
     assert "Lower it" not in line, line
     assert not re.search(r"\d\.\d{5,}", line), line
@@ -1258,17 +1330,14 @@ def test_the_report_names_the_request_the_delivery_the_highest_and_the_ceiling(c
             {"spillover_rule": "concentrated", "concentrated_labels": [1]},
             "spillover_rule 'concentrated'",
         ),
-        (
-            {"competing_noise": [{"cluster": 3, "label": 1, "share": 0.5, "favors": "random"}]},
-            "competing_noise",
-        ),
     ],
-    ids=["uniform", "concentrated", "competing_noise"],
+    ids=["uniform", "concentrated"],
 )
 def test_no_size_ceiling_is_reported_when_the_counts_can_move(overrides, cause, caplog):
-    """A size ceiling holds for one set of label counts. These settings can
+    """A size ceiling holds for one set of label counts. These spillover rules can
     deliver other counts at other recall levels, so none is reported: the log
-    names the setting, [CLM-306] names no ceiling, and `report` holds None.
+    names the rule, [CLM-306] names no ceiling, and `report` holds None.
+    competing_noise cannot move them: it places at most what a label has left.
     """
     cfg = three_label_cfg(target_metric={"type": "mcc", "value": 0.99}, **overrides)
     report: dict[str, Any] = {}
@@ -1302,9 +1371,10 @@ def test_moved_counts_can_score_above_the_ceiling_of_their_targets():
     assert report["ceiling"] is None
 
 
-def test_the_report_is_filled_only_under_a_target():
+def test_the_target_keys_are_filled_only_under_a_target():
     """scope 'pair' reports its request and delivery and no ceiling: its range is
-    [CLM-307]'s. Without a target_metric the report is left untouched."""
+    [CLM-307]'s. Without a target_metric the report has only what each
+    assignment_matrix row placed."""
     pair: dict[str, Any] = {}
     cfg = {
         "num_classes": 4,
@@ -1321,9 +1391,39 @@ def test_the_report_is_filled_only_under_a_target():
         "achieved": clustering_mcc_pair(EQUAL, out, 0, 0),
     }
 
-    untouched: dict[str, Any] = {}
-    generate_clm_labels(EQUAL, EQUAL_COORDS, equal_cfg(), seed=42, report=untouched)
-    assert untouched == {}
+    no_target: dict[str, Any] = {}
+    generate_clm_labels(EQUAL, EQUAL_COORDS, equal_cfg(), seed=42, report=no_target)
+    assert list(no_target) == ["assignment_matrix"]
+
+
+def test_strict_refuses_a_delivered_value_outside_the_tolerance():
+    """target_metric.strict: a value inside the tolerance is delivered with the
+    same labels as without it; outside, [CLM-154] refuses the label after
+    `report` is filled. An absent tolerance is 0 under strict, which an exact
+    pair value meets."""
+    from clmsynth.resolved_config import _resolve_target
+
+    tm = {"type": "mcc", "value": 0.5, "tolerance": 0.01}
+    plain = generate_clm_labels(EQUAL, EQUAL_COORDS, three_label_cfg(target_metric=tm), seed=42)
+    strict = generate_clm_labels(EQUAL, EQUAL_COORDS,
+                                 three_label_cfg(target_metric={**tm, "strict": True}), seed=42)
+    assert np.array_equal(plain.to_numpy(), strict.to_numpy())
+
+    exact = {"type": "mcc", "value": 0.5, "strict": True}
+    report: dict[str, Any] = {}
+    with pytest.raises(InfeasibleAllocationError, match=r"\[CLM-154\].*\(tolerance 0\.0\)"):
+        generate_clm_labels(EQUAL, EQUAL_COORDS, three_label_cfg(target_metric=exact), seed=42,
+                            report=report)
+    assert report["achieved"] != 0.5 and report["ceiling"] is not None
+    assert _resolve_target(exact)["tolerance"] == 0.0
+
+    pair = {"num_classes": 4, "balance": "balanced", "matching_mode": "single",
+            "single_match": {"cluster": 0, "label": 0}}
+    pair_tm = {"type": "mcc", "scope": "pair", "strict": True}
+    generate_clm_labels(EQUAL, EQUAL_COORDS, {**pair, "target_metric": {**pair_tm, "value": 1.0}})
+    with pytest.raises(InfeasibleAllocationError, match=r"\[CLM-154\].*pair mcc"):
+        generate_clm_labels(EQUAL, EQUAL_COORDS,
+                            {**pair, "target_metric": {**pair_tm, "value": 0.6}})
 
 
 @pytest.mark.parametrize(
@@ -1333,6 +1433,15 @@ def test_the_report_is_filled_only_under_a_target():
             {
                 "num_classes": 4,
                 "matching_mode": "perfect",
+                "target_metric": {"type": "mcc", "value": 0.5},
+            },
+            "[CLM-111]",
+        ),
+        (
+            {
+                "num_classes": 1,
+                "matching_mode": "custom",
+                "assignment_matrix": [{"clusters": [0], "label": 0}],
                 "target_metric": {"type": "mcc", "value": 0.5},
             },
             "[CLM-111]",
@@ -1366,7 +1475,7 @@ def test_the_report_is_filled_only_under_a_target():
             "[CLM-123]",
         ),
     ],
-    ids=["perfect+target", "random+target", "random+competing", "pair+ari"],
+    ids=["perfect+target", "one-class+target", "random+target", "random+competing", "pair+ari"],
 )
 def test_incompatible_mode_combinations_are_rejected(cfg, tag):
     with pytest.raises(ValueError) as excinfo:
@@ -1384,7 +1493,8 @@ def test_the_pair_ari_curve_is_sklearns_ari():
     m = 1..n_k (all of l* inside k*). Every point of it equals sklearn's
     adjusted_rand_score on the two binary partitions, and clustering_ari_pair,
     including the degenerate sizes: a cluster of one point, and a cluster
-    holding every point.
+    holding every point. clustering_ari_pair refuses the one size where both
+    partitions hold one group.
     """
     from sklearn.metrics import adjusted_rand_score
 
@@ -1399,6 +1509,10 @@ def test_the_pair_ari_curve_is_sklearns_ari():
                 assert curve[m - 1] == pytest.approx(
                     adjusted_rand_score(cluster, label), abs=1e-12
                 ), (N, n_k, m)
+                if n_k == m == N:
+                    with pytest.raises(ValueError, match="each hold one group"):
+                        clustering_ari_pair(cluster, label, 1, 1)
+                    continue
                 assert curve[m - 1] == pytest.approx(
                     clustering_ari_pair(cluster, label, 1, 1), abs=1e-12
                 ), (N, n_k, m)
@@ -1591,6 +1705,51 @@ def test_allocation_exceeding_capacity_by_one_point_is_infeasible():
     assert "proportions[0] = 0.101" in str(excinfo.value)
 
 
+@pytest.mark.parametrize(
+    ("sizes", "proportions", "rows", "split_rule", "expected"),
+    [
+        # 5.5 + 3.5 + 1 = 10 of 10 points round to 6 + 4 + 1: the later label at the
+        # same fraction rounds down, and spillover gives it the point back.
+        ((10, 30), [0.275, 0.175, 0.025, 0.525],
+         [(0, [0], 0.5), (1, [0], 0.5), (2, [0], 1.0)], "proportional_to_size",
+         [[6, 3, 1, 0], [5, 4, 0, 21]]),
+        # 5.5/5.5 and 4.5/4.5 over two 10-point clusters: the later rule moves a point.
+        ((10, 10, 20), [0.275, 0.225, 0.5], [(0, [0, 1], 1.0), (1, [0, 1], 1.0)], "equal",
+         [[6, 4, 0], [5, 5, 0], [0, 0, 20]]),
+        # 5.6 + 4.8 = 10.4 of 10 points: rounded down, 5 + 5 fits.
+        ((10, 90), [0.14, 0.12, 0.74], [(0, [0], 0.4), (1, [0], 0.4)], "proportional_to_size",
+         [[5, 5, 0], [9, 7, 74]]),
+        # 12.75 of 12 points: rounded down, 12 fits.
+        ((12, 88), [0.17, 0.83], [(0, [0], 0.75)], "proportional_to_size", [[12, 0], [5, 83]]),
+        ((12, 88), [0.17, 0.83], [(0, [0], 0.8)], "proportional_to_size", "[CLM-150]"),
+        ((10, 90), [0.14, 0.12, 0.74], [(0, [0], 0.6), (1, [0], 0.6)], "proportional_to_size",
+         "[CLM-151]"),
+    ],
+)
+def test_counts_take_any_rounding_that_fits(sizes, proportions, rows, split_rule, expected):
+    """Each count may be its claim rounded down or up. [CLM-150] and [CLM-151]
+    refuse only when no rounding fits: 13.6 of 12 points, 8.4 + 7.2 of 10."""
+    clusters = np.repeat(np.arange(len(sizes)), sizes)
+    cfg = {
+        "num_classes": len(proportions),
+        "balance": "unbalanced",
+        "proportions": proportions,
+        "matching_mode": "custom",
+        "assignment_matrix": [
+            {"label": label, "clusters": ks, "recall_target": r} for label, ks, r in rows
+        ],
+        "split_rule": split_rule,
+    }
+    if isinstance(expected, str):
+        with pytest.raises(InfeasibleAllocationError, match=re.escape(expected)):
+            generate_clm_labels(clusters, None, cfg, seed=1)
+        return
+    out = generate_clm_labels(clusters, None, cfg, seed=1).to_numpy()
+    table = [np.bincount(out[clusters == k], minlength=len(proportions)).tolist()
+             for k in range(len(sizes))]
+    assert table == expected
+
+
 def test_infeasible_single_blames_the_label_size_not_recall_target():
     """'single' has no recall_target key: it places the whole label in its cluster.
 
@@ -1646,7 +1805,7 @@ def test_infeasible_advice_is_itself_feasible():
 
 @pytest.mark.parametrize("value", [0.0, 1.0], ids=["independence", "ceiling"])
 def test_solver_grid_endpoints_are_evaluable(value):
-    """The coarse scan is `linspace(0, 1, 11)`, so both endpoints are probed.
+    """The coarse scan is the tenths 0.0, 0.1, ..., 1.0, so both endpoints are probed.
 
     Neither is expected to be *reached* -- 1.0 sits above the structural
     ceiling for this geometry, which is what [CLM-306] reports -- but both must

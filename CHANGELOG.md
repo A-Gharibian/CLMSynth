@@ -5,7 +5,163 @@ label generator behavior are additionally explained in the user manual.
 
 ---
 
-## [0.7.4] — 2026-10-16
+## [0.7.5] — unreleased
+
+This PyPI release followed three items of the roadmap (0.7.1 - 0.7.5):
+
+1) Batch run compatibility: 
+  - An unknown command-line argument now exits 2; it used to be ignored silently.
+  - Invalid YAML exits 2 and a blocked output dir exits 1.
+  - The end of a run counts the skipped datasets.
+  - Configs are written atomically, and clmsynth-config never overwrites its payload.
+  - A config section of the wrong shape exits 2 before anything is created.
+  - [CLM-120] skips only that dataset's label instead of aborting the whole run.
+  - The report= argument of generate_clm_labels returns the delivered value and the ceiling.
+  - Batch runs: clmsynth a.json b.json --jobs N runs each config in its own process.                         
+  - A SIGTERM exits 143. Exit statuses are documented (0/1/2/3/130/143) and skipped in CLM catalogue.                 
+  - Each run folder keeps the config as it actually ran in info/<run>.yaml (or .json) and its log in info/<run>.log. 
+    --keep-failed keeps a failed run's folder.
+  - JSON configs work and PyYAML is optional, so 3.15 nodes without a C compiler are fine. pyplot and seaborn are gone from the pipeline,  
+    which helps on headless nodes. The offline example test_data_config_offline.json is for nodes with no internet. 
+  - Coded warnings carry record.clm_code.
+  - An unknown <source>_suite key is refused before anything is downloaded.
+  - PyYAML became optional, --no-viz skips plotting.
+  - each worker gets one BLAS thread above --jobs 1;                                                                                    
+  - a batch exits 3 when some of its configs wrote their datasets and others did not. 
+  - The checks come before the allocation: the matching mode before label sizing, competing_noise entries
+    once before the allocation and the target search, [CLM-119] before the rules claim a point, and a
+    clm_label block that is wrong for every dataset before any dataset is fetched.
+
+2) Rounding consistency:
+  - Counts are rounded exactly from the values as written (0.7 is 7/10), and a tie goes to the earlier.
+  - Label counts add up to N for proportions that sum to 1 within the tolerance.
+  - Rules that name the same label, and competing_noise entries on the same cluster, are rounded together.
+  - [CLM-150] and [CLM-151] refuse only when no rounding of the rules' counts fits.
+  - [CLM-152] refuses shares on one cluster, and [CLM-153] recall targets on one label, that add up past 1.0.
+  - [CLM-305] reports a competing_noise entry that places fewer points than its share asks, and the
+    summary txt lists what each assignment_matrix row and competing_noise entry asked for and took.
+  - [CLM-304] names only the spillover rule.
+
+
+3) Target ceiling:
+  - Under scope: global, each run reports the highest value the search found and the size ceiling, in
+    the log and under each label in the summary txt. For mcc the ceiling is exact, for ari a bound.
+  - [CLM-306] reports the ceiling and says when the target lies above it, or for mcc below 0.
+  - A target_metric run with competing_noise under proportional_to_marginal now reports the ceiling;
+    uniform and concentrated spillover can move the counts, so they report none.
+  - Under scope: pair, the reachable pair MCC range [phi_min, 1] is reported on every run.
+  - [CLM-310] names the cause of a pair miss: the label holds a whole number of points, or the target
+    was clamped by [CLM-307].
+  - target_metric.strict: true refuses a label whose delivered value is outside the tolerance with
+    [CLM-154], which quotes the delivered value, the highest value found and the ceiling. Off by default.
+
+Also to proactively prevent future issue build-up, issues found by adversarial code review by 3 LLMs were 
+included in this release, the next release will include the same type of code review with three of the more
+advanced models. Every non-issue is recorded so that a directory of possible future findings are available.
+
+As a result of the changes from 0.7.2, labels differ from 0.7.0 when the probes between
+grid levels count against `max_iter`.
+
+## [0.7.5rc1] — 2026-10-29 (TestPyPI)
+
+### Added
+
+- **`check_release_metadata.py --recipe recipe.yaml` checks a conda recipe.** 
+  A disagreement is a warning through 0.7.9 and an error after it (developer only).
+- **A coded warning carries its code on the log record**, as `record.clm_code`.
+- **`py.typed` (PEP 561)**
+- **Each public module lists its public names in `__all__`**: `metrics`,
+  `clm_label_engine`, `clm_errors`, `generate_config`, `config_template`,
+  `resolved_config`, `main`, `label_context` and `label_generator`.
+- **The summary txt lists what each `assignment_matrix` row and `competing_noise`
+  entry placed**, below each label's counts: the points it asks for and the points it
+  took.
+- **`target_metric.strict: true` refuses a label whose delivered value is outside the
+  tolerance**, with `[CLM-154]`, which quotes the delivered value, the highest value the
+  search found and the size ceiling. Without a `tolerance`, strict means the exact
+  value. The dataset is still written without that label and the run exits 3.
+
+### Changed
+
+- **`clmsynth-config` writes no `clm_label` block the engine refuses.** 
+- **A clustbench reference labeling that fails to download no longer ends the list.**
+- **The metric functions refuse input no run passes them** with one plain `ValueError`
+  (Python API only): label arrays that are not 1-D, differ in length, are empty, hold
+  NaN, None or inf, or mix id types; for the pair measures, a cluster or label that is
+  absent, or one group on both sides, where MCC is 0 and ARI 1. They raised numpy or
+  scikit-learn errors, or returned a value. `MetricCeilings` refuses NaN sizes.
+- **The wizard says when a spillover rule will not keep your proportions.**
+- **CLMSynth's lookup tables are typed read-only.**
+- **`competing_noise` takes what the matching leaves of a label's count.**
+- **Counts are rounded from the values as written.**
+- **Exit 2 for a wrong config, exit 3 for an incomplete run.**
+- **`centroid_enabled` defaults to `false` in `clmsynth-config`**, and
+  under `perfect`, `clmsynth-config` writes no `proportions`, `balance`,
+  `skew_rule` or `skew_params`.
+- **A `clm_label` block that is wrong for every dataset stops the run before any
+  dataset is fetched.** 
+
+#### Changed CLM code behavior
+
+
+- **`[CLM-111]` refuses `target_metric` under `custom` with one class or one cluster.**
+- **`[CLM-133]` also refuses infinite cluster ids**
+- **`[CLM-310]` names the cause of a pair miss**: the label holds a whole number of
+  points, or the target was clamped by `[CLM-307]`. It reported points outside the
+  cluster, which `[CLM-130]` rules out. Messages only.
+- **`[CLM-308]` warns only when `scope: pair` changes the label's size.**
+- **Placement on single-feature data is refused.** `centroid_dependence` 
+  `[CLM-125]`.
+- **`[CLM-305]` also reports an entry that places fewer points than its share asks**,
+- **`[CLM-304]` names only the spillover rule**, since `competing_noise` no longer
+  moves the counts. A `target_metric` run with `competing_noise` under
+  `proportional_to_marginal` now reports the size ceiling.
+- **An empty `spillover_rule` runs the default, `proportional_to_marginal`**, and the
+  run's `info/<run>.yaml` records that rule. It was refused with `[CLM-109]`.
+- **`[CLM-150]` and `[CLM-151]` refuse only when no rounding of the rules' counts
+  fits.**
+- **Under `matching_mode: random`, `centroid_dependence` is ignored with `[CLM-311]`.**
+- **A payload without `single_match` writes `single_match: {}`**, so `matching_mode:
+  single` without it is refused with `[CLM-205]` ("single_match.cluster is
+  required"); the `{cluster: null, label: null}` written before gave `[CLM-104]`.
+- **Cluster ids are refused with `[CLM-133]` if not integer** Clusters are unsupervised, so an id only says which
+  points belong together; a name reads as a human label.
+
+### Removed
+
+- **`generate_config.VALID_BALANCE` and `generate_config.VALID_SKEW_RULES`.** They
+  served only the render-time warnings that the engine's checks replaced.
+  `clm_label_engine.BALANCE_VALUES` lists the balance values.
+
+### Fixed
+
+- **Label counts add up to `N` for `proportions` that sum to 1 within the tolerance.**
+- **Rules that name the same label, and `competing_noise` entries on the same cluster,
+  are rounded together.**
+  - **`[CLM-153]` refuses recall targets on one label that add up past 1.0.**
+  - **`[CLM-152]` refuses shares on one cluster that add up past 1.0.**
+  - **`[CLM-119]` comes before the allocation.**
+  - **`[CLM-306]` says how many iterations the search used**, e.g. "after 27 of 40
+    iterations". It quoted `max_iter` alone, though the search often stops earlier.
+- **One-dimensional `coords` no longer crash a `favors: random` competing_noise
+  entry** (Python API).
+- **`clustering_mcc` returns a Python `float`.
+- **`clmsynth-config` reports a payload block of the wrong shape.**
+- **The `target_metric` search looks between its grid levels.** Two cases change:
+  - **`[CLM-120]` becomes a label.** No grid level fits, one is refused with
+    `[CLM-152]` and the next with another code (`competing_noise` shares past 1.0 on a
+    cluster a rule fills exactly). The search looks between the two; where levels fit,
+    the label is delivered, within tolerance or with `[CLM-306]`.
+  - **`[CLM-306]` becomes a hit, or a closer miss.** The target is missed, and a grid
+    level that fits is next to one refused with `[CLM-150]`, `[CLM-151]`, `[CLM-152]`
+    or `[CLM-153]`.
+
+- **`[CLM-131]` refuses a dirichlet `alpha` above about 1.8e308 / `num_classes`.**
+- **An integer too large for a float is refused by its key's code:** `[CLM-131]` for
+  `ratio` and `alpha`, `[CLM-141]` for `proportions`, `recall_target`, `steepness` and
+  `tolerance`. Each stopped the run with an uncoded `OverflowError`.
+
+## [0.7.4] — 2026-10-16 (TestPyPI)
 
 Python 3.15 initial support, seaborn is removed and PyYAML is optional dependency.
 Initial support for batch runs.
@@ -53,7 +209,7 @@ Initial support for batch runs.
 ### Changed
 
 - **`[CLM-134]` is now `[CLM-141]`.** because 134 is an abort code. Codes 134 to
-  140 and 143 are left reserved, and new 1xx codes start at 144.
+  140 and 143 are left reserved, new 1xx codes start at 144.
 
 - **The run folder is named `YYYYMMDD_HHMMSS_<Source>`**.
 
@@ -414,7 +570,7 @@ same model that identified them and were checked individually.
 - **`[CLM-104]` and `[CLM-118]` name the type, not the range.** A label that is a
   column name no longer reads as out of range.
 
-## [0.7.0] — 2026-09-01
+## [0.7.0] — 2026-09-01 (PyPI)
 
 First published release on PyPI.
 
@@ -424,7 +580,7 @@ The change affected how the target was reached and reported for MCC, as a result
 the Zenodo repository of the article data reproduction and validation tests was also
 updated with traceable changes to the results.
 
-## [0.7.0rc2] — 2026-09-01
+## [0.7.0rc2] — 2026-09-01 (TestPyPI)
 
 Documentation corrections.
 
@@ -438,7 +594,7 @@ Documentation corrections.
 
 - Additions **In response to reviewer comments.**
 
-## [0.7.0rc1] — 2026-08-30
+## [0.7.0rc1] — 2026-08-30 (TestPyPI)
 
 Testing release on `test.pypi.org`.
 
@@ -685,7 +841,7 @@ A patch release.
   config names exactly one dataset, so a fixture shared across modules would let
   a change made elsewhere silently redefine what these tests check.
 
-## [0.6.5] — 2026-08-10
+## [0.6.5] — 2026-08-10 (GitHub)
 
 The test suite becomes part of the repository.
 
@@ -897,9 +1053,10 @@ feature: a dataset can now consist of cluster ids with no features.
   to check a configuration's cluster and label ids against a dataset before
   running it. The pipeline uses it for the pre-flight check described above.
 
-## [0.6.2] — 2026-08-02 — Public release
+## [0.6.2] — 2026-08-02
 
-The release accompanying the article submission. the engine behaves exactly as in 0.6.0.
+First public release in GitHub, accompanying the article submission. 
+The engine behaves exactly as in 0.6.0.
 
 ## [0.6.1] — 2026-08-02
 
@@ -946,7 +1103,7 @@ Six diagnostics, archived on Zenodo: <https://doi.org/10.5281/zenodo.21751081>.
   because its pool clips at zero. Now **`[CLM-153]`**.
 
 
-## [0.5.0] — 2026-07-31 — research release
+## [0.5.0] — 2026-07-31
 
 The research release, accompanying the submitted article and the Code
 Ocean capsule. No change to the label-generation core.

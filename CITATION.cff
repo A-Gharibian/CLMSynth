@@ -25,8 +25,8 @@ repository-artifact: 'https://zenodo.org/records/21755236'
 url: >-
   https://www.sciencedirect.com/science/article/pii/S2352711026005686
 license: MIT
-version: 0.7.4
-date-released: '2026-10-16'
+version: 0.7.5rc1
+date-released: '2026-10-29'
 
 preferred-citation:
   type: article

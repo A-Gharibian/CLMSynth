@@ -66,11 +66,11 @@
     },
     "copyrightYear": 2026,
     "dateCreated": "2026-07-15",
-    "dateModified": "2026-10-16",
+    "dateModified": "2026-10-29",
     "datePublished": "2026-07-31",
     "description": "A synthetic dataset generator that decouples cluster formation from class labels to evaluate cluster-label matching algorithms and measures.",
     "developmentStatus": "https://www.repostatus.org/#active",
-    "downloadUrl": "https://github.com/A-Gharibian/CLMSynth/archive/refs/tags/v0.7.4.tar.gz",
+    "downloadUrl": "https://github.com/A-Gharibian/CLMSynth/archive/refs/tags/v0.7.5rc1.tar.gz",
     "funder": {
         "type": "Organization",
         "name": "VSB - Technical University of Ostrava"
@@ -147,7 +147,7 @@
         "Python 3.15"
     ],
     "sameAs": "https://doi.org/10.5281/zenodo.21759538",
-    "softwareHelp": "https://github.com/A-Gharibian/CLMSynth/tree/main/docs/manual",
+    "softwareHelp": "https://github.com/A-Gharibian/CLMSynth/tree/main/docs",
     "softwareRequirements": [
         {
             "type": "SoftwareApplication",
@@ -160,6 +160,7 @@
             },
             "runtimePlatform": "Python 3",
             "sameAs": "https://pypi.org/project/numpy/",
+            "license": "https://spdx.org/licenses/BSD-3-Clause",
             "version": ">=2.0"
         },
         {
@@ -173,21 +174,8 @@
             },
             "runtimePlatform": "Python 3",
             "sameAs": "https://pypi.org/project/pandas/",
-            "version": ">=2.2"
-        },
-        {
-            "type": "SoftwareApplication",
-            "identifier": "PyYAML",
-            "name": "PyYAML",
-            "provider": {
-                "type": "Organization",
-                "name": "PyPI",
-                "url": "https://pypi.org"
-            },
-            "runtimePlatform": "Python 3",
-            "sameAs": "https://pypi.org/project/PyYAML/",
-            "version": ">=6.0",
-            "description": "Optional, the extra 'yaml'. Needed only to read or write a config file that is not .json."
+            "license": "https://spdx.org/licenses/BSD-3-Clause",
+            "version": ">=3.0"
         },
         {
             "type": "SoftwareApplication",
@@ -200,7 +188,8 @@
             },
             "runtimePlatform": "Python 3",
             "sameAs": "https://pypi.org/project/scipy/",
-            "version": ">=1.11"
+            "license": "https://spdx.org/licenses/BSD-3-Clause",
+            "version": ">=1.13"
         },
         {
             "type": "SoftwareApplication",
@@ -213,7 +202,8 @@
             },
             "runtimePlatform": "Python 3",
             "sameAs": "https://pypi.org/project/scikit-learn/",
-            "version": ">=1.4"
+            "license": "https://spdx.org/licenses/BSD-3-Clause",
+            "version": ">=1.4.2"
         },
         {
             "type": "SoftwareApplication",
@@ -226,7 +216,25 @@
             },
             "runtimePlatform": "Python 3",
             "sameAs": "https://pypi.org/project/matplotlib/",
-            "version": ">=3.8"
+            "license": "https://matplotlib.org/stable/project/license.html",
+            "version": ">=3.8.4"
+        }
+    ],
+    "softwareSuggestions": [
+        {
+            "type": "SoftwareApplication",
+            "identifier": "PyYAML",
+            "name": "PyYAML",
+            "provider": {
+                "type": "Organization",
+                "name": "PyPI",
+                "url": "https://pypi.org"
+            },
+            "runtimePlatform": "Python 3",
+            "sameAs": "https://pypi.org/project/PyYAML/",
+            "license": "https://spdx.org/licenses/MIT",
+            "version": ">=6.0.1",
+            "description": "Optional, the extra 'yaml'. Needed only to read or write a config file that is not .json."
         },
         {
             "type": "SoftwareApplication",
@@ -234,14 +242,15 @@
             "name": "mdcgenpy",
             "provider": {
                 "type": "Organization",
-                "name": "PyPI",
-                "url": "https://pypi.org"
+                "name": "GitHub",
+                "url": "https://github.com"
             },
             "runtimePlatform": "Python 3",
             "sameAs": "https://github.com/CN-TU/mdcgenpy",
-            "description": "Optional. Needed only for data_source 'mdcgen'. Distributed as a git repository rather than on PyPI, so it cannot be a declared extra."
+            "license": "https://github.com/CN-TU/mdcgenpy/blob/master/LICENSE",
+            "description": "Optional. Needed only for data_source 'mdcgen'. It is GPL-3.0, so CLMSynth never ships it: users install it themselves from its repository."
         }
     ],
-    "softwareVersion": "0.7.4",
-    "version": "0.7.4"
+    "softwareVersion": "0.7.5rc1",
+    "version": "0.7.5rc1"
 }

@@ -5,11 +5,11 @@ triggers it, runs the pipeline, captures the log, and asserts the expected code
 actually appears. Output is grouped one folder per main table:
 
     troubleshooting_catalog/
-        ValueError_1xx/            101..144   fatal, aborts the run (exit 2), except
+        ValueError_1xx/            101..144   refused config (exit 2), except
                                               the codes in EXPECTED_EXIT_BY_CODE
-        InfeasibleAllocation_15x/  150..153   per-dataset skip (exit 0)
-        KeyError_2xx/              201..209   per-dataset skip (exit 0)
-        Warnings_3xx/              301..310   non-fatal, run succeeds (exit 0)
+        InfeasibleAllocation_15x/  150..154   label left out, run incomplete (exit 3)
+        KeyError_2xx/              201..209   required key missing, run stops (exit 2)
+        Warnings_3xx/              301..311   non-fatal, run succeeds (exit 0)
         _data/                     byoc input CSVs for 127 and 133, kept so they rerun
 
 A shipped item is a reproducible case of the troubleshooting manual. The cases
@@ -31,7 +31,6 @@ OUT_DIR defaults to docs/troubleshooting_catalog. Pass a different one to
 generate a candidate catalog for comparison before filing an issue. It must be
 absent, empty, or a catalog from an earlier run; anything else is refused before
 a file is touched.
-
 --threaded runs the cases in a thread pool, one worker per CPU. Each case has its
 own folder, so the catalog and the report are the same as a serial run's.
 """
@@ -57,9 +56,7 @@ try:
 except ImportError as e:
     sys.exit(f"{e}.")
 
-# ROOT = Path(__file__).resolve().parent
 REPO = Path(__file__).resolve().parents[1]
-
 
 def _parse_args() -> argparse.Namespace:
     # A misspelled flag is refused, not taken for an OUT_DIR to write into.
@@ -86,14 +83,8 @@ TABLES = {
     "3xx": "Warnings_3xx",
 }
 
-
 def _check_out_dir() -> None:
-    """Refuse an OUT_DIR that is a file, or a folder holding no catalog.
-
-    Checked on OUT itself whatever the target: a run only ever empties
-    OUT/<name>, so a check keyed on being handed OUT never ran, and
-    `CLM_catalog_gen.py .` emptied the working tree's own `_data/`.
-    """
+    """Refuse an OUT_DIR that is a file, or a folder holding no catalog."""
     if not OUT.exists():
         return
     if not OUT.is_dir():
@@ -155,7 +146,7 @@ def base():
     }
 
 
-def byoc(code, name, n_clusters=65, n_per=3, string_ids=False, blank_ids=0):
+def byoc(code, name, n_clusters=65, n_per=3, blank_ids=0):
     """Write a byoc CSV and return a config pointing at it. `blank_ids` empties the
     cluster cell of that many rows, one per cluster from the first.
 
@@ -167,7 +158,7 @@ def byoc(code, name, n_clusters=65, n_per=3, string_ids=False, blank_ids=0):
     rows = []
     for k in range(n_clusters):
         for i in range(n_per):
-            cid = f"C{k}" if string_ids else k
+            cid: int | str = k
             if i == 0 and k < blank_ids:
                 cid = ""
             rows.append([float(rng.normal(k, 0.3)), float(rng.normal(k, 0.3)), cid])
@@ -226,7 +217,7 @@ def labels_only(**patch):
 
 
 CASES = [
-    # ---- 1xx : ValueError, fatal, aborts the run (except EXPECTED_EXIT_BY_CODE)
+    # ---- 1xx : ValueError, refused config, exit 2 (except EXPECTED_EXIT_BY_CODE)
     ("1xx", 101, "matching_mode is not one of the four modes",
      lambda: c(matching_mode="bogus_mode")),
     # base()'s four-entry proportions stay in: 'perfect' does not read them, and
@@ -279,7 +270,7 @@ CASES = [
     # nothing to claim, so the entries have no effect, the [CLM-305] case, and that
     # alpha stays feasible.) The log names the [CLM-152] that blocked the levels
     # before the [CLM-120]. The verdict holds for this dataset's cluster sizes
-    # only, so the label is left out and the dataset is still written: exit 0,
+    # only, so the label is left out and the dataset is still written: exit 3,
     # see EXPECTED_EXIT_BY_CODE.
     ("1xx", 120, "target_metric: no feasible alpha at any recall level",
      lambda: c(target_metric={"type": "mcc", "value": 0.5},
@@ -289,10 +280,6 @@ CASES = [
                    {"cluster": 0, "label": 1, "share": 0.7, "favors": "random"},
                    {"cluster": 0, "label": 2, "share": 0.7, "favors": "random"},
                ])),
-    # Guarded since 0.6.0. This case previously expected NumPy's "could not be
-    # broadcast" from the spillover pool, which is what the length mismatch used
-    # to surface as only under the default spillover rule; uniform and
-    # concentrated wrote the undeclared labels straight into the dataset instead.
     ("1xx", 121, "proportions length != num_classes",
      lambda: c(proportions=[0.4, 0.3, 0.3],
                assignment_matrix=[{"clusters": [i], "label": i, "recall_target": 0.4}
@@ -352,7 +339,7 @@ CASES = [
     ("1xx", 144, "competing_noise on one of the cluster's own target labels",
      lambda: c(competing_noise=[{"cluster": 1, "label": 1, "share": 0.5, "favors": "boundary"}])),
 
-    # ---- 15x : InfeasibleAllocationError, per-dataset skip ---------------
+    # ---- 15x : InfeasibleAllocationError, label left out, exit 3 --------
     ("15x", 150, "one rule's budget exceeds its clusters' capacity",
      lambda: c(proportions=[0.5, 0.2, 0.2, 0.1])),
     ("15x", 151, "two rules jointly over-claim one cluster",
@@ -368,8 +355,12 @@ CASES = [
     ("15x", 153, "two assignment_matrix rules name the same label and over-claim it",
      lambda: c(assignment_matrix=[{"clusters": [0], "label": 0, "recall_target": 0.6},
                                   {"clusters": [1], "label": 0, "recall_target": 0.6}])),
+    ("15x", 154, "target_metric strict: the delivered value is outside the tolerance",
+     lambda: c(num_classes=3, proportions=[0.34, 0.33, 0.33],
+               assignment_matrix=[{"clusters": [i], "label": i} for i in range(3)],
+               target_metric={"type": "mcc", "value": 0.99, "max_iter": 15, "strict": True})),
 
-    # ---- 2xx : MissingConfigKey, per-dataset skip, exit 0 ----------------
+    # ---- 2xx : MissingConfigKey, run stops, exit 2 ----------------------
     ("2xx", 201, "num_classes missing", lambda: c(num_classes=None)),
     ("2xx", 202, "matching_mode missing", lambda: c(matching_mode=None)),
     ("2xx", 203, "skew_rule missing (unbalanced, no proportions)",
@@ -394,14 +385,10 @@ CASES = [
      lambda: c(matching_mode="perfect", assignment_matrix=None)),
     ("3xx", 303, "target_metric present with per-rule recall_target",
      lambda: c(target_metric={"type": "mcc", "value": 0.5, "tolerance": 0.2})),
-    # Label 1 already fills all 200 points of cluster 1, so the 20 noise points in
-    # cluster 0 take it past its target. Under proportional_to_marginal, noise on
-    # a label with room left only displaces spillover and the counts stay exact.
-    ("3xx", 304, "competing_noise gives a label more points than its target",
-     lambda: c(assignment_matrix=[
-         {"clusters": [i], "label": i, "recall_target": 1.0 if i == 1 else 0.8}
-         for i in range(4)],
-         competing_noise=[{"cluster": 0, "label": 1, "share": 0.5, "favors": "boundary"}])),
+    # The 160 points the rules leave are drawn uniformly over the four labels, so
+    # the counts leave their 200 each.
+    ("3xx", 304, "spillover_rule 'uniform' does not keep the label counts",
+     lambda: c(spillover_rule="uniform")),
     ("3xx", 305, "competing_noise on a cluster with no unclaimed points",
      lambda: c(assignment_matrix=[{"clusters": [0], "label": 0, "recall_target": 1.0}],
                proportions=[0.25, 0.25, 0.25, 0.25],
@@ -431,21 +418,25 @@ CASES = [
     # whose stream could differ: the target label is sized to an integer number
     # of points, so the achieved coefficient lands on a discrete ladder and
     # essentially never equals the request exactly; tolerance 0 makes that
-    # visible. Before 0.6.3 this key was ignored on the pair path and the check
-    # was hardcoded to 0.01.
+    # visible.
     ("3xx", 310, "delivered pair mcc outside tolerance",
      lambda: single(target_metric={"type": "mcc", "value": 0.6, "scope": "pair",
                                     "tolerance": 0.0})),
+    # base()'s centroid_dependence is on. The dataset has no features, so in any
+    # other mode this config is refused with [CLM-125].
+    ("3xx", 311, "centroid_dependence under random",
+     lambda: labels_only(matching_mode="random", assignment_matrix=None)),
 ]
 
 
-# Exit code the shipped logs record for each table. Within 1xx, 2 is a fatal abort
-# and 1 is a run whose only dataset was skipped, so those codes are listed apart.
-# 0 is a run whose only dataset was written without its label: [CLM-120] is
-# judged against that dataset's cluster sizes and leaves out only the label, as
-# the 15x and 2xx codes do.
-EXPECTED_EXIT = {"1xx": 2, "15x": 0, "2xx": 0, "3xx": 0}
-EXPECTED_EXIT_BY_CODE = {102: 1, 105: 1, 119: 1, 120: 0, 125: 1, 127: 1, 133: 1}
+# Exit code the shipped logs record for each table. A 1xx refuses the config (2),
+# also when it skips the only dataset. 3 is a run whose only dataset was written
+# without its label: [CLM-120] is judged against that dataset's cluster sizes and
+# leaves out only the label, as the 15x codes do. A 2xx key has no default, so it
+# stops the run (2). [CLM-133] comes from byoc's import checks, before labeling:
+# the source could not deliver the dataset, 1 as for a CSV that is not there.
+EXPECTED_EXIT = {"1xx": 2, "15x": 3, "2xx": 2, "3xx": 0}
+EXPECTED_EXIT_BY_CODE = {120: 3, 133: 1}
 
 
 def expected_exit(table, code):
@@ -480,7 +471,8 @@ def run_case(table, code, desc, builder, expect):
     cfg_path = folder / f"CLM-{code}.yaml"
     rel_cfg = f"{TABLES[table]}/CLM-{code}.yaml"
     header = (f"# [CLM-{code}] {desc}\n"
-              f"# Regenerated by CLM_catalog_gen.py against the shipped engine.\n"
+              f"# Regenerated against the shipped engine by tools/CLM_catalog_gen.py\n"
+              f"# in the CLMSynth source repository.\n"
               f"# Reproduce: cd to this catalog's root, then\n"
               f"#     python -m clmsynth.main {rel_cfg} --no-viz\n")
     cfg_path.write_text(header + yaml.dump(cfg, sort_keys=False, default_flow_style=False),
@@ -539,7 +531,6 @@ def main(threaded=False):
         return 1
     print(f"builder coverage: {len(CODES)} registry codes, all built.\n")
     if built_without_code:
-        # There is no --strict flag; return 1 here to make this fatal.
         print(f"WARNING: {len(built_without_code)} builder(s) have no registry code "
               f"({built_without_code}). Regenerating writes a shipped fixture for a "
               "diagnostic the engine can no longer emit. Drop the CASES entry, or "
@@ -549,8 +540,8 @@ def main(threaded=False):
     # catalog generated into a non-empty folder scatters its files there.
     _check_out_dir()
 
-    # Only the generated folders: handwritten files next to them
-    # (engine_internals.md) must survive a regeneration.
+    # Only the generated folders: a handwritten file next to them must survive a
+    # regeneration.
     for name in (*TABLES.values(), DATA_REL, SCRATCH_REL):
         _checked_rmtree(OUT / name)
     # Made once here, not by the first cases to run at the same time.

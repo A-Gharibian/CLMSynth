@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clmsynth"
-version = "0.7.4"
+version = "0.7.5rc1"
 description = "Synthetic label generator with configurable cluster-label matching (CLM) against ground-truth clusters"
 readme = "README.md"
 requires-python = ">=3.12,<3.16"
@@ -33,25 +33,22 @@ classifiers = [
 # exact pins used for verification.
 dependencies = [
     "numpy>=2.0",
-    "pandas>=2.2",
-    "scipy>=1.11",
-    "scikit-learn>=1.4",
-    "matplotlib>=3.8",
+    "pandas>=3.0",
+    "scipy>=1.13",
+    "scikit-learn>=1.4.2",
+    "matplotlib>=3.8.4",
 ]
 
 [project.optional-dependencies]
 # A config file other than .json is read and written with PyYAML.
-yaml = ["PyYAML>=6.0"]
+yaml = ["PyYAML>=6.0.1"]
 dev = ["pandas-stubs", "scipy-stubs", "ruff", "mypy", "bandit"]
-# PyYAML's 3.15 wheels are on their way to PyPI (yaml/pyyaml#951); until then a 3.15
-# install would need a C compiler, so there the tests that need it skip. Drop the
-# marker once the wheels are out.
-test = ["pytest>=8", "PyYAML>=6.0; python_version < '3.15'"]
+test = ["pytest>=9", "PyYAML>=6.0.1"]
 
 [project.urls]
 Homepage = "https://github.com/A-Gharibian/CLMSynth"
 Repository = "https://github.com/A-Gharibian/CLMSynth"
-Documentation = "https://github.com/A-Gharibian/CLMSynth/tree/main/docs/manual"
+Documentation = "https://github.com/A-Gharibian/CLMSynth/tree/main/docs"
 Changelog = "https://github.com/A-Gharibian/CLMSynth/blob/main/CHANGELOG.md"
 Issues = "https://github.com/A-Gharibian/CLMSynth/issues"
 Paper = "https://doi.org/10.1016/j.softx.2026.103077"
@@ -64,13 +61,11 @@ clmsynth-wizard = "clmsynth._config_wizard:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
-# A ready-to-run offline config, so a wheel carries something runnable without
-# a network fetch or an optional dependency.
 [tool.setuptools.package-data]
-clmsynth = ["test_data_config_offline.json"]
+clmsynth = ["test_data_config_offline.json", "py.typed"]
 
 [tool.pytest.ini_options]
-minversion = "8.0"
+minversion = "9.0"
 testpaths = ["tests"]
 # Fail on an unregistered mark rather than silently treating it as a no-op.
 addopts = "--strict-markers --strict-config"
@@ -94,25 +89,15 @@ select = [
     # Pylint's error and warning subsets only. PLR is complexity metrics
     "PLE", "PLW",
     "BLE",             # blind except
-    # Architecture rules, configured in [tool.ruff.lint.flake8-tidy-imports]
-    # below. Each replaced a test that searched source text or probed imports.
+    # Architecture rules, configured in [tool.ruff.lint.flake8-tidy-imports] below.
     "TID251", "TID253",
     "NPY002",          # legacy global np.random.*: every generator owns its seed
 ]
 ignore = [
-    # The four fetchers and the two config writers catch broadly on purpose: a
-    # dataset that cannot be fetched, generated or parsed is reported and skipped
-    # so the rest of the batch survives. See main.py's per-dataset
-    # error boundary for the design this serves.
     "BLE001",
     # the folder name is for a human reading their own output directory, not a
     # timestamp to be compared across machines.
     "DTZ005",
-    # `int(round(x))` is flagged as redundant because np.float64.__round__
-    # returns a Python int on numpy 2.x. That is true, and version-dependent:
-    # numpy 1.x returned np.float64. These values become integer point counts
-    # feeding allocation, where a float arriving silently would be a real defect,
-    # so the cast is kept as a guard rather than removed as noise.
     "RUF046",
     # Rebinding a loop variable to its own normalized form (`tok = tok.strip()`,
     # `count = min(count, len(idx_avail))`) is the intended reading here.
@@ -138,8 +123,6 @@ banned-module-level-imports = ["matplotlib", "clmsynth._visualization", "yaml"]
 "tools/**" = ["TID253"]
 
 [tool.mypy]
-# Python 3.11 was dropped at 0.7.0: numpy and scipy now
-# require >=3.12 (SPEC 0).
 ignore_missing_imports = true
 files = ["src/clmsynth", "tools", "tests"]
 check_untyped_defs = true
@@ -165,9 +148,4 @@ strict_equality = true
 #   B603  That same call. The argument vector is built from sys.executable and
 #         a config path the wizard itself wrote; no shell, no user string
 #         reaching argv.
-#
-# B310 was here until 0.7.0 and is deliberately no longer skipped:
-# _loadtxt_url now refuses any scheme other than http(s), so the finding is
-# closed at the call site with an inline nosec rather than suppressed for the
-# whole package. A NEW urlopen elsewhere is meant to be reported.
 skips = ["B101", "B404", "B603"]

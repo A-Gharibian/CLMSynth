@@ -1,9 +1,11 @@
+# SPDX-License-Identifier: MIT
 # _fabricated_generator.py
 """Offline synthetic-feature generator.
 Six numeric feature types, plus a categorical column generator.
 """
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
@@ -21,7 +23,7 @@ def generate_synthetic_data(
         n_samples: int = 2048,
         output_file: str | None = "synthetic_features_scaled.csv",
         seed: int = 42,
-        config_dict: dict[str, Any] | None = None
+        config_dict: Mapping[str, Any] | None = None
 ) -> pd.DataFrame:
     """
     Generates a synthetic dataset driven by a configuration dictionary.

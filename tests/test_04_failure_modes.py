@@ -21,10 +21,11 @@ What is checked:
   threads              a saved plot does not go through pyplot, so plots
                        rendered from worker threads match sequential ones
   interactive branch   omitting `output_path` shows and keeps the figure
-  exit codes           a missing or malformed config exits 1, distinct from
-                       exit 2 for a coded config error and 0 for success; so
-                       does an output_dir blocked by a file, which used to
-                       hang on Windows; SIGTERM exits 143
+  exit codes           0 every dataset written with all its labels, 3 only
+                       some, 2 a missing or malformed config or a coded config
+                       error, 1 nothing written for another reason, such as a
+                       missing data CSV or an output_dir blocked by a file,
+                       which used to hang on Windows; SIGTERM exits 143
   network timeout      `CLUSTBENCH_TIMEOUT` is passed to `urlopen`
 
 """
@@ -221,8 +222,9 @@ def test_a_target_no_level_fits_leaves_out_only_that_datasets_label(
     """[CLM-120] used to abort the whole run (exit 2), as if the config were wrong
     for every dataset. It is judged against one dataset's cluster sizes.
 
-    `blocked` has 47 points in cluster 0 where label 0 needs 50: every recall
-    level is infeasible, [CLM-152] below alpha 1 and [CLM-150] at 1. `fits`, four
+    `blocked` has 53 points in cluster 0, more than label 0's 50, so its rule
+    never fills the cluster and every recall level is infeasible: [CLM-152] until
+    label 1 needs more than cluster 1's 47 points, then [CLM-150]. `fits`, four
     clusters of 50, is feasible at alpha 1. Now [CLM-120] leaves out only
     `blocked`'s label: it is still written and counted, without `Label_0`, and
     `fits`, after it in iteration order, gets its label.
@@ -231,7 +233,7 @@ def test_a_target_no_level_fits_leaves_out_only_that_datasets_label(
 
     inputs = tmp_path / "input"
     inputs.mkdir()
-    write_cluster_sizes(inputs, [("blocked", [47, 53, 50, 50]), ("fits", [50, 50, 50, 50])])
+    write_cluster_sizes(inputs, [("blocked", [53, 47, 50, 50]), ("fits", [50, 50, 50, 50])])
 
     csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
     for d in (csv_dir, png_dir, txt_dir):
@@ -705,7 +707,7 @@ def test_plots_from_worker_threads_match_sequential_ones(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Exit codes: the three outcomes must stay distinguishable
+# Exit codes: the outcomes must stay distinguishable
 # ---------------------------------------------------------------------------
 
 
@@ -718,9 +720,9 @@ def test_plots_from_worker_threads_match_sequential_ones(tmp_path):
     ids=["missing-file", "empty-file", "not-a-mapping", "malformed-yaml",
          "empty-json", "json-not-a-mapping", "malformed-json"],
 )
-def test_unloadable_config_exits_one(tmp_path, request, name, content):
-    """Exit 1 is "ran but produced nothing", distinct from exit 2 for a coded
-    config error and 0 for success.
+def test_unloadable_config_exits_two(tmp_path, request, name, content):
+    """Exit 2: the config given on the command line is wrong, as for a coded
+    config error.
 
     An empty file parses to `None` and a scalar document parses to a string;
     both would surface much later as an unhelpful `AttributeError` on
@@ -728,19 +730,19 @@ def test_unloadable_config_exits_one(tmp_path, request, name, content):
     `yaml.YAMLError` traceback.
     """
     if name.endswith(".yaml") and content is not None:
-        request.getfixturevalue("yaml")   # without PyYAML every .yaml exits 1 anyway
+        request.getfixturevalue("yaml")   # without PyYAML a .yaml exits 1 before it is read
     path = tmp_path / name
     if content is not None:
         path.write_text(content, encoding="utf-8")
 
     with pytest.raises(SystemExit) as excinfo:
         load_config(str(path))
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
 
 
 @pytest.mark.parametrize("value", [[1, 2], "byoc"], ids=["list", "string"])
-def test_a_global_settings_that_is_not_a_mapping_exits_one(value, tmp_path, monkeypatch, caplog):
-    """It crashed on its first .get() with a traceback. It exits 1 like a config
+def test_a_global_settings_that_is_not_a_mapping_exits_two(value, tmp_path, monkeypatch, caplog):
+    """It crashed on its first .get() with a traceback. It exits 2 like a config
     that cannot be loaded, naming the section, before anything is created."""
     config_path = tmp_path / "cfg.json"
     config_path.write_text(json.dumps({"global_settings": value}), encoding="utf-8")
@@ -748,7 +750,7 @@ def test_a_global_settings_that_is_not_a_mapping_exits_one(value, tmp_path, monk
     monkeypatch.chdir(tmp_path)
     with caplog.at_level(logging.CRITICAL, logger="clmsynth"), pytest.raises(SystemExit) as excinfo:
         clmsynth.main.main()
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     assert "'global_settings' must be a mapping" in caplog.text, caplog.text
     assert [p.name for p in tmp_path.iterdir()] == ["cfg.json"], "the run created something"
 
@@ -794,7 +796,7 @@ def test_unset_batteries_stops_the_run_and_names_the_key(suite, tmp_path, caplog
     assert not list(csv_dir.glob("*.csv")), "the run did work despite an unset key"
 
 
-def _fabricated_config(tmp_path, suite, label_seed=42):
+def _fabricated_config(tmp_path, suite, label_seed: int | None = 42):
     """A one-dataset fabricated run; returns (config, csv_dir, png_dir, txt_dir)."""
     config = {
         "global_settings": {"data_source": "fabricated_data", "output_dir": str(tmp_path)},
@@ -914,19 +916,6 @@ def test_the_plot_box_shows_only_what_the_label_was_made_with(
     assert shown in label_box and hidden not in label_box, label_box
 
 
-def test_a_skipped_label_with_a_malformed_block_is_still_written(tmp_path, no_plots):
-    """Without num_classes the label is skipped ([CLM-201]) and the dataset is
-    still written. The plot box used to be built anyway and crashed on the
-    malformed block, so the written dataset was counted as skipped."""
-    config, csv_dir, png_dir, txt_dir = _fabricated_config(tmp_path, dict(_ONE_DATASET))
-    config["label_generation"]["clm_label"] = {
-        "matching_mode": "custom",
-        "centroid_dependence": [{"enabled": True}],
-    }
-    assert run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir) == 1
-    assert list(csv_dir.glob("*.csv"))
-
-
 @pytest.mark.parametrize("where", ["suite", "label_generation"])
 def test_a_valueless_seed_draws_one_and_reports_it(where, tmp_path, caplog):
     """A valueless `seed:` asks for randomness. The label seed crashed on
@@ -1013,10 +1002,9 @@ def test_resolve_seed_keeps_the_documented_default():
 
 
 @pytest.mark.parametrize(
-    "clm_label,expected_exit",
+    "clm_label,n_zero,datasets,expected_exit",
     [
-        ({"num_classes": 2, "matching_mode": "perfect"}, 0),
-        ({"num_classes": 2, "matching_mode": "bogus_mode"}, 2),
+        ({"num_classes": 2, "matching_mode": "perfect"}, 20, ["solo"], 0),
         (
             {
                 "num_classes": 2,
@@ -1025,59 +1013,38 @@ def test_resolve_seed_keeps_the_documented_default():
                 "split_rule": "equal",
                 "spillover_rule": "proportional_to_marginal",
             },
-            1,
+            3, ["solo"], 3,
         ),
+        ({"num_classes": 2, "matching_mode": "bogus_mode"}, 20, ["solo"], 2),
+        ({"num_classes": 2}, 20, ["solo"], 2),
+        ({"num_classes": 3, "matching_mode": "perfect"}, 20, ["solo"], 2),
+        ({"num_classes": 2, "matching_mode": "perfect"}, 20, ["no_such_dataset"], 1),
     ],
-    ids=["success-0", "coded-config-error-2", "nothing-processed-1"],
+    ids=["success-0", "label-left-out-3", "coded-config-error-2", "missing-key-2",
+         "every-dataset-refused-2", "csv-missing-1"],
 )
-def test_the_three_exit_codes_stay_distinguishable(tmp_path, clm_label, expected_exit, monkeypatch):
-    """0, 1 and 2 mean three different things and must not collapse into each other.
+def test_the_exit_codes_stay_distinguishable(tmp_path, monkeypatch, clm_label, n_zero,
+                                             datasets, expected_exit):
+    """0, 1, 2 and 3 mean different things and must not collapse into each other.
 
-    0.5.0 introduced the 1/2 split deliberately: exit 2 is "the config is wrong,
-    nothing was attempted", exit 1 is "ran but produced nothing". A caller
-    scripting the CLI distinguishes a mistake it should fix from a run that
-    legitimately found no data. Only exit 1 was asserted before; the exit-2 path
-    that release created was never verified.
-
-    The third case reaches exit 1 through a dataset whose only cluster cannot
-    hold label 0's budget, so labeling is skipped for every dataset and none
-    is written.
+    A caller scripting the CLI, or reading a scheduler's job record, tells a
+    config to fix (2) from a failure beyond it (1) and from a run that wrote
+    part of what it was asked for (3). Label 0's budget does not fit in a
+    3-point cluster 0 ([CLM-150]), so the dataset is written without its label.
+    A missing matching_mode ([CLM-202]) has no default, so no dataset can be
+    labelled. Perfect matching of 3 labels to 2 clusters ([CLM-102]) refuses the
+    only dataset. The run folder stays exactly when something was written.
     """
-    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
-
     inputs = tmp_path / "input"
     inputs.mkdir()
-    write_byoc_batch(inputs, [("solo", 3 if expected_exit == 1 else 20)])
+    write_byoc_batch(inputs, [("solo", n_zero)])
 
-    config = {
-        "global_settings": {"data_source": "byoc", "output_dir": str(tmp_path / "out")},
-        "byoc_suite": {
-            "batteries": ["local"],
-            "input_dir": str(inputs),
-            "datasets": ["solo"] if expected_exit != 1 else ["no_such_dataset"],
-            "cluster_column": "cluster",
-            "standardize": False,
-            "seed": 42,
-        },
-        "label_generation": {
-            "n_labels": 1,
-            "source_labeling": "labels0",
-            "noise": 0.1,
-            "seed": 42,
-            "clm_label": clm_label,
-        },
-    }
-    config_path = tmp_path / "cfg.json"
-    config_path.write_text(json.dumps(config), encoding="utf-8")
-    monkeypatch.setattr(sys, "argv", ["clmsynth", str(config_path)])
+    code, survivors = run_main(
+        tmp_path, monkeypatch, minimal_byoc_config(inputs, tmp_path / "out", datasets, clm_label)
+    )
 
-    if expected_exit == 0:
-        clmsynth.main.main()
-        return
-
-    with pytest.raises(SystemExit) as excinfo:
-        clmsynth.main.main()
-    assert excinfo.value.code == expected_exit
+    assert code == expected_exit, f"expected exit {expected_exit}, got {code}"
+    assert bool(survivors) == (expected_exit in (0, 3)), survivors
 
 
 # ---------------------------------------------------------------------------
@@ -1396,10 +1363,10 @@ def test_reporting_a_path_never_raises():
 
 
 @pytest.mark.usefixtures("yaml")
-def test_generate_config_exits_one_on_a_missing_payload(tmp_path, monkeypatch):
+def test_generate_config_exits_two_on_a_missing_payload(tmp_path, monkeypatch):
     """The other console script's failure path, alongside the pipeline's.
 
-    `clmsynth-config` reads a payload file. A missing one must exit 1 with a
+    `clmsynth-config` reads a payload file. A missing one must exit 2 with a
     message pointing at the fix, not raise `FileNotFoundError` out of the CLI,
     it is the first command in the documented quick start, so it is the most
     likely place for a user to mistype a path.
@@ -1409,20 +1376,26 @@ def test_generate_config_exits_one_on_a_missing_payload(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["clmsynth-config", str(tmp_path / "no_such_payload.yaml")])
     with pytest.raises(SystemExit) as excinfo:
         generate_config.main()
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
 
 
 @pytest.mark.usefixtures("yaml")
-def test_generate_config_exits_one_on_a_malformed_payload(tmp_path, monkeypatch):
-    """A YAML syntax error in the payload exits 1 like a missing file, not a traceback."""
+@pytest.mark.parametrize("text", ["clm_label: [unclosed", "target_metric: [mcc, 0.6]",
+                                  "matching_mode: bogus"],
+                         ids=["yaml-syntax-error", "block-of-the-wrong-shape",
+                              "refused-by-the-engine"])
+def test_generate_config_exits_two_on_a_malformed_payload(text, tmp_path, monkeypatch):
+    """A YAML syntax error in the payload, a block of the wrong shape, or a
+    clm_label block the engine refuses exits 2 like a missing file, not a
+    traceback, and writes nothing."""
     from clmsynth import generate_config
 
     payload = tmp_path / "payload.yaml"
-    payload.write_text("clm_label: [unclosed", encoding="utf-8")
+    payload.write_text(text, encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["clmsynth-config", str(payload), str(tmp_path / "out.yaml")])
     with pytest.raises(SystemExit) as excinfo:
         generate_config.main()
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     assert not (tmp_path / "out.yaml").exists()
 
 
@@ -1469,7 +1442,7 @@ def test_generate_config_refuses_to_overwrite_its_payload(tmp_path, monkeypatch,
     monkeypatch.setattr(sys, "argv", ["clmsynth-config", str(payload), str(payload)])
     with pytest.raises(SystemExit) as excinfo:
         generate_config.main()
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     assert payload.read_text(encoding="utf-8") == text
 
 
@@ -1500,7 +1473,7 @@ def test_context_refuses_a_misaligned_generated_label():
 @pytest.mark.parametrize("clm_config", [None, {}], ids=["none", "empty"])
 def test_a_missing_clm_label_is_refused_not_silently_filled(clm_config):
     """A config without clm_label is refused, as [CLM-207]: a missing key, so the
-    run goes on and writes the dataset without a label. It was an uncoded KeyError."""
+    run stops. It was an uncoded KeyError."""
     features = pd.DataFrame({"f1": range(10), "f2": range(10)})
     context = DatasetContext(
         "src", "battery", features, ground_truths={"labels0": pd.Series([0] * 5 + [1] * 5)}

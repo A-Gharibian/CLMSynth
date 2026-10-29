@@ -30,8 +30,9 @@ What is checked, in order:
                        config runs and its resolved config repeats the run, and
                        any other config file and the config tools name the extra.
   batch isolation      Several configs run one process each, with their own run
-                       folder, log and exit status; the batch exits with the
-                       highest.
+                       folder, log and exit status; a batch where some
+                       configs wrote their datasets and others did not
+                       exits 3.
 
 """
 
@@ -197,8 +198,8 @@ def test_module_level_registries_survive_a_run_unchanged(tmp_path):
 
     The package keeps a dozen module-level containers, `CODES`, `FETCHERS`,
     `SOURCE_METADATA`, `SOURCE_DATASETS`, `_METRIC_FUNCS`. All are
-    lookup tables built once at import; two `SOURCE_METADATA` writes exist but
-    both run at module level during import, not inside any function.
+    lookup tables built once at import and typed read-only; mypy does not see a
+    write below an `Any`, such as inside a `FABRICATED_CONFIGS` preset.
 
     If any of them were written during a run, they would be shared mutable
     state: the second run in a batch would see the first run's leftovers, and
@@ -450,8 +451,8 @@ def test_the_config_tools_without_pyyaml_name_the_extra(module):
 
 def test_a_batch_runs_each_config_in_its_own_process(tmp_path, monkeypatch, caplog):
     """Two configs, one refused, two at a time. Each run keeps its own folder and
-    log, the summary names each config's run, and the batch exits with the
-    highest status."""
+    log, the summary names each config's run, and the batch exits 3, as a run
+    does that wrote some of its datasets."""
     good, bad = pipeline_config(tmp_path / "out"), pipeline_config(tmp_path / "out")
     bad["label_generation"]["clm_label"]["matching_mode"] = "bogus"
     paths = []
@@ -465,7 +466,7 @@ def test_a_batch_runs_each_config_in_its_own_process(tmp_path, monkeypatch, capl
     with pytest.raises(SystemExit) as exit_signal:
         clmsynth.main.main()
 
-    assert exit_signal.value.code == 2
+    assert exit_signal.value.code == 3
     logs = {run.name: (run / "info" / f"{run.name}.log").read_text(encoding="utf-8")
             for run in (tmp_path / "out").iterdir()}
     assert len(logs) == 2, sorted(logs)

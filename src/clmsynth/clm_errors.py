@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # clm_errors.py
 """
 Central registry of CLM engine diagnostics: reference Manual/troubleshooting.tex.
@@ -5,29 +6,40 @@ Central registry of CLM engine diagnostics: reference Manual/troubleshooting.tex
 Bands:
     1xx  ValueError:                invalid configuration / incompatible options
     15x  InfeasibleAllocationError: a ValueError subclass; valid config, counts don't fit
+                                    or a strict target is missed
     2xx  MissingConfigKey:          a KeyError subclass; a required key is absent
     3xx  Warning:                   non-fatal; logged, execution continues
-
-Codes are a public contract: never renumber or reuse an assigned code; new
-diagnostics get new numbers.
 """
+
+import logging
+from collections.abc import Mapping
+from typing import Final
+
+__all__ = [
+    "CODES",
+    "InfeasibleAllocationError",
+    "MissingConfigKey",
+    "clm_error",
+    "clm_infeasible",
+    "clm_missing",
+    "clm_warn",
+]
 
 
 class InfeasibleAllocationError(ValueError):
     """
     Raised when a specific recall_target/rule (or competing_noise) demand
-    cannot fit within cluster capacities.
+    cannot fit within cluster capacities, or when target_metric.strict refuses
+    a delivered labeling outside the tolerance ([CLM-154]).
     A ValueError subclass, but caught *separately* by target_metric's search
-    loop ("try a different alpha") and by main.py (skip the dataset). It
-    must remain a distinct type: a config typo (plain ValueError) has to
-    stay uncaught by those handlers and fail.
+    loop ("try a different alpha") and by main.py (skip the label).
     """
 
 
 class MissingConfigKey(KeyError):
-    """A required config key is absent.
-    A KeyError subclass so main.py keeps skipping the dataset rather than
-    aborting the run; only the message gains a code.
+    """A required config key is absent: a key with no default, so no dataset can
+    be labelled and main.py stops the run. A KeyError subclass; the message
+    carries the code.
     """
 
     def __str__(self) -> str:
@@ -35,7 +47,7 @@ class MissingConfigKey(KeyError):
         return self.args[0] if self.args else ""
 
 
-CODES = {
+CODES: Final[Mapping[int, str]] = {
     # --- 1xx : ValueError (invalid configuration) ---------------------------
     101: "Unknown matching_mode {mode!r}. Supported: perfect, single, random, custom.",
     102: "matching_mode 'perfect' requires M == K (got M={M}, K={K}).",
@@ -48,9 +60,10 @@ CODES = {
     109: "Unknown spillover_rule {rule_name!r}. Supported: "
          "proportional_to_marginal, uniform, concentrated.",
     110: "Unknown profile {profile!r}. Supported: linear, exponential, step.",
-    111: "target_metric requires matching_mode in {{'single', 'custom'}} (got {mode!r}): "
-         "'perfect' has no free recall_target to search over, and 'random' has no "
-         "cluster-label structure to dial at all.",
+    111: "target_metric requires matching_mode in {{'single', 'custom'}} and M >= 2, K >= 2 "
+         "(got {mode!r}, M={M}, K={K}): 'perfect' has no free recall_target to search over, "
+         "'random' has no cluster-label structure to dial at all, and one class or one "
+         "cluster leaves a single labeling, so every metric is fixed.",
     112: "target_metric.type must be 'mcc' or 'ari' (got {type!r}).",
     113: "target_metric.value must be in [-1, 1] (got {value}).",
     114: "target_metric is incompatible with matching_mode='random': "
@@ -72,7 +85,7 @@ CODES = {
     124: "target_metric.scope 'pair' requires matching_mode 'single': the target pair is "
          "the single_match (cluster, label). Use scope 'global' for 'custom'.",
     125: "centroid placement requires per-point feature vectors: {placement} is set but "
-         "coords is {got}. Provide an (N, d) feature array, or disable "
+         "coords is {got}. Provide an (N, d) feature array with d >= 2, or disable "
          "centroid_dependence and any competing_noise favors 'core'/'boundary'.",
     126: "num_classes must be an integer between 1 and {max_val} (got {M}).",
     127: "the dataset's cluster count K={K} exceeds the supported maximum of {max_val}.",
@@ -103,7 +116,8 @@ CODES = {
          "largest-remainder rounding is satisfied, nothing downstream objects, and the "
          "run delivers a labeling nobody asked for. Valid ranges: geometric 'ratio' "
          ">= 0; dominant_minority 'dominant_share' in [0, 1] and 'dominant_index' an "
-         "integer in 0..{hi}, with num_classes >= 2; dirichlet 'alpha' > 0. Omit "
+         "integer in 0..{hi}, with num_classes >= 2; dirichlet 'alpha' > 0 and below "
+         "about 1.8e308 / num_classes. Omit "
          "skew_params entirely to take the documented defaults.",
 
     132: "balance must be 'balanced' or 'unbalanced', got {balance!r}. Matching is "
@@ -113,8 +127,7 @@ CODES = {
          "`balance:` is not the default.",
 
     133: "the dataset cannot be labelled: {problem}. Every point needs one cluster id, "
-         "the ids must be all numbers or all strings, and coords, when given, needs one "
-         "row per point.",
+         "the ids must be integers, and coords, when given, needs one row per point.",
 
     141:"{key} must be {expected}, got {value!r}. Values are not converted: YAML reads "
          "true/yes/no as booleans and .nan/.inf as numbers, and each was accepted as "
@@ -135,8 +148,9 @@ CODES = {
     150: "Infeasible rule: label {label} needs {tp} of its {m} points in clusters "
          "{clusters}, which hold only {capacity} points total. {remedy}",
     151: "Infeasible configuration: cluster {k} has {size} points but rules jointly claim "
-         "{claimed} (per label: {per_label}). Lower the competing recall_targets or spread "
-         "them across more clusters.",
+         "{claimed} (per label: {per_label}), and no rounding of their counts to whole "
+         "points fits. Lower the competing recall_targets or spread them across more "
+         "clusters.",
     152: "competing_noise: entries for cluster {k} jointly claim {claimed} points but only "
          "{remaining} are unclaimed there. Lower the 'share' values.",
     153: "Infeasible configuration: {n_rules} assignment_matrix rules name label {label} "
@@ -145,6 +159,9 @@ CODES = {
          "of it, so recall targets on the same label add up: {breakdown}. Either lower them "
          "so they sum to at most 1.0, or write one rule listing all the clusters and let "
          "split_rule divide the budget between them.",
+    154: "target_metric strict: the delivered labeling scores {kind}={achieved:.6f}, "
+         "{off:.3g} from the requested {target} (tolerance {tol}), so the label is not "
+         "written.{detail}",
 
     # --- 2xx : MissingConfigKey (a required config key is absent) -----------
     201: "num_classes is required.",
@@ -166,14 +183,13 @@ CODES = {
          "size.",
     303: "target_metric present: per-rule recall_target values in assignment_matrix are "
          "ignored; recall_target is solved for globally.",
-    # One code, two causes; {cause} names which. Precedent: 104, 131.
-    304: "{cause}: the delivered label counts {achieved} differ from their targets "
-         "{target}. spillover_rule 'proportional_to_marginal' refills every label to its "
-         "target; 'uniform' and 'concentrated' do not, and competing_noise moves the "
-         "counts when it gives a label more points than its target.",
-    305: "competing_noise: cluster {k} has no unclaimed points (or share rounds to 0); "
-         "entry {entry} has no effect.",
-    306: "target_metric: did not converge within tolerance after {max_iter} iterations. "
+    304: "spillover_rule {rule!r}: the delivered label counts {achieved} differ from their "
+         "targets {target}. 'proportional_to_marginal' refills every label to its target; "
+         "'uniform' and 'concentrated' do not.",
+    # One code, three causes; {cause} names which. Precedent: 104, 131.
+    305: "competing_noise: entry {entry} {effect}: {cause}.",
+    306: "target_metric: did not converge within tolerance after {n_iter} of {max_iter} "
+         "iterations. "
          "Best found: alpha={best_alpha:.4f}, achieved={best_metric:.4f} "
          "(target={target:.3f}, tol={tol}).{ceiling}",
     307: "target_metric scope 'pair': target {target} is outside the reachable range "
@@ -190,10 +206,11 @@ CODES = {
          "search score the labeling it delivers. Treat the achieved value above as "
          "authoritative, not the requested one.",
     310: "target_metric scope 'pair': the DELIVERED labeling achieves pair {type}="
-         "{achieved:.4f}, outside the requested {target} +/- {tol}. The closed-form "
-         "construction assumes every point of label {label} lies inside cluster {cluster}, "
-         "but {outside} of its {total} points lie outside. Treat the achieved value above "
-         "as authoritative, not the requested one.",
+         "{achieved:.4f}, outside the requested {target} +/- {tol}: {cause}. Treat the "
+         "achieved value above as authoritative, not the requested one.",
+    311: "matching_mode='random': centroid_dependence ignored and not validated, labels "
+         "are drawn with no regard to the clusters, so no point is placed by its distance "
+         "to a centroid.",
 }
 
 
@@ -204,27 +221,27 @@ def _format(code: int, **kw) -> str:
 # `exc.code = code` attaches an attribute Python allows on any exception instance
 # but that no exception type declares, so a type checker objects.
 
-def clm_error(code: int, **kw) -> ValueError:
+def clm_error(code: int, **kw: object) -> ValueError:
     """Build a coded ValueError (1xx). Use: ``raise clm_error(102, M=M, K=K)``."""
     exc = ValueError(_format(code, **kw))
     exc.code = code  # type: ignore[attr-defined]
     return exc
 
 
-def clm_infeasible(code: int, **kw) -> InfeasibleAllocationError:
+def clm_infeasible(code: int, **kw: object) -> InfeasibleAllocationError:
     """Build a coded InfeasibleAllocationError (15x)."""
     exc = InfeasibleAllocationError(_format(code, **kw))
     exc.code = code  # type: ignore[attr-defined]
     return exc
 
 
-def clm_missing(code: int, **kw) -> MissingConfigKey:
+def clm_missing(code: int, **kw: object) -> MissingConfigKey:
     """Build a coded MissingConfigKey (2xx)."""
     exc = MissingConfigKey(_format(code, **kw))
     exc.code = code  # type: ignore[attr-defined]
     return exc
 
 
-def clm_warn(log, code: int, **kw) -> None:
+def clm_warn(log: logging.Logger, code: int, **kw: object) -> None:
     """Emit a coded warning (3xx) through the caller's logger."""
-    log.warning(_format(code, **kw))
+    log.warning(_format(code, **kw), extra={"clm_code": code})

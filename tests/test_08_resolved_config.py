@@ -10,7 +10,7 @@ file it was given (`resolved_config.py`). What is checked, in order:
                    restates: one that drifts changes the labels and fails here.
   idempotence      Resolving a resolved config changes nothing.
   left out         Keys the run never reads, or reads and ignores ([CLM-301],
-                   [CLM-302], [CLM-303]), are not in it.
+                   [CLM-302], [CLM-303], [CLM-311]), are not in it.
   as written       A missing required key stays missing and a malformed value
                    stays as written, so a run refuses it the same way.
   search defaults  `max_iter` and `tolerance` seldom change a search that
@@ -209,10 +209,9 @@ def lookup(block: Any, path: str) -> Any:
                  ["target_metric.probe_seed"], id="empty-probe-seed"),
     pytest.param({"num_classes": 2, "matching_mode": "random", "spillover_rule": "uniform",
                   "split_rule": "equal",
-                  "centroid_dependence": {"enabled": False, "favors": "core",
+                  "centroid_dependence": {"enabled": True, "favors": "core",
                                           "profile": "step"}},
-                 ["spillover_rule", "split_rule", "centroid_dependence.favors",
-                  "centroid_dependence.profile"], id="random"),
+                 ["spillover_rule", "split_rule", "centroid_dependence"], id="random-CLM-311"),
     pytest.param({"num_classes": 2, "matching_mode": "single",
                   "single_match": {"cluster": 0, "label": 0}, "concentrated_labels": [1],
                   "centroid_dependence": {"enabled": True, "profile": "linear",
@@ -314,7 +313,7 @@ def test_the_restated_search_defaults_are_the_engines(caplog):
         generate_clm_labels(clusters, coords, cfg, seed=1)
 
     message = next(r.getMessage() for r in caplog.records if "[CLM-306]" in r.getMessage())
-    assert f"after {TARGET_METRIC['max_iter']} iterations" in message, message
+    assert f" of {TARGET_METRIC['max_iter']} iterations" in message, message
     assert f"tol={TARGET_METRIC['tolerance']})" in message, message
 
 

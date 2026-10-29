@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # byoc_source.py
 """
 Bring-Your-Own-Clusters (BYOC) data source.
@@ -17,19 +18,22 @@ Contract (mirrors the other fetchers, returns the standard frame or None):
 import csv
 import logging
 import re
+from collections.abc import Iterable
+from collections.abc import Set as AbstractSet
 from pathlib import Path
+from typing import Any, Final
 
 import numpy as np
 import pandas as pd
 
 from .clm_errors import clm_error
 
-log = logging.getLogger(__name__)
+log: logging.Logger = logging.getLogger(__name__)
 
 # A user column sharing one is silently
 # consumed (Cohort_Class, GroundTruth_*) or produces a duplicate column in the
 # output CSV (Cluster_n, Label_n).
-RESERVED_EXACT = {"Cohort_Class"}
+RESERVED_EXACT: Final[AbstractSet[str]] = {"Cohort_Class"}
 # Transport prefix: tags travel to build_context under it and lose it again
 # in the output CSV, the way GroundTruth_* becomes Cluster_n.
 TAG_PREFIX = "TagColumn_"
@@ -55,7 +59,7 @@ def _raw_header(path: Path) -> list[str]:
         return []
 
 
-def as_tag_columns(value) -> list[str]:
+def as_tag_columns(value: str | Iterable[object] | None) -> list[str]:
     """Declared tag columns as a list; one bare name is one column."""
     if value is None:
         return []
@@ -95,15 +99,23 @@ def validate_import(df: pd.DataFrame, header: list[str], cluster_column: str,
 
     if cluster_column in df.columns:
         clusters = df[cluster_column]
-        if clusters.isna().any():
-            # The one coded check here: a missing cluster id is the condition
-            # [CLM-133] names for every entry point, so it reads the same as the
-            # engine's refusal of the same ids through the Python API.
+        unusable = clusters.isna() | clusters.isin([np.inf, -np.inf])
+        if unusable.any():
+            # The coded checks here: a missing or non-integer cluster id is the
+            # condition [CLM-133] names for every entry point, so it reads the same as
+            # the engine's refusal of the same ids through the Python API.
             problems.append(str(clm_error(
-                133, problem=f"{int(clusters.isna().sum())} of the {len(clusters)} values in "
+                133, problem=f"{int(unusable.sum())} of the {len(clusters)} values in "
                              f"the cluster column '{cluster_column}' are missing (blank "
-                             "cells); they would never be labelled")))
+                             "cells) or infinite; they would never be labelled")))
         else:
+            # read_csv gives a column one type, so either every id is an integer or none.
+            if not pd.api.types.is_integer_dtype(clusters):
+                first = clusters.iloc[0]
+                first = first.item() if isinstance(first, np.generic) else first
+                problems.append(str(clm_error(
+                    133, problem=f"the values in the cluster column '{cluster_column}' "
+                                 f"are not integers, such as {first!r}")))
             sizes = clusters.value_counts()
             if len(sizes) < 2:
                 problems.append(
@@ -116,19 +128,6 @@ def validate_import(df: pd.DataFrame, header: list[str], cluster_column: str,
                     f"{len(undersized)} cluster(s) hold fewer than {MIN_CLUSTER_SIZE} "
                     f"points ({shown}). Clusters that small are strays rather than "
                     "clusters; merge or drop them before importing")
-            # 'A' and 'A ' are two values to pandas, so a stray space in a
-            # hand-edited or exported file quietly adds a cluster.
-            spellings: dict[str, list[str]] = {}
-            for k in sizes.index:
-                if isinstance(k, str):
-                    spellings.setdefault(k.strip(), []).append(k)
-            ambiguous = [sorted(group) for group in spellings.values() if len(group) > 1]
-            if ambiguous:
-                shown = "; ".join(" vs ".join(repr(k) for k in group) for group in ambiguous[:5])
-                problems.append(
-                    f"the cluster column '{cluster_column}' holds id(s) that differ only by "
-                    f"leading or trailing whitespace ({shown}): each spelling would become "
-                    "a cluster of its own. Make the ids identical before importing")
 
         tags = as_tag_columns(tag_columns)
         absent = [t for t in tags if t not in df.columns]
@@ -170,8 +169,8 @@ def fetch_byoc_data(
         cluster_column: str | None = None,
         standardize: bool = False,
         input_dir: str | None = None,
-        tag_columns=None,
-        **kwargs,
+        tag_columns: str | Iterable[object] | None = None,
+        **kwargs: Any,
 ) -> pd.DataFrame | None:
     """Loads a user CSV as a dataset: numeric feature columns plus exactly
     one cluster-id column (`cluster_column`), optionally min-max standardized.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # _config_wizard.py
 """
 Configuration Generator (CLI wizard).
@@ -10,8 +11,10 @@ import json
 import math
 import subprocess
 import sys
+from collections.abc import Mapping
+from fractions import Fraction
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from ._compat import import_optional_dependency
 from ._questions import SCHEMA
@@ -41,7 +44,7 @@ def _save_config(config: dict, out: str) -> str:
     return out
 
 
-_SUFFIXES = {"yaml": (".yaml", ".yml"), "json": (".json",)}
+_SUFFIXES: Final[Mapping[str, tuple[str, ...]]] = {"yaml": (".yaml", ".yml"), "json": (".json",)}
 
 
 def _config_path(out: str, fmt: str) -> str:
@@ -157,18 +160,12 @@ def ask_choice(prompt, choices: tuple[str, ...], default=None, explain=None) -> 
         print(f"    (choose 1-{len(choices)} or type the name)")
 
 
-def _parse_ids(raw: str) -> list[int | str]:
-    """Cluster ids may be ints or strings; keep each as int if possible."""
-    out: list[int | str] = []
-    for tok in raw.split(","):
-        tok = tok.strip()
-        if not tok:
-            continue
-        try:
-            out.append(int(tok))
-        except ValueError:
-            out.append(tok)
-    return out
+def _parse_ids(raw: str) -> list[int] | None:
+    """Comma-separated cluster ids, which are integers; None if one is not."""
+    try:
+        return [int(tok) for tok in raw.split(",") if tok.strip()]
+    except ValueError:
+        return None
 
 
 def ask_cluster_ids(prompt, explain=None) -> list:
@@ -179,7 +176,8 @@ def ask_cluster_ids(prompt, explain=None) -> list:
         ids = _parse_ids(input(f"  {prompt}: "))
         if ids:
             return ids
-        print("    (at least one cluster id is required)")
+        print("    (cluster ids are integers, such as 0, 1, 2)" if ids is None
+              else "    (at least one cluster id is required)")
 
 
 def ask_cluster_id(prompt, explain=None):
@@ -518,8 +516,7 @@ def build_clm(known_k=None) -> dict[str, Any]:
         clm["split_rule"] = ask_from("clm_label.split_rule")
 
     # Spillover applies to BOTH single and custom: either way the rules leave
-    # unclaimed points behind. It used to be asked only under 'custom', so a
-    # 'single' run silently took the default.
+    # unclaimed points behind.
     if mode in ("single", "custom"):
         if (clm.get("target_metric") or {}).get("scope") == "pair":
             # scope: pair sizes the target label to sit entirely inside its cluster;
@@ -531,6 +528,10 @@ def build_clm(known_k=None) -> dict[str, Any]:
                   "   the target label entirely inside its cluster.)")
         else:
             clm["spillover_rule"] = ask_from("clm_label.spillover_rule")
+            rule = clm["spillover_rule"]
+            if rule != "proportional_to_marginal" and clm.get("proportions"):
+                print(f"\n  Note: with '{rule}' your proportions are not met exactly;\n"
+                      "   only 'proportional_to_marginal' keeps the label sizes you gave.")
             if clm["spillover_rule"] == "concentrated":
                 clm["concentrated_labels"] = ask_from(
                     "clm_label.concentrated_labels", minv=0, maxv=clm["num_classes"] - 1)
@@ -539,9 +540,10 @@ def build_clm(known_k=None) -> dict[str, Any]:
         entries: list[dict[str, Any]] = []
         while True:
             print(f"\n  Competing-noise entry {len(entries) + 1}:")
+            cluster, label = _ask_noise_pair(clm, entries, M)
             entries.append({
-                "cluster": ask_from("clm_label.competing_noise.cluster"),
-                "label": ask_from("clm_label.competing_noise.label", maxv=M - 1),
+                "cluster": cluster,
+                "label": label,
                 "share": ask_from("clm_label.competing_noise.share"),
                 "favors": ask_from("clm_label.competing_noise.favors"),
             })
@@ -586,18 +588,80 @@ def _add_balance(clm, M):
 
 
 def _build_rules(omit_recall, M):
+    """The assignment_matrix rows, re-asked where every run would refuse them: a
+    cluster named twice for one label ([CLM-142]), and one label's recall targets
+    adding up past 1.0 ([CLM-153])."""
     print("\n  Custom rules: each rule sends a share of ONE label into chosen cluster(s).")
     n = ask_from("clm_label.assignment_matrix._count")
     rules = []
+    named: dict[tuple[Any, Any], int] = {}   # (label, cluster) -> the rule naming it
+    used: dict[int, Fraction] = {}           # label -> its recall targets so far
     for i in range(n):
         print(f"\n  Rule {i + 1}:")
-        rule: dict[str, Any] = {
-            "label": ask_from("clm_label.assignment_matrix.label", maxv=M - 1),
-            "clusters": ask_from("clm_label.assignment_matrix.clusters")}
+        label = ask_from("clm_label.assignment_matrix.label", maxv=M - 1)
+        while True:
+            clusters = ask_from("clm_label.assignment_matrix.clusters")
+            problem = _named_twice(label, clusters, named)
+            if problem is None:
+                break
+            print(f"    ({problem})")
+        named.update({(label, k): i for k in clusters})
+        rule: dict[str, Any] = {"label": label, "clusters": clusters}
         if not omit_recall:
-            rule["recall_target"] = ask_from("clm_label.assignment_matrix.recall_target")
+            # As written, as the run adds them: in floats 1.0 - 0.8 is
+            # 0.19999999999999996, which would refuse 0.2.
+            left = float(1 - used.get(label, Fraction(0)))
+            if left < 1.0:
+                print(f"    (the earlier rules leave label {label} a recall of {left:g})")
+            default = SCHEMA["clm_label.assignment_matrix.recall_target"].default
+            rule["recall_target"] = ask_from("clm_label.assignment_matrix.recall_target",
+                                             hi=left, default=min(default, left))
+            used[label] = used.get(label, Fraction(0)) + Fraction(str(rule["recall_target"]))
         rules.append(rule)
     return rules
+
+
+def _named_twice(label, clusters: list, named: dict[tuple[Any, Any], int]) -> str | None:
+    """Why every run would refuse these clusters for `label` ([CLM-142]), or None."""
+    seen = set()
+    for k in clusters:
+        if k in seen:
+            return f"cluster {k} is listed twice; list each cluster once"
+        seen.add(k)
+        if (label, k) in named:
+            return f"rule {named[(label, k)] + 1} already sends label {label} to cluster {k}"
+    return None
+
+
+def _ask_noise_pair(clm: dict[str, Any], entries: list[dict[str, Any]],
+                    M: int) -> tuple[Any, int]:
+    """The cluster and label of a competing_noise entry, re-asked while every run
+    would refuse them: [CLM-130], [CLM-144] and [CLM-142] follow from the config
+    alone."""
+    sm = clm.get("single_match")
+    if sm:
+        targets = {(sm["label"], sm["cluster"]): "single_match"}
+    else:
+        targets = {(rule["label"], k): f"rule {i + 1}"
+                   for i, rule in enumerate(clm.get("assignment_matrix") or [])
+                   for k in rule["clusters"]}
+    pair = sm if sm and (clm.get("target_metric") or {}).get("scope") == "pair" else None
+    while True:
+        cluster = ask_from("clm_label.competing_noise.cluster")
+        label = ask_from("clm_label.competing_noise.label", maxv=M - 1)
+        placed = [j for j, e in enumerate(entries)
+                  if (e["label"], e["cluster"]) == (label, cluster)]
+        if pair and label == pair["label"]:
+            problem = (f"scope 'pair' keeps label {label} inside cluster {pair['cluster']}, "
+                       "so it cannot be competing noise")
+        elif (label, cluster) in targets:
+            problem = (f"{targets[(label, cluster)]} already makes label {label} a target "
+                       f"of cluster {cluster}")
+        elif placed:
+            problem = f"entry {placed[0] + 1} already places label {label} in cluster {cluster}"
+        else:
+            return cluster, label
+        print(f"    ({problem}; choose another cluster or label)")
 
 
 # --------------------------------------------------------------------------- #
@@ -633,8 +697,7 @@ def _run() -> None:
     if ask_from("run.now"):
         # check=False, deliberately: the pipeline reports its own failures with a
         # coded message, and a CalledProcessError traceback on top of that would
-        # bury it. But the exit code was previously discarded entirely, so a run
-        # that failed looked exactly like one that succeeded.
+        # bury it.
         result = subprocess.run([sys.executable, "-m", "clmsynth.main", out], check=False)
         if result.returncode != 0:
             print(f"\n  The run exited with code {result.returncode}; see the messages above. "

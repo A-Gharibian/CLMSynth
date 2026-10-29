@@ -1,5 +1,5 @@
 $ python -m clmsynth.main ValueError_1xx/CLM-125.yaml --no-viz
-# exit code: 1
+# exit code: 2
 
 INFO - Starting Test Data Orchestrator...
 INFO - Output directory: '{catalog}/_scratch/CLM-125'.
@@ -14,7 +14,7 @@ INFO - Generating offline fabricated_data dataset 'labels_only_4class' (n=800, s
 INFO - Generating synthetic data (Seed: 42)...
 WARNING - 'labels_only': emitting ONLY the reserved 'Cohort_Class' column, drawn uniformly, and none of the six engineered features. The result carries labels and no geometry. Use it for label-only workflows; it is not a general-purpose fabrication mode.
 INFO - Generated fabricated_data 'labels_only_4class': 800 rows, 0 feature(s), 1 labeling(s) (cluster ids 0..3).
-ERROR - Skipping fabricated/labels_only_4class: [CLM-125] centroid placement requires per-point feature vectors: centroid_dependence.enabled is set but coords is empty. Provide an (N, d) feature array, or disable centroid_dependence and any competing_noise favors 'core'/'boundary'.
+ERROR - Skipping fabricated/labels_only_4class: [CLM-125] centroid placement requires per-point feature vectors: centroid_dependence.enabled is set but coords is empty. Provide an (N, d) feature array with d >= 2, or disable centroid_dependence and any competing_noise favors 'core'/'boundary'.
 WARNING - Of the 1 resolved dataset(s): 0 written with all labels, 0 written with not all labels, 1 skipped (see the errors above).
 ERROR - No datasets were successfully processed.
 INFO - The failed run's folder '_scratch/CLM-125/{run}' was removed. Run with --keep-failed to keep its config and log.

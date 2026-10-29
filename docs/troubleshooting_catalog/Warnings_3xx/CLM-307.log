@@ -19,7 +19,7 @@ WARNING - [CLM-307] target_metric scope 'pair': target 0.01 is outside the reach
 WARNING - [CLM-308] target_metric scope 'pair': label 0 is sized to 1 points (a subset of its cluster) to meet the target MCC; any explicit proportion for it is overridden.
 INFO - CLM labels generated. Target counts: [1, 267, 266, 266], achieved: [1, 267, 266, 266].
 INFO - target_metric: final achieved pair mcc=0.0613 (target was 0.01, pair cluster=0/label=0).
-WARNING - [CLM-310] target_metric scope 'pair': the DELIVERED labeling achieves pair mcc=0.0613, outside the requested 0.01 +/- 0.01. The closed-form construction assumes every point of label 0 lies inside cluster 0, but 0 of its 1 points lie outside. Treat the achieved value above as authoritative, not the requested one.
+WARNING - [CLM-310] target_metric scope 'pair': the DELIVERED labeling achieves pair mcc=0.0613, outside the requested 0.01 +/- 0.01: the target is outside the reachable range [0.0613, 1.0000] ([CLM-307]). Treat the achieved value above as authoritative, not the requested one.
 INFO - [fabricated_data/fabricated/baseline_4class] Attached generated label 'Label_0'.
 INFO - Saved: _scratch/CLM-307/{run}/csv/fabricated_data-fabricated-baseline_4class.csv
 INFO - Saved summary: _scratch/CLM-307/{run}/info/fabricated_data-fabricated-baseline_4class.txt

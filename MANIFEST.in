@@ -1,9 +1,3 @@
-# MANIFEST.in -- controls what ships in the sdist (the .tar.gz built by
-# `python -m build`), on top of whatever setuptools auto-includes for the
-# discovered `clmsynth` package. Wheel/package contents are governed
-# separately by [tool.setuptools.packages.find] in pyproject.toml; this file
-# only affects the source distribution.
-
 # Top-level project metadata and reference material
 include README.md
 include CHANGELOG.md
@@ -14,8 +8,7 @@ include SECURITY.md
 include requirements.txt
 include environment.yml
 
-# Example configs referenced by the README quick-start. The offline one moved
-# into the package, so `recursive-include src/clmsynth *.json` below carries it.
+# Example configs referenced by the README quick-start.
 include upstream_payload.yaml
 
 # User manual and the coded-diagnostics reference catalogue.
@@ -27,14 +20,16 @@ recursive-include docs *.csv
 recursive-include docs *.pdf
 
 # Planning and design notes.
-include docs/troubleshooting_catalog/engine_internals.md
+include docs/engine_internals.md
 include docs/ROADMAP.md
 
-# Package source (normally auto-included via packages.find for a pure-Python
-# package; listed explicitly here for sdist robustness regardless of build
-# backend behavior).
+# What the test modules check.
+include docs/TESTING.md
+
+# Package source
 recursive-include src/clmsynth *.py
 recursive-include src/clmsynth *.json
+include src/clmsynth/py.typed
 
 # Never ship build/tooling
 global-exclude __pycache__

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # label_context.py
 
 import logging
@@ -8,7 +9,9 @@ import pandas as pd
 
 from .byoc_source import TAG_PREFIX
 
-log = logging.getLogger(__name__)
+__all__ = ["DatasetContext", "build_context"]
+
+log: logging.Logger = logging.getLogger(__name__)
 
 @dataclass
 class DatasetContext:
@@ -35,9 +38,9 @@ class DatasetContext:
     generated_labels : dict of str to pandas.Series
         Labels produced by the engine, keyed ``Label_0``, ``Label_1``, ...
     label_reports : dict of str to dict
-        What the engine reported for each label made under ``target_metric``
-        (the ``report`` of ``generate_clm_labels``), keyed like
-        ``generated_labels``. A label made without a target has no entry.
+        What the engine reported for each label (the ``report`` of
+        ``generate_clm_labels``), keyed like ``generated_labels``. A label whose
+        report is empty has no entry.
     tags : pandas.DataFrame
         Passenger columns carried to the output untouched and kept out of the
         feature geometry. Need not be numeric.
@@ -53,9 +56,9 @@ class DatasetContext:
     # Passenger columns: carried to the CSV, kept out of the geometry.
     tags: pd.DataFrame = field(default_factory=pd.DataFrame)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.features = self.features.reset_index(drop=True)
-        self.n_rows = len(self.features)
+        self.n_rows: int = len(self.features)
         self.ground_truths = {name: self._align(s, name) for name, s in self.ground_truths.items()}
         self.tags = self.tags.reset_index(drop=True)
         if len(self.tags.columns) and len(self.tags) != self.n_rows:
