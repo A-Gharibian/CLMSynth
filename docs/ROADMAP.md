@@ -1,6 +1,6 @@
   # CLMSynth Roadmap
 
-[![Version](https://img.shields.io/badge/version-0.7.5rc1-blue)](https://github.com/A-Gharibian/CLMSynth/releases)
+[![Version](https://img.shields.io/badge/version-0.7.5-blue)](https://github.com/A-Gharibian/CLMSynth/releases)
 
 Planned work from 0.7.6 to 0.9.0. Current behavior is in **`../README.md`**.
 Past changes are in **`../CHANGELOG.md`**.

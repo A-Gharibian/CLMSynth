@@ -66,19 +66,6 @@ def generate_additional_labels(
     InfeasibleAllocationError
         If the configuration is valid but the requested counts cannot fit the
         cluster capacities, or ``target_metric.strict`` refuses a missed target.
-
-    Examples
-    --------
-    >>> import pandas as pd
-    >>> from clmsynth import build_context, generate_additional_labels
-    >>> df = pd.DataFrame({"f1": [0.0, 1.0, 2.0, 3.0],
-    ...                    "f2": [0.0, 1.0, 2.0, 3.0],
-    ...                    "GroundTruth_labels0": [0, 0, 1, 1]})
-    >>> ctx = build_context("byoc", "local", "demo", df)
-    >>> cfg = {"num_classes": 2, "matching_mode": "perfect"}
-    >>> generate_additional_labels(ctx, n_labels=1, clm_config=cfg, seed=0)
-    >>> list(ctx.generated_labels)
-    ['Label_0']
     """
     if source_labeling not in context.ground_truths:
         raise KeyError(f"'{source_labeling}' not found for {context.battery}/{context.dataset}; "

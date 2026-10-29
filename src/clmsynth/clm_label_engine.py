@@ -834,15 +834,6 @@ def _pair_ari_size(N: int, n_k: int, target: float) -> int:
 
 def pair_reachable_range(N: int, n_k: int, kind: str = "mcc") -> tuple[float, float]:
     """The pair MCC that scope 'pair' can deliver for a cluster of n_k of N points.
-
-    The single-dominant construction places m_c in [1, n_k] points of label l*
-    entirely inside k*. The pair MCC rises with m_c: phi_min at m_c = 1,
-    phi_max = 1 at m_c = n_k (an exact 1:1 pair). Shared by the engine and the
-    pipeline's summary txt, so the range is computed one way only.
-
-    kind='ari' gives the range of the pair ARI over the same sizes: it also ends
-    at 1, but its floor is the bottom of its curve, below 0 when k* holds more
-    than half the points. The engine never asks for it ([CLM-123]).
     """
     if kind == "ari":
         return float(_pair_ari_curve(N, n_k).min()), 1.0
@@ -941,10 +932,6 @@ def _size_source(cfg: dict, label: int) -> str:
 
 
 def _infeasible_remedy(cfg: dict, rule: Rule, m_label: int, capacity: int) -> str:
-    """The [CLM-150] advice. 'single' has no recall_target key to lower: it places
-    the whole label in its cluster, so only the label's size can change. Under
-    target_metric there is none either: the recall is the level the search is
-    probing, the same for every rule, so the advice names that level."""
     source = _size_source(cfg, rule.label)
     if cfg["matching_mode"] == "single" and not cfg.get("target_metric"):
         return (f"matching_mode 'single' places all of label {rule.label} in that cluster, "
@@ -974,13 +961,6 @@ def _infeasible_remedy(cfg: dict, rule: Rule, m_label: int, capacity: int) -> st
 def allocate(cfg: dict[str, Any], rules: list[Rule], m_counts: np.ndarray,
              cluster_sizes: dict[int, int]) -> tuple[dict[int, dict[int, int]], dict[int, int]]:
     """Turns rules into integer per-(cluster, label) point demands.
-    A rule claims recall_target x its label's count, rounded per label and split
-    over its clusters. A count may be its claim rounded down or up, so a rule is
-    refused only when its claim rounded down passes its clusters' capacity
-    ([CLM-150]), and the rules only when no rounding fits the clusters
-    ([CLM-151], `_fit_rounding`). A label's recall targets adding up past 1.0
-    are [CLM-153]. Returns the demand mapping and the per-cluster capacity left
-    for spillover.
     """
     split_rule = cfg.get("split_rule", "proportional_to_size")
     recall_per_label: dict[int, Fraction] = {}
@@ -1035,20 +1015,7 @@ def _fit_rounding(rules: list[Rule], quotas: list[Fraction], tp_rows: list[int],
     """Another rounding of the rules' counts, when the closest one overfills a
     cluster. Every count stays its unrounded value rounded down or up: a rule's
     claim, its part of each of its clusters (the claim split as the rule splits
-    it), and a label's total, which may round down but not above the closest.
-
-    One point at a time leaves the first overfull cluster along the shortest
-    path, trying in turn: another cluster of the same rule (through full clusters
-    if need be), another rule of the same label, the label's total rounding down.
-    The point is taken from a part rounded up with the smallest fraction, the
-    later rule's on a tie, and goes to the largest fraction rounded down, the
-    earlier cluster or rule on a tie.
-
-    The counts form an integral flow (label -> rule -> part -> cluster) with these
-    bounds, so a rounding that fits exists whenever every cluster holds its
-    unrounded claims, and a path exists from an overfull cluster whenever any
-    rounding fits. When none does, [CLM-151] names a cluster whose unrounded
-    claims pass its size."""
+    it), and a label's total, which may round down but not above the closest."""
     label = [rule.label for rule in rules]
     x: list[dict[Any, Fraction]] = []          # unrounded parts
     for rule, q in zip(rules, quotas, strict=True):
@@ -1201,12 +1168,6 @@ def assign_points_in_cluster(
         favors_overrides: dict[int, str] | None = None,
 ) -> np.ndarray:
     """Picks the concrete rows of ONE cluster for each demanded label.
-
-    The target labels are placed first (centroid-weighted when
-    `centroid_dependence` is enabled), then the competing_noise labels, each by
-    its own `favors_overrides` entry, then the leftover rows consume the spillover
-    draws. A label is never both here ([CLM-144]). Returns the cluster's label
-    column.
     """
     n = len(coords)
     out = np.full(n, -1, dtype=int)
@@ -1574,43 +1535,6 @@ def solve_alpha_for_target_metric(cluster_labels: np.ndarray | pd.Series, coords
     that the achieved global metric (clustering_mcc/clustering_ari between
     `cluster_labels` and the generated label array) is as close as possible
     to cfg['target_metric']['value'].
-
-    No closed form: the achieved global metric depends on every rule's
-    outcome jointly (unlike the single-pair solve of scope='pair', which
-    inverts exactly in _pair_label_counts). The solution runs a
-    coarse grid scan first, then a Brent root-find within the bracket it
-    finds, all probe evaluations share a fixed seed (common random numbers) so
-    differences across candidates come from alpha, not randomization noise.
-
-    The feasible alphas are not assumed to form one interval. alpha = 0
-    claims no point, so without competing_noise it is always feasible; the
-    [CLM-150] and [CLM-153] claims only grow with alpha; [CLM-151] depends on
-    how the rules' counts can round, which is not shown to be monotone; and
-    competing_noise converts a share of the points the rules leave
-    unclaimed, which shrink as alpha grows, so [CLM-152] can block low
-    alphas while high alphas fill the cluster. The achieved metric is not
-    monotone either, hence the grid scan rather than a blind bisection.
-
-    The refinement stays between grid levels that fit, so two grid outcomes call
-    _search_grid_gaps, which probes inside the grid step where the outcome
-    changes: no grid level fits and [CLM-152] is followed by another code (the
-    levels that fill the noisy cluster can form a band narrower than a step), or
-    the target was missed and a level that fits neighbours one that does not. The
-    levels it finds join the
-    refinement, which runs again. Every other search runs as the grid and the
-    refinement alone, and every probe counts against max_iter.
-
-    Every infeasible probe keeps its error, so [CLM-120] (no grid alpha is
-    feasible) and [CLM-306] (the target was missed) are preceded by one
-    warning per [CLM-15x] code, naming the levels it blocked.
-
-    `report`, when given, receives under "metric" the value the search
-    scored at the returned alpha; generate_clm_labels compares it with the
-    delivered labeling for [CLM-309]. Under "highest" and "highest_alpha" it
-    receives the highest value any probe scored and the lowest alpha that scored
-    it, read off the probes already run. A grid can step over a higher value, so
-    it is what the search found, not the most the configuration can reach.
-
     `ceiling` is the size ceiling of these label counts, or None when the counts
     can move. [CLM-306] names it, and for mcc a target below 0; the search acts
     on neither.
@@ -1842,76 +1766,6 @@ def generate_clm_labels(cluster_labels: np.ndarray | pd.Series | Sequence[int],
                         cfg: dict[str, Any], seed: int = 42,
                         report: dict[str, Any] | None = None) -> pd.Series:
     """Generates one synthetic label column for an existing clustering.
-
-    Parameters
-    ----------
-    cluster_labels : array-like of shape (n_samples,)
-        The existing clustering to match against. Ids are integers and need not
-        be contiguous; ``K`` is their number of distinct values.
-    coords : numpy.ndarray of shape (n_samples, n_features)
-        Feature vectors, used to derive cluster centroids for spatial placement.
-        May be ``None``, empty or one feature per point only for labels-only
-        configs; any spatial placement (``centroid_dependence``, or
-        ``competing_noise`` favoring core/boundary) requires at least two features
-        and raises ``[CLM-125]`` otherwise.
-    cfg : dict
-        The ``clm_label`` block, a mapping (anything else is ``[CLM-141]``).
-        ``num_classes`` and ``matching_mode`` are always required; each mode then
-        requires its own keys, and ``target_metric`` turns the requested recall
-        into a solved-for quantity.
-    seed : int, default 42
-        Seeds one generator used by both the target-metric search and the final
-        generation, so a solved value is the value delivered.
-    report : dict, optional
-        Filled with what the delivered labeling placed. ``assignment_matrix``
-        (``matching_mode: custom``) and ``competing_noise`` list one dict per row
-        or entry, in config order. A row has ``clusters``, ``label`` and
-        ``recall_target``, the level used (the solved one under
-        ``target_metric``); an entry has ``cluster``, ``label`` and ``share``.
-        Both have ``asks``, the points asked for, unrounded, and ``placed``, the
-        points taken. Under ``target_metric`` it also gets the keys ``scope``,
-        ``type``, ``requested`` and ``achieved``, the value of the
-        delivered labeling. ``scope: global`` adds ``alpha``, the solved recall
-        level; ``highest`` and ``highest_alpha``, the highest value a search probe
-        scored and where; and ``ceiling``, the size ceiling: no labeling with
-        these cluster and label counts scores higher. For ``ari`` it is a bound
-        that is not always reached. It is ``None`` under ``uniform`` or
-        ``concentrated`` spillover, which can move the label counts. Reported
-        only: a target above it is still searched.
-
-    Returns
-    -------
-    pandas.Series
-        Named ``clm_label``, one entry per input point, values in
-        ``0..num_classes - 1``.
-
-    Raises
-    ------
-    ValueError
-        Carrying a ``[CLM-1xx]`` code for an invalid or incompatible configuration.
-    MissingConfigKey
-        Carrying a ``[CLM-2xx]`` code when a required key is absent.
-    InfeasibleAllocationError
-        Carrying a ``[CLM-15x]`` code when the configuration is valid but the
-        requested counts do not fit the cluster capacities, or ``[CLM-154]`` when
-        ``target_metric.strict`` is set and the delivered value is outside the
-        tolerance (``report`` is filled first).
-
-    Notes
-    -----
-    ``num_classes`` and the number of clusters are both capped at
-    ``MAX_CARDINALITY``. Diagnostic codes are a public contract: they are never
-    renumbered or reused, and the full catalogue is in the troubleshooting manual.
-
-    Examples
-    --------
-    >>> import numpy as np
-    >>> from clmsynth import generate_clm_labels
-    >>> clusters = np.repeat([0, 1], 50)
-    >>> coords = np.zeros((100, 2))
-    >>> cfg = {"num_classes": 2, "matching_mode": "perfect"}
-    >>> generate_clm_labels(clusters, coords, cfg, seed=0).value_counts().to_dict()
-    {0: 50, 1: 50}
     """
     # None, a number or a bool crashed on `in`; a list or a string passed it and
     # was reported as missing num_classes ([CLM-201]).

@@ -2,16 +2,9 @@
 # resolved_config.py
 """The configuration a run used, as the run read it.
 
-`resolve_config` rebuilds the config a run was given into the one it acted on:
-every key the pipeline and the engine read, with its value or its default; the
-seeds as numbers; `batteries` and `datasets` as the lists that ran. A key the run
-never reads, or reads and ignores ([CLM-301], [CLM-302], [CLM-303]), is left out.
-main.py writes the result into the run folder, and running that file again
-reproduces the run's CSVs.
-
+`resolve_config` rebuilds the config a run was given into the one it acted on
 Only well-formed blocks are resolved. A missing required key stays missing and a
-malformed value stays as written, so the engine refuses the resolved config
-exactly as it refused the original.
+malformed value stays as written.
 """
 
 from collections.abc import Mapping
@@ -64,17 +57,9 @@ TARGET_METRIC: Final[Mapping[str, Any]] = {"scope": "global", "tolerance": 0.01,
 def resolve_config(config: Mapping[str, Any], source: str, batteries: list[str],
                    datasets_cfg: Any, jobs: list[tuple[str, str]], fetch_seed: int | None,
                    fetch_kwargs: Mapping[str, Any], label_seed: int) -> dict[str, Any]:
-    """The config `run_pipeline` acted on, from the config it was given and the
-    values it resolved: the batteries and (battery, dataset) jobs, the source seed
-    (None for a source that reads none), the kwargs forwarded to the fetcher, and
-    the label seed."""
     global_settings = config.get("global_settings") or {}
     output_dir = (global_settings.get("output_dir", OUTPUT_DIR)
                   if isinstance(global_settings, Mapping) else OUTPUT_DIR)
-
-    # The names that ran, in run order. Each battery keeps the names it holds, so
-    # one list reproduces every battery's selection. An empty list would read as
-    # "all", so a selection that matched nothing stays as written.
     ran = list(dict.fromkeys(dataset for _, dataset in jobs))
     suite: dict[str, Any] = {"batteries": list(batteries), "datasets": ran or datasets_cfg}
     if fetch_seed is not None:

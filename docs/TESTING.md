@@ -1,6 +1,6 @@
 # Test modules
 
-[![Version](https://img.shields.io/badge/version-0.7.5rc1-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
+[![Version](https://img.shields.io/badge/version-0.7.5-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
 
 <!-- 
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/{owner}/{repo}/badge)](https://scorecard.dev/viewer/?uri=github.com/{owner}/{repo})

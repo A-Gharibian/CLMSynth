@@ -135,15 +135,6 @@ def build_context(source: str, battery: str, dataset: str, df: pd.DataFrame) -> 
     -------
     DatasetContext
         With ``generated_labels`` still empty.
-
-    Examples
-    --------
-    >>> import pandas as pd
-    >>> from clmsynth import build_context
-    >>> df = pd.DataFrame({"f1": [0.0, 1.0], "GroundTruth_labels0": [0, 1]})
-    >>> ctx = build_context("byoc", "local", "demo", df)
-    >>> list(ctx.features.columns), list(ctx.ground_truths)
-    (['f1'], ['labels0'])
     """
     gt_cols = [c for c in df.columns if c.startswith("GroundTruth_")]
     tag_cols = [c for c in df.columns if c.startswith(TAG_PREFIX)]

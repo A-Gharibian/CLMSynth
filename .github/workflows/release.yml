@@ -16,7 +16,7 @@ concurrency:
 # candidate (X.Y.ZrcN) is uploaded: testpypi, or none to build and verify it only,
 # its dist kept as this run's artifact.
 env:
-  FINAL_RELEASE_INDEX: testpypi
+  FINAL_RELEASE_INDEX: pypi
   RC_RELEASE_INDEX: testpypi
 
 jobs:

@@ -5,7 +5,7 @@ label generator behavior are additionally explained in the user manual.
 
 ---
 
-## [0.7.5] — unreleased
+## [0.7.5] — 2026-10-29 (PyPI)
 
 This PyPI release followed three items of the roadmap (0.7.1 - 0.7.5):
 

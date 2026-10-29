@@ -9,10 +9,6 @@ Consolidated cluster/dataset generation module. Four sources:
     "byoc"            -> fetch_byoc_data        (bring-your-own-clusters: a user CSV
                                                  with one cluster-id column; lives in
                                                  byoc_source.py)
-
-The registry shape (SOURCE_METADATA / SOURCE_DATASETS / HEAVY_BATTERIES, keyed by
-source name) is what makes a source pluggable; more are planned (i.e. repliclust).
-This also keeps the engine pure MIT without inheriting the licenses from upstream.
 """
 
 import gzip
@@ -375,9 +371,6 @@ def fetch_mdcgen_data(
 ) -> pd.DataFrame | None:
     """Generates one synthetic dataset via mdcgenpy (optional dependency)
     from the registered preset, seeded; None if unavailable or failing."""
-    # The SUBMODULE, not just the package: `import mdcgenpy` alone leaves
-    # `mdcgenpy.clusters` unbound (mdcgenpy/__init__.py does not import it), so
-    # `mdcgenpy.clusters.ClusterGenerator` raised AttributeError on every run.
     try:
         clusters = import_optional_dependency("mdcgenpy.clusters",
                                               repr(f"{dataset_group}/{dataset_name}"))

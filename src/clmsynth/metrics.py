@@ -69,12 +69,6 @@ def clustering_ari(labels_true: ArrayLike, labels_pred: ArrayLike) -> float:
         In ``[-1/2, 1]`` (Chacón & Rastrojo, 2023). ``1.0`` is identical
         partitions; ``0.0`` is the value expected of an independent random
         labeling.
-
-    Examples
-    --------
-    >>> from clmsynth import clustering_ari
-    >>> clustering_ari([0, 0, 1, 1], [1, 1, 0, 0])
-    1.0
     """
     return float(adjusted_rand_score(*_label_arrays(labels_true, labels_pred)))
 
@@ -83,12 +77,6 @@ def clustering_mcc_pair(labels_true: ArrayLike, labels_pred: ArrayLike,
                         cluster: int | str, label: int) -> float:
     """Single-pair (2x2) Matthews correlation: one cluster vs the rest against
     one label vs the rest.
-
-    This is the binary building block of the multiclass `clustering_mcc`
-    (Gorodkin's R_K): it scores only the agreement of the designated
-    (`cluster`, `label`) pair, not the whole partition, so it needs no
-    Hungarian matching. Used by the engine's target_metric scope='pair'.
-
     Parameters
     ----------
     labels_true : array-like of int or str, shape (n_samples,)
@@ -123,21 +111,10 @@ def clustering_ari_pair(labels_true: ArrayLike, labels_pred: ArrayLike,
     """Single-pair adjusted Rand index: one cluster vs the rest against one
     label vs the rest.
 
-    The ARI counterpart of `clustering_mcc_pair`, with the same parameters. It
-    scores the same two binary partitions; it says nothing about the remaining
-    clusters and labels. The engine does not use it: [CLM-123] refuses a pair
-    ARI target, which has no closed-form inverse.
-
     Returns
     -------
     float
         In ``[-1/2, 1]``, for the 2x2 problem only.
-
-    Examples
-    --------
-    >>> from clmsynth.metrics import clustering_ari_pair
-    >>> clustering_ari_pair([0, 0, 1, 1], [5, 5, 9, 9], cluster=0, label=5)
-    1.0
     """
     t, p = _label_arrays(labels_true, labels_pred, cluster, label)
     u = (t == cluster).astype(int)
@@ -152,13 +129,11 @@ def clustering_mcc(labels_true: ArrayLike, labels_pred: ArrayLike) -> float:
     clusterings.
 
     scikit-learn's `matthews_corrcoef` already implements R_K for the
-    multiclass case,
+    multiclass case, this wrapper adds the missing step, matching to maximise R_K.
     but it assumes label i in y_true and label i in y_pred refer to the
     same category. That holds in classification but not in clustering,
     where cluster IDs are arbitrary and the number of clusters can differ
     between the ground truth and a candidate partition.
-
-    This wrapper adds the missing step, matching to maximise R_K.
 
     Parameters
     ----------
@@ -184,12 +159,6 @@ def clustering_mcc(labels_true: ArrayLike, labels_pred: ArrayLike) -> float:
     ``n * C - outer(t, p)`` for contingency matrix ``C`` with row sums ``t`` and
     column sums ``p``. Reading R_K off the accuracy-optimal matching instead can
     understate agreement, even below 0.
-
-    Examples
-    --------
-    >>> from clmsynth import clustering_mcc
-    >>> clustering_mcc([0, 0, 1, 1], [7, 7, 3, 3])
-    1.0
     """
     labels_true, labels_pred = _label_arrays(labels_true, labels_pred)
 
@@ -224,13 +193,6 @@ def clustering_mcc(labels_true: ArrayLike, labels_pred: ArrayLike) -> float:
 
 class MetricCeilings:
     """Highest values the agreement measures can take, given only the group sizes.
-
-    Each method takes the cluster sizes of one partition and the label sizes of
-    the other, two lists of counts with the same total, and returns a limit that
-    holds for every labeling with those sizes. Neither which points form a group
-    nor how a labeling is built enters, so a limit that depends on a particular
-    construction does not belong here.
-
     The engine reads it for the size ceiling it reports, which reaches users as
     ``report["ceiling"]`` of ``generate_clm_labels``.
     """
@@ -255,14 +217,6 @@ class MetricCeilings:
     @staticmethod
     def rk_ceiling(cluster_sizes: ArrayLike, label_sizes: ArrayLike) -> float:
         """Maximum of `clustering_mcc` (R_K) over every labeling with these sizes.
-
-        With the sizes fixed, the denominator of R_K is fixed, and a matched
-        cluster/label pair (k, j) adds ``N * n_kj - t_k * p_j`` to the numerator,
-        at most ``N * min(t_k, p_j) - t_k * p_j``. Every matched cell can be filled
-        to ``min(t_k, p_j)`` at once: each one then fills its row or its column, so
-        the remaining points never land on a matched cell. The ceiling is the best
-        matching on those gains, and it is always attained.
-
         Parameters
         ----------
         cluster_sizes : array-like of int
@@ -276,12 +230,6 @@ class MetricCeilings:
             In ``[0, 1]``. ``1.0`` only when the two lists hold the same non-zero
             sizes in some order. ``0.0`` when either side has a single non-empty
             group, where R_K is 0 for every labeling.
-
-        Examples
-        --------
-        >>> from clmsynth.metrics import MetricCeilings
-        >>> MetricCeilings.rk_ceiling([2, 2], [2, 2])
-        1.0
         """
         t, p = MetricCeilings._sizes(cluster_sizes, label_sizes)
         t = t.astype(np.float64)
@@ -323,12 +271,6 @@ class MetricCeilings:
         -------
         float
             At most ``1.0``. No labeling with these sizes scores above it.
-
-        Examples
-        --------
-        >>> from clmsynth.metrics import MetricCeilings
-        >>> MetricCeilings.ari_bound([2, 2], [3, 1])
-        0.6666666666666666
         """
         t, p = MetricCeilings._sizes(cluster_sizes, label_sizes)
         a = sum(comb(int(x), 2) for x in t)

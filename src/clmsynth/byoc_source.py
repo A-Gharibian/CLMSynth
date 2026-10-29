@@ -3,7 +3,7 @@
 """
 Bring-Your-Own-Clusters (BYOC) data source.
 
-Lets a user feed their own CSV, feature columns plus one cluster-id
+Lets a user bring their own CSV, feature columns plus one cluster-id
 column, into the pipeline.
 
 Contract (mirrors the other fetchers, returns the standard frame or None):
