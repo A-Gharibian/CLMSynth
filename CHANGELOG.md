@@ -9,35 +9,30 @@ label generator behavior are additionally explained in the user manual.
 
 ### Added
 
-- **repliclust datasets through `byoc`.** repliclust is not a source. A dataset it
-  generates, saved as a CSV with its cluster ids in one column, imports through
-  `byoc_suite`, and `byoc` stays compatible with that output. Its integer ids 0 to
+- **repliclust datasets through `byoc`.** repliclust is not a source but imports through
+  `byoc_suite`, and `byoc` is now compatible with its output. Its integer ids 0 to
   k-1 and numeric features are accepted today; a cluster of one or two points, which
   repliclust can make when `n_samples` is small and `imbalance_ratio` large, is
-  refused. *[improvement]*
+  refused. *[feature]*
 
-- **Dependency pins** to `>=` in `environment.yml`. *[improvement]*
-
-- **`python -m clmsynth`** runs the `clmsynth` command, as `python -m clmsynth.main` does.
-  *[improvement]*
+- **Dependency pins** to `>=` in `environment.yml`.
 
 ### Changed 
-- Written configs no longer contain `noise`.
+
 - Wizard's `dominant_share` default is now 0.5.
 - clmsynth-config: `balance` defaults to `balanced`.
 - clmsynth-config: `profile` defaults to `linear`.
-- clmsynth-config needs a payload path.
 - `n_labels` defaults to 1 in the run, as in the wizard and clmsynth-config. Without a
   `clm_label` block, set `n_labels: 0`, or the run is refused with [CLM-207].
 - byoc: an absent or empty `input_dir` reads from `INPUT`, as the wizard and clmsynth-config
   write it, no longer from the working folder.
 - `data_source` defaults to `fabricated_data` (was `clustbench`).
 - Wizard and clmsynth-config modules are now private.
-- Importing `clmsynth.generate_config` warns; removed in 0.8.0.
-- Importing `clmsynth.config_template` warns; removed in 0.8.0.
+- Importing `clmsynth.generate_config` warns; removed in 0.7.8.
+- Importing `clmsynth.config_template` warns; removed in 0.7.8.
 - New public `labeling`: `DatasetContext`, `build_context`, `generate_additional_labels`, and
   `LabelGenerator`, the run's `label_generation` block. Labels unchanged.
-- Importing `clmsynth.label_context` or `clmsynth.label_generator` warns; removed in 0.8.0.
+- Importing `clmsynth.label_context` or `clmsynth.label_generator` warns; removed in 0.7.8.
 - New public `config_tree`: defaults, choices, bounds.
 - Engine and resolved config read `config_tree`.
 - The offline example `example_config.json` (was `test_data_config_offline.json`) and the example
@@ -50,10 +45,8 @@ label generator behavior are additionally explained in the user manual.
   without it writes everything but the plots.
 - A folder of configs runs as a batch: the configs directly inside it, sorted, of one
   format. A folder holding run folders, both JSON and YAML configs, or no config exits 2.
-- A config named twice, however its path is written, runs once.
 - The wizard asks whether its run draws the plots, when matplotlib is installed.
-- The batch and plotting modules moved into the private `_extras/` folder, and the
-  SIGTERM handling into `_utils/`.
+-  private `_extras/` folder, and the `_utils/`.
 
 ## [0.7.5] — 2026-10-29 (PyPI)
 
