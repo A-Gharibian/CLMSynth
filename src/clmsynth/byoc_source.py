@@ -26,6 +26,8 @@ from typing import Any, Final
 import numpy as np
 import pandas as pd
 
+from ._input_sources import Source
+from ._utils.write_files import resolved_for_report
 from .clm_errors import clm_error
 
 log: logging.Logger = logging.getLogger(__name__)
@@ -44,6 +46,9 @@ RESERVED_PATTERN = re.compile(r"^(Cluster|Label)_\d+$")
 # produce:
 # it would quietly proceed on a partition the user did not intend.
 MIN_CLUSTER_SIZE = 3
+
+# Where the CSVs are read from when byoc_suite.input_dir is absent or empty.
+DEFAULT_INPUT_DIR: Final = "INPUT"
 
 def _raw_header(path: Path) -> list[str]:
     """The header exactly as written, before pandas renames duplicates.
@@ -180,7 +185,7 @@ def fetch_byoc_data(
         log.error("byoc: no CSV given, list your file stem(s) under byoc_suite.datasets.")
         return None
     name = str(dataset_name)
-    path = (Path(input_dir) / f"{name}.csv") if input_dir else Path(f"{name}.csv")
+    path = Path(input_dir or DEFAULT_INPUT_DIR) / f"{name}.csv"
     if not path.is_file():
         log.error(f"byoc: CSV not found: '{path}'. List file stems (without .csv) in "
                   "byoc_suite.datasets and the folder in byoc_suite.input_dir.")
@@ -247,3 +252,50 @@ def fetch_byoc_data(
              f"1 cluster labeling from column '{cluster_column}' "
              f"({df[cluster_column].nunique()} clusters){also}.")
     return out
+
+
+def _describe(input_dir: str | None = None, **kwargs: Any) -> str:
+    return f"BYOC input directory: '{resolved_for_report(input_dir or DEFAULT_INPUT_DIR)}'."
+
+
+def _cluster_ids(battery: str, dataset: str, input_dir: str | None = None,
+                 cluster_column: str | None = None, **kwargs: Any) -> list[int] | None:
+    """
+    Returns the cluster ids, or None when the file cannot be read or its ids are
+    not integers, which the import refuses ([CLM-133]).
+    """
+    if not isinstance(cluster_column, str):
+        return None                  # fetch_byoc_data rejects a bad cluster_column itself
+    path = Path(input_dir or DEFAULT_INPUT_DIR) / f"{dataset}.csv"
+    try:
+        column = pd.read_csv(path, usecols=[cluster_column])[cluster_column]
+    except Exception:
+        return None
+    if not pd.api.types.is_integer_dtype(column):
+        return None
+    return sorted(column.unique().tolist())
+
+
+SOURCE: Final[Source] = Source(
+    key="byoc",
+    display="BYOC",
+    blurb="your OWN CSV file (features + one cluster-id column)",
+    metadata={
+        "local": {
+            "description": "Bring-your-own-clusters: your CSV with feature columns and exactly "
+                            "one cluster-id column (named by byoc_suite.cluster_column).",
+            "examples": "the CSV path(s) listed in byoc_suite.datasets"
+        },
+    },
+    # byoc datasets are user CSV paths, unknown ahead of time: one 'local' battery
+    # with a dynamic (empty) list, get_datasets_for_battery trusts the config.
+    datasets={"local": []},
+    heavy=frozenset(),
+    seeded=False,
+    suite_keys=("input_dir", "cluster_column", "tag_columns", "standardize"),
+    fetch=lambda battery, dataset, seed, **kw: fetch_byoc_data(
+        dataset_group=battery, dataset_name=dataset, seed=seed, **kw),
+    licence=None,   # the user's own data
+    describe=_describe,
+    cluster_ids=_cluster_ids,
+)

@@ -323,7 +323,7 @@ def test_generate_config_writes_nothing_the_engine_refuses(overrides, expected, 
     """The rendered clm_label block is checked with the engine's own checks before
     it is written, and a refusal is raised with the engine's code. Values are
     written as given, so a quoted "false" reaches the check as a string."""
-    from clmsynth.generate_config import generate_base_config
+    from clmsynth._config_gen.generate_config import generate_base_config
 
     out = tmp_path / "out.yaml"
     with pytest.raises(ValueError) as excinfo:
@@ -336,7 +336,7 @@ def test_generate_config_writes_nothing_the_engine_refuses(overrides, expected, 
 def test_generate_config_warns_about_an_unknown_data_source(tmp_path, caplog):
     """data_source is not a clm_label key, so the engine never sees it; the run
     refuses an unknown one, and the renderer says so."""
-    from clmsynth.generate_config import generate_base_config
+    from clmsynth._config_gen.generate_config import generate_base_config
 
     with caplog.at_level(logging.WARNING):
         generate_base_config({**MINIMAL_PAYLOAD, "data_source": "bogus_source"},
@@ -359,7 +359,7 @@ def test_generate_config_ignores_sizing_keys_under_perfect(overrides, drop, tmp_
     """'perfect' neither reads nor validates balance, proportions or skew_rule, so
     clmsynth-config does not write them: a value the engine refuses under another
     mode passes, and the config does not warn [CLM-302]."""
-    from clmsynth.generate_config import generate_base_config
+    from clmsynth._config_gen.generate_config import generate_base_config
 
     payload = {k: v for k, v in MINIMAL_PAYLOAD.items() if k not in drop}
     payload.update(overrides, matching_mode="perfect")
@@ -377,7 +377,7 @@ def test_generate_config_stays_silent_on_a_valid_payload(tmp_path, caplog):
     unconditionally, and a config that warns on every run trains the user to
     ignore the output.
     """
-    from clmsynth.generate_config import generate_base_config
+    from clmsynth._config_gen.generate_config import generate_base_config
 
     with caplog.at_level(logging.WARNING):
         generate_base_config(dict(MINIMAL_PAYLOAD), output_path=str(tmp_path / "out.yaml"))
@@ -387,7 +387,7 @@ def test_generate_config_stays_silent_on_a_valid_payload(tmp_path, caplog):
 
 def test_byoc_render_round_trips_a_windows_path(tmp_path, yaml):
     """Rendered byoc config parses back unchanged."""
-    from clmsynth.generate_config import generate_base_config
+    from clmsynth._config_gen.generate_config import generate_base_config
 
     payload = dict(MINIMAL_PAYLOAD)
     payload.update(
@@ -421,7 +421,7 @@ def test_byoc_render_round_trips_a_windows_path(tmp_path, yaml):
 )
 def test_valueless_payload_key_renders_its_default(key, expected, tmp_path, yaml):
     """Null key renders its documented default."""
-    from clmsynth.generate_config import generate_base_config
+    from clmsynth._config_gen.generate_config import generate_base_config
 
     payload = dict(MINIMAL_PAYLOAD)
     payload[key] = None

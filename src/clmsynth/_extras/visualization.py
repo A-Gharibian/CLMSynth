@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-# _visualization.py
+# _extras/visualization.py
 """Scatter-plot rendering for the pipeline outputs."""
 
 import json
@@ -18,7 +18,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 
-from .metrics import clustering_ari, clustering_mcc
+from ..metrics import clustering_ari, clustering_mcc
 
 log = logging.getLogger(__name__)
 

@@ -66,11 +66,11 @@
     },
     "copyrightYear": 2026,
     "dateCreated": "2026-07-15",
-    "dateModified": "2026-10-29",
+    "dateModified": "2026-11-04",
     "datePublished": "2026-07-31",
     "description": "A synthetic dataset generator that decouples cluster formation from class labels to evaluate cluster-label matching algorithms and measures.",
     "developmentStatus": "https://www.repostatus.org/#active",
-    "downloadUrl": "https://github.com/A-Gharibian/CLMSynth/archive/refs/tags/v0.7.5.tar.gz",
+    "downloadUrl": "https://github.com/A-Gharibian/CLMSynth/archive/refs/tags/v0.7.6.tar.gz",
     "funder": {
         "type": "Organization",
         "name": "VSB - Technical University of Ostrava"
@@ -204,7 +204,9 @@
             "sameAs": "https://pypi.org/project/scikit-learn/",
             "license": "https://spdx.org/licenses/BSD-3-Clause",
             "version": ">=1.4.2"
-        },
+        }
+    ],
+    "softwareSuggestions": [
         {
             "type": "SoftwareApplication",
             "identifier": "matplotlib",
@@ -217,10 +219,9 @@
             "runtimePlatform": "Python 3",
             "sameAs": "https://pypi.org/project/matplotlib/",
             "license": "https://matplotlib.org/stable/project/license.html",
-            "version": ">=3.8.4"
-        }
-    ],
-    "softwareSuggestions": [
+            "version": ">=3.8.4",
+            "description": "Recommended, the extra 'viz'. Draws the plots in png/; without it a run writes everything else."
+        },
         {
             "type": "SoftwareApplication",
             "identifier": "PyYAML",
@@ -251,6 +252,6 @@
             "description": "Optional. Needed only for data_source 'mdcgen'. It is GPL-3.0, so CLMSynth never ships it: users install it themselves from its repository."
         }
     ],
-    "softwareVersion": "0.7.5",
-    "version": "0.7.5"
+    "softwareVersion": "0.7.6",
+    "version": "0.7.6"
 }

@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
-# _config_wizard.py
+# _config_gen/config_wizard.py
 """
 Configuration Generator (CLI wizard).
-    clmsynth-wizard      (or python -m clmsynth._config_wizard)
+    clmsynth-wizard      (or python -m clmsynth._config_gen.config_wizard)
 
 Run as a module, not as a file.
 """
@@ -16,11 +16,12 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any, Final
 
-from ._compat import import_optional_dependency
-from ._questions import SCHEMA
-from .dataset_sources import SOURCE_DATASETS, SOURCE_METADATA, is_heavy
-from .dataset_sources import resolved_for_report as _resolved_or_raw
-from .generate_config import write_text_atomic
+from .._utils.compat import import_optional_dependency, is_installed
+from .._utils.write_files import resolved_for_report as _resolved_or_raw
+from .._utils.write_files import write_text_atomic
+from ..byoc_source import DEFAULT_INPUT_DIR
+from ..dataset_sources import SOURCE_DATASETS, SOURCE_METADATA, SOURCES, is_heavy
+from .questions import SCHEMA
 
 # Windows' MAX_PATH.
 _MAX_PATH = 260
@@ -349,7 +350,7 @@ def _peek_cluster_count(suite):
         import pandas as pd
         name = (suite.get("datasets") or [None])[0]
         idir = suite.get("input_dir")
-        path = (Path(idir) / f"{name}.csv") if idir else Path(f"{name}.csv")
+        path = Path(idir or DEFAULT_INPUT_DIR) / f"{name}.csv"
         col = suite.get("cluster_column")
         return int(pd.read_csv(path, usecols=[col])[col].nunique())
     except Exception:
@@ -388,8 +389,9 @@ def _byoc_suite():
 
 
 def _registry_suite(source):
-    if source == "mdcgen":
-        print("\n  (mdcgen needs the 'mdcgenpy' package installed; see the README.)")
+    needs = SOURCES[source].needs
+    if needs:
+        print(f"\n  ({source} needs the '{needs}' package installed; see the README.)")
     batteries = list(SOURCE_DATASETS.get(source, {}).keys())
     print(f"\nAvailable '{source}' groups:")
     for i, b in enumerate(batteries, 1):
@@ -439,7 +441,7 @@ def build_label_generation(source) -> dict[str, Any]:
     else:
         source_labeling = ask_from("label_generation.source_labeling")
     seed = ask_from("label_generation.seed")
-    return {"n_labels": n_labels, "source_labeling": source_labeling, "noise": 0.1, "seed": seed}
+    return {"n_labels": n_labels, "source_labeling": source_labeling, "seed": seed}
 
 
 # --------------------------------------------------------------------------- #
@@ -695,10 +697,12 @@ def _run() -> None:
     print(f"\n  Wrote '{out}'.")
     print(f"  Run it any time with:  python -m clmsynth.main {out}")
     if ask_from("run.now"):
+        flags = [] if not is_installed("matplotlib") or ask_from("run.plots") else ["--no-viz"]
         # check=False, deliberately: the pipeline reports its own failures with a
         # coded message, and a CalledProcessError traceback on top of that would
         # bury it.
-        result = subprocess.run([sys.executable, "-m", "clmsynth.main", out], check=False)
+        result = subprocess.run([sys.executable, "-m", "clmsynth.main", out, *flags],
+                                check=False)
         if result.returncode != 0:
             print(f"\n  The run exited with code {result.returncode}; see the messages above. "
                   f"Your configuration is saved, so you can edit '{out}' and retry with:"

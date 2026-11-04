@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-# _cli_logging.py
+# cli_logging.py
 """Logging configuration for the console scripts.
 """
 

@@ -2,166 +2,40 @@
 # dataset_sources.py
 """
 Consolidated cluster/dataset generation module. Four sources:
-    "clustbench"      -> fetch_clustbench_data  (real, fixed geometries, network)
-    "mdcgen"          -> fetch_mdcgen_data      (synthetic, needs mdcgenpy)
-    "fabricated_data" -> fetch_fabricated_data  (fabricated features with
-                                                 perfect-separation labels, offline)
-    "byoc"            -> fetch_byoc_data        (bring-your-own-clusters: a user CSV
-                                                 with one cluster-id column; lives in
-                                                 byoc_source.py)
+    "clustbench"      real, fixed geometries, network; _input_sources/clustbench_source.py
+    "mdcgen"          synthetic, needs mdcgenpy; _input_sources/mdcgen_source.py
+    "fabricated_data" fabricated features with perfect-separation labels, offline; here
+    "byoc"            bring-your-own-clusters: a user CSV with one cluster-id column;
+                      byoc_source.py
+
+Each source declares one ``Source``; ``SOURCES`` collects them, the tables below
+are built from it, and ``fetch`` fetches one dataset of any of them.
 """
 
-import gzip
-import io
 import logging
-import urllib.error
-import urllib.parse
-import urllib.request
-from collections.abc import Iterable, Mapping, Sequence
+import warnings
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
-from pathlib import Path
 from typing import Any, Final, Literal
 
-import numpy as np
 import pandas as pd
 
-from ._compat import import_optional_dependency
+from . import byoc_source
+from ._input_sources import Source, clustbench_source, mdcgen_source
+from ._input_sources.clustbench_source import (
+    CLUSTBENCH_DATASETS as CLUSTBENCH_DATASETS,
+)
+from ._input_sources.mdcgen_source import (
+    MDCGEN_CONFIGS as MDCGEN_CONFIGS,
+)
+from ._utils.write_files import resolved_for_report as resolved_for_report
 
 log: logging.Logger = logging.getLogger(__name__)
 
-# Timeout (seconds) for each clustbench network fetch, so a hung GitHub endpoint
-# can't stall the pipeline forever (no circuit breaker otherwise).
-CLUSTBENCH_TIMEOUT = 30
-
 # ===========================================================================
-# Shared registry, one dict per concern, keyed by source name.
+# fabricated_data, offline fallback, wraps _input_sources/fabricated_generator.py
 # ===========================================================================
 
-SOURCE_METADATA: Final[Mapping[str, Mapping[str, Mapping[str, str]]]] = {
-    "clustbench": {
-        "wut": {
-            "description": "Warsaw University of Technology. Covers spatial, density-based, and overlapping clusters.",
-            "examples": "smile, x1, x2, twonorm"
-        },
-        "sipu": {
-            "description": "SIPU datasets (Fränti & Sieranoja). Features varying densities, high dimensions, and large cluster numbers.",
-            "examples": "a1, s1, unbalance, birch1"
-        },
-        "fcps": {
-            "description": "Fundamental Clustering Problem Suite (A. Ultsch). Classic 2D/3D datasets with distinct geometric challenges.",
-            "examples": "atom, chainlink, hepta, lsun"
-        },
-        "graves": {
-            "description": "Features complex shapes, heavy noise, and non-linear boundaries (like zigzags).",
-            "examples": "zigzag_noisy, ring_noisy, dense_disk"
-        },
-        "other": {
-            "description": "Assorted community datasets, including those specifically designed to test HDBSCAN.",
-            "examples": "hdbscan, chameleon_t8_8k"
-        },
-        "uci": {
-            "description": "UCI Machine Learning Repository. Eight real classification datasets in 7 to 60 "
-                           "dimensions, whose classes clustering often finds hard.",
-            "examples": "ecoli, wine, yeast"
-        },
-        "mnist": {
-            "description": "MNIST handwritten digits and Fashion-MNIST articles: 28x28 greyscale images "
-                           "as 784 features, 10 classes.",
-            "examples": "digits, fashion"
-        },
-        "g2mg": {
-            "description": "Two equal-sized Gaussian clusters, 2048 points in 1 to 128 dimensions, named "
-                           "g2mg_<dim>_<scale>; the _1_ ones have a single feature.",
-            "examples": "g2mg_2_10, g2mg_4_20"
-        },
-        "h2mg": {
-            "description": "Two equal-sized Gaussian-like hubs, each point on a sphere around its "
-                           "cluster's center, 2048 points in 1 to 128 dimensions, named "
-                           "h2mg_<dim>_<scale>; the _1_ ones have a single feature.",
-            "examples": "h2mg_2_10, h2mg_4_20"
-        },
-    },
-    "mdcgen": {
-        "basic": {
-            "description": "Standard low-dimensional clusters for basic algorithmic testing.",
-            "examples": "blobs_2d_5c, blobs_3d_10c"
-        },
-        "high_dim": {
-            "description": "High-dimensional synthetic datasets to test the curse of dimensionality.",
-            "examples": "hd_50d_5c, hd_100d_10c"
-        },
-        "challenging": {
-            "description": "Clusters with heavy overlap, variable compactness, or simulated noise/outliers.",
-            "examples": "overlapping_2d, noisy_3d"
-        },
-    },
-    "fabricated_data": {
-        "fabricated": {
-            "description": "Offline fallback using engineered features + perfect-separation "
-                            "labels. No network, no mdcgenpy.",
-            "examples": "baseline_2class, baseline_4class"
-        },
-    },
-    "byoc": {
-        "local": {
-            "description": "Bring-your-own-clusters: your CSV with feature columns and exactly "
-                            "one cluster-id column (named by byoc_suite.cluster_column).",
-            "examples": "the CSV path(s) listed in byoc_suite.datasets"
-        },
-    },
-}
-
-CLUSTBENCH_DATASETS: Final[Mapping[str, Sequence[str]]] = {
-    "wut": [
-        "circles", "cross", "graph", "isolation", "labirynth", "mk1", "mk2",
-        "mk3", "mk4", "olympic", "smile", "stripes", "trajectories",
-        "trapped_lovers", "twosplashes", "windows", "x1", "x2", "x3",
-        "z1", "z2", "z3",
-    ],
-    "sipu": [
-        "a1", "a2", "a3", "aggregation", "birch1", "birch2", "compound",
-        "d31", "flame", "jain", "pathbased", "r15", "s1", "s2", "s3", "s4",
-        "spiral", "unbalance", "worms_2", "worms_64",
-    ],
-    "fcps": [
-        "atom", "chainlink", "engytime", "hepta", "lsun", "target",
-        "tetra", "twodiamonds", "wingnut",
-    ],
-    "graves": [
-        "dense", "fuzzyx", "line", "parabolic", "ring", "ring_noisy",
-        "ring_outliers", "zigzag", "zigzag_noisy", "zigzag_outliers",
-    ],
-    "other": [
-        "chameleon_t4_8k", "chameleon_t5_8k", "chameleon_t7_10k",
-        "chameleon_t8_8k", "hdbscan", "iris", "iris5", "square",
-    ],
-    "uci": [
-        "ecoli", "glass", "ionosphere", "sonar", "statlog", "wdbc",
-        "wine", "yeast",
-    ],
-    "mnist": ["digits", "fashion"],
-    "g2mg": [f"g2mg_{d}_{s}" for d in (1, 2, 4, 8, 16, 32, 64, 128)
-             for s in range(10, 91, 10)],
-    "h2mg": [f"h2mg_{d}_{s}" for d in (1, 2, 4, 8, 16, 32, 64, 128)
-             for s in range(10, 91, 10)],
-}
-
-MDCGEN_CONFIGS: Final[Mapping[str, Mapping[str, Mapping[str, Any]]]] = {
-    "basic": {
-        "blobs_2d_5c": {"m": 1000, "n": 2, "k": 5},
-        "blobs_3d_10c": {"m": 2000, "n": 3, "k": 10},
-    },
-    "high_dim": {
-        "hd_50d_5c": {"m": 1000, "n": 50, "k": 5},
-        "hd_100d_10c": {"m": 2000, "n": 100, "k": 10},
-    },
-    "challenging": {
-        "overlapping_2d": {"m": 1000, "n": 2, "k": 4, "cp": 0.1},
-        "noisy_3d": {"m": 1500, "n": 3, "k": 5, "out": 0.05},
-    },
-}
-
-# --- "fabricated_data" source: wraps _fabricated_generator.generate_synthetic_data.
 FABRICATED_CONFIGS: Final[Mapping[str, Mapping[str, Any]]] = {
     "baseline_2class": {
         "n_samples": 500,
@@ -202,21 +76,90 @@ FABRICATED_CONFIGS: Final[Mapping[str, Mapping[str, Any]]] = {
     },
 }
 
-SOURCE_DATASETS: Final[Mapping[str, Mapping[str, Sequence[str]]]] = {
-    "clustbench": CLUSTBENCH_DATASETS,
-    "mdcgen": {group: list(cfgs.keys()) for group, cfgs in MDCGEN_CONFIGS.items()},
-    "fabricated_data": {"fabricated": list(FABRICATED_CONFIGS.keys())},
-    # byoc datasets are user CSV paths, unknown ahead of time: one 'local' battery
-    # with a dynamic (empty) list, get_datasets_for_battery trusts the config.
-    "byoc": {"local": []},
+
+def _fetch_fabricated_data(
+        dataset_group: str = "fabricated",
+        dataset_name: str = "baseline_2class",
+        seed: int = 42,
+        **kwargs: Any
+) -> pd.DataFrame | None:
+    """Generates one offline dataset via fabricated_generator; cluster ids are
+    integers 0...K-1, matching clustbench/mdcgen, so one clm_label config ports
+    across sources without retyping cluster references."""
+    from ._input_sources import fabricated_generator
+
+    preset = FABRICATED_CONFIGS.get(dataset_name)
+    if preset is None:
+        log.error(f"No fabricated_data preset '{dataset_name}'. Available: {list(FABRICATED_CONFIGS.keys())}")
+        return None
+
+    n_samples = int(kwargs.get("n_samples", preset["n_samples"]))
+    log.info(f"Generating offline fabricated_data dataset '{dataset_name}' (n={n_samples}, seed={seed})...")
+
+    df = fabricated_generator.generate_synthetic_data(
+        n_samples=n_samples,
+        output_file=None,
+        seed=seed,
+        config_dict=preset["config_dict"],
+    )
+
+    if "Cohort_Class" not in df.columns:
+        log.error(f"fabricated_data preset '{dataset_name}' produced no ground truth (categorical_features.enable "
+                  "must be True). Skipping, label_generation has nothing to key off.")
+        return None
+
+    gt = df["Cohort_Class"]
+    codes = (gt.cat.codes if isinstance(gt.dtype, pd.CategoricalDtype)
+             # qcut's category order is the percentile order, so cat.codes is
+             # meaningful (0 = lowest bin); factorize covers the non-categorical
+             # path (the random, non-perfect-separation branch of the generator).
+             else pd.Series(pd.factorize(gt, sort=True)[0], index=gt.index))
+    df["GroundTruth_labels0"] = codes.astype(int)
+
+    log.info(f"Generated fabricated_data '{dataset_name}': {df.shape[0]} rows, "
+             f"{df.shape[1] - 2} feature(s), 1 labeling(s) "
+             f"(cluster ids 0..{df['GroundTruth_labels0'].nunique() - 1}).")
+    return df
+
+
+_FABRICATED: Final[Source] = Source(
+    key="fabricated_data",
+    display="Fabricated",
+    blurb="tiny offline example data (no internet, no extra packages)",
+    metadata={
+        "fabricated": {
+            "description": "Offline fallback using engineered features + perfect-separation "
+                            "labels. No network, no mdcgenpy.",
+            "examples": "baseline_2class, baseline_4class"
+        },
+    },
+    datasets={"fabricated": list(FABRICATED_CONFIGS.keys())},
+    heavy=frozenset(),
+    seeded=True,
+    suite_keys=("n_samples",),
+    fetch=lambda battery, dataset, seed, **kw: _fetch_fabricated_data(
+        dataset_group=battery, dataset_name=dataset, seed=seed, **kw),
+    licence="MIT: generated by CLMSynth's own _input_sources/fabricated_generator.py.",
+)
+
+# ===========================================================================
+# The registry, and the per-concern tables built from it, keyed by source name.
+# ===========================================================================
+
+SOURCES: Final[Mapping[str, Source]] = {
+    source.key: source
+    for source in (clustbench_source.SOURCE, mdcgen_source.SOURCE, _FABRICATED,
+                   byoc_source.SOURCE)
 }
 
+SOURCE_METADATA: Final[Mapping[str, Mapping[str, Mapping[str, str]]]] = {
+    key: source.metadata for key, source in SOURCES.items()}
+
+SOURCE_DATASETS: Final[Mapping[str, Mapping[str, Sequence[str]]]] = {
+    key: source.datasets for key, source in SOURCES.items()}
+
 HEAVY_BATTERIES: Final[Mapping[str, AbstractSet[str]]] = {
-    "clustbench": {"mnist", "g2mg", "h2mg"},
-    "mdcgen": {"high_dim"},
-    "fabricated_data": set(),
-    "byoc": set(),
-}
+    key: source.heavy for key, source in SOURCES.items()}
 
 
 # ===========================================================================
@@ -261,197 +204,35 @@ def print_battery_info(source: str) -> None:
         log.info(f"  - '{battery}': {info['description']} (Examples: {info['examples']})")
 
 
-def resolved_for_report(path_value: str | Path) -> str:
-    """Absolute form, or the raw value."""
-    try:
-        return str(Path(path_value).resolve())
-    except (OSError, ValueError):
-        return str(path_value)
+def fetch(source: str, battery: str, dataset: str, *, seed: int = 42,
+          **kwargs: Any) -> pd.DataFrame | None:
+    """One dataset of a registered source, in the frame the pipeline labels:
+    feature columns, ``GroundTruth_labels0``... and ``Cohort_Class``; None when
+    it cannot be fetched or generated, with the reason logged.
+
+    ``seed`` reaches only the sources whose data depend on it (mdcgen,
+    fabricated_data). ``kwargs`` are the source's own ``<source>_suite`` keys,
+    such as ``base_url`` or ``input_dir``."""
+    if source not in SOURCES:
+        raise ValueError(f"Unknown data_source '{source}'. Valid options: {list(SOURCES)}")
+    return SOURCES[source].fetch(battery, dataset, seed, **kwargs)
 
 
-# ===========================================================================
-# Source 1: clustbench
-# ===========================================================================
-
-def _loadtxt_url(url: str, **loadtxt_kwargs) -> np.ndarray:
-    """
-    Fetches a gzipped text array over HTTP(S) with a timeout, then parses it.
-
-    `base_url` reaches here from the config, and a config is a shareable
-    artifact (see SECURITY.md), so a `file://` or `data:` URL would turn a
-    dataset fetch into a local read. Only http(s) is opened.
-    """
-    scheme = urllib.parse.urlparse(url).scheme
-    if scheme not in ("http", "https"):
-        raise ValueError(
-            f"clustbench: refusing to fetch {url!r}: only http(s) is fetched, "
-            f"not {scheme!r}. Check clustbench_suite.base_url.")
-    with urllib.request.urlopen(url, timeout=CLUSTBENCH_TIMEOUT) as resp:  # nosec B310
-        raw = resp.read()
-    with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:
-        return np.loadtxt(stream, **loadtxt_kwargs)
+# The per-source names this module exported before fetch().
+_DEPRECATED: Final[Mapping[str, Callable[[], Any]]] = {
+    "fetch_clustbench_data": lambda: clustbench_source.fetch_clustbench_data,
+    "fetch_clustbench_labelings": lambda: clustbench_source.fetch_clustbench_labelings,
+    "CLUSTBENCH_TIMEOUT": lambda: clustbench_source.CLUSTBENCH_TIMEOUT,
+    "_loadtxt_url": lambda: clustbench_source._loadtxt_url,
+    "fetch_mdcgen_data": lambda: mdcgen_source.fetch_mdcgen_data,
+    "fetch_fabricated_data": lambda: _fetch_fabricated_data,
+}
 
 
-def fetch_clustbench_labelings(
-        dataset_group: str,
-        dataset_name: str,
-        base_url: str = "https://github.com/gagolews/clustering-data-v1/raw/v1.1.0",
-        max_labelings: int = 10,
-) -> dict[str, np.ndarray]:
-    """Downloads every reference labeling (labels0, labels1, ...) of one
-    clustbench dataset, up to the first index the server does not have (404).
-    A labeling that fails otherwise is skipped and named in one warning."""
-    target_path = f"{base_url}/{dataset_group}/{dataset_name}"
-    labeling: dict[str, np.ndarray] = {}
-    failed: list[str] = []
-    for i in range(max_labelings):
-        label_name = f"labels{i}"
-        try:
-            labeling[label_name] = _loadtxt_url(f"{target_path}.{label_name}.gz", dtype="int")
-        except urllib.error.HTTPError as e:
-            if e.code != 404:
-                failed.append(f"{label_name} ({e})")
-                continue
-            if i == 0:
-                log.error(f"No reference labels found for {dataset_group}/{dataset_name}.")
-            break
-        except Exception as e:
-            failed.append(f"{label_name} ({e})")
-    if failed:
-        log.warning(f"{dataset_group}/{dataset_name}: could not fetch {', '.join(failed)}; "
-                    f"continuing with {len(labeling)} labeling(s).")
-    return labeling
-
-
-def fetch_clustbench_data(
-        dataset_group: str = "wut",
-        dataset_name: str = "smile",
-        base_url: str = "https://github.com/gagolews/clustering-data-v1/raw/v1.1.0"
-) -> pd.DataFrame | None:
-    """Fetches one Gagolewski benchmark dataset (features + all usable
-    labeling) into the standard fetcher frame; None on failure."""
-    if dataset_group not in SOURCE_METADATA["clustbench"]:
-        log.warning(f"Battery '{dataset_group}' is not in the recommended list, but attempting to fetch anyway.")
-
-    log.info(f"Fetching external clustering dataset: {dataset_group}/{dataset_name}...")
-    target_path = f"{base_url}/{dataset_group}/{dataset_name}"
-
-    try:
-        data = _loadtxt_url(f"{target_path}.data.gz", ndmin=2)
-    except Exception as e:
-        log.error(f"Failed to fetch dataset features: {e}")
-        return None
-
-    labeling = fetch_clustbench_labelings(dataset_group, dataset_name, base_url)
-    labeling = {n: labels for n, labels in labeling.items() if len(labels) == len(data)}
-    if "labels0" not in labeling:
-        log.error(f"No usable labels0 for {dataset_group}/{dataset_name}.")
-        return None
-
-    feature_cols = [f"Feature_{i + 1}" for i in range(data.shape[1])]
-    df = pd.DataFrame(data, columns=feature_cols)
-    for name, labels in labeling.items():
-        df[f"GroundTruth_{name}"] = labels
-    df["Cohort_Class"] = labeling["labels0"]
-
-    log.info(f"Loaded '{dataset_group}/{dataset_name}': {df.shape[0]} rows, "
-             f"{len(feature_cols)} features, {len(labeling)} labeling(s).")
-    return df
-
-
-# ===========================================================================
-# Source 2: mdcgen (synthetic, needs mdcgenpy installed)
-# ===========================================================================
-
-def fetch_mdcgen_data(
-        dataset_group: str = "basic",
-        dataset_name: str = "blobs_2d_5c",
-        seed: int = 1,
-        **kwargs: Any
-) -> pd.DataFrame | None:
-    """Generates one synthetic dataset via mdcgenpy (optional dependency)
-    from the registered preset, seeded; None if unavailable or failing."""
-    try:
-        clusters = import_optional_dependency("mdcgenpy.clusters",
-                                              repr(f"{dataset_group}/{dataset_name}"))
-    except ImportError as e:
-        log.error(f"{e}.")
-        return None
-    ClusterGenerator = clusters.ClusterGenerator
-
-    if dataset_group not in SOURCE_METADATA["mdcgen"]:
-        log.warning(f"Battery '{dataset_group}' is not in the recommended list, but attempting to generate anyway.")
-
-    log.info(f"Generating synthetic clustering dataset: {dataset_group}/{dataset_name}...")
-
-    preset = MDCGEN_CONFIGS.get(dataset_group, {}).get(dataset_name, {})
-    if not preset:
-        log.error(f"No configuration mapping found for {dataset_group}/{dataset_name}.")
-        return None
-
-    config = {**preset, **kwargs, "seed": seed}
-
-    try:
-        cluster_gen = ClusterGenerator(**config)
-        data, labels = cluster_gen.generate_data()
-    except Exception as e:
-        log.error(f"Failed to generate dataset using mdcgenpy: {e}")
-        return None
-
-    feature_cols = [f"Feature_{i + 1}" for i in range(data.shape[1])]
-    df = pd.DataFrame(data, columns=feature_cols)
-    df["GroundTruth_labels0"] = labels
-    df["Cohort_Class"] = labels
-
-    log.info(f"Generated '{dataset_group}/{dataset_name}' (seed={seed}): {df.shape[0]} rows, "
-             f"{len(feature_cols)} features, 1 labeling(s).")
-    return df
-
-
-# ===========================================================================
-# Source 3: fabricated_data, offline fallback, wraps _fabricated_generator.py
-# ===========================================================================
-
-def fetch_fabricated_data(
-        dataset_group: str = "fabricated",
-        dataset_name: str = "baseline_2class",
-        seed: int = 42,
-        **kwargs: Any
-) -> pd.DataFrame | None:
-    """Generates one offline dataset via _fabricated_generator; cluster ids are
-    integers 0...K-1, matching clustbench/mdcgen, so one clm_label config ports
-    across sources without retyping cluster references."""
-    from . import _fabricated_generator
-
-    preset = FABRICATED_CONFIGS.get(dataset_name)
-    if preset is None:
-        log.error(f"No fabricated_data preset '{dataset_name}'. Available: {list(FABRICATED_CONFIGS.keys())}")
-        return None
-
-    n_samples = int(kwargs.get("n_samples", preset["n_samples"]))
-    log.info(f"Generating offline fabricated_data dataset '{dataset_name}' (n={n_samples}, seed={seed})...")
-
-    df = _fabricated_generator.generate_synthetic_data(
-        n_samples=n_samples,
-        output_file=None,
-        seed=seed,
-        config_dict=preset["config_dict"],
-    )
-
-    if "Cohort_Class" not in df.columns:
-        log.error(f"fabricated_data preset '{dataset_name}' produced no ground truth (categorical_features.enable "
-                  "must be True). Skipping, label_generation has nothing to key off.")
-        return None
-
-    gt = df["Cohort_Class"]
-    codes = (gt.cat.codes if isinstance(gt.dtype, pd.CategoricalDtype)
-             # qcut's category order is the percentile order, so cat.codes is
-             # meaningful (0 = lowest bin); factorize covers the non-categorical
-             # path (the random, non-perfect-separation branch of the generator).
-             else pd.Series(pd.factorize(gt, sort=True)[0], index=gt.index))
-    df["GroundTruth_labels0"] = codes.astype(int)
-
-    log.info(f"Generated fabricated_data '{dataset_name}': {df.shape[0]} rows, "
-             f"{df.shape[1] - 2} feature(s), 1 labeling(s) "
-             f"(cluster ids 0..{df['GroundTruth_labels0'].nunique() - 1}).")
-    return df
+def __getattr__(name: str) -> Any:
+    if name in _DEPRECATED:
+        warnings.warn(f"clmsynth.dataset_sources.{name} is deprecated and is removed in "
+                      "0.7.8; use dataset_sources.fetch(source, battery, dataset, seed=...)",
+                      DeprecationWarning, stacklevel=2)
+        return _DEPRECATED[name]()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

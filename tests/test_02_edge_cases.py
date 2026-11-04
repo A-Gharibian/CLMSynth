@@ -16,7 +16,7 @@ import pytest
 
 from clmsynth.byoc_source import fetch_byoc_data
 from clmsynth.clm_label_engine import generate_clm_labels, resolve_label_counts
-from clmsynth.label_context import build_context
+from clmsynth.labeling import build_context
 from clmsynth.main import run_pipeline
 
 N = 1000
@@ -202,7 +202,7 @@ def test_the_reachable_pair_range_is_reported_under_scope_pair(
     baseline_4class: N = 800 and cluster 0 holds 200, so
     phi_min = sqrt(600 / (200 * 799)) = 0.0613.
     """
-    from clmsynth._visualization import _clm_info_text
+    from clmsynth._extras.visualization import _clm_info_text
 
     clm = {
         "num_classes": 4,

@@ -5,11 +5,7 @@ include CITATION.cff
 include codemeta.json
 include LICENSE.txt
 include SECURITY.md
-include requirements.txt
 include environment.yml
-
-# Example configs referenced by the README quick-start.
-include upstream_payload.yaml
 
 # User manual and the coded-diagnostics reference catalogue.
 # The .csv is for docs/troubleshooting_catalog/_data
@@ -36,6 +32,7 @@ global-exclude __pycache__
 global-exclude *.py[cod]
 global-exclude .DS_Store
 prune src/clmsynth.egg-info
+prune docs/examples
 prune .venv
 prune .idea
 prune Inspection

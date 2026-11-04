@@ -47,12 +47,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import clmsynth._visualization
+import clmsynth._extras.visualization
 import clmsynth.main
-from clmsynth import dataset_sources
-from clmsynth._visualization import plot_feature_scatter
-from clmsynth.label_context import DatasetContext
-from clmsynth.label_generator import generate_additional_labels
+from clmsynth._extras.visualization import plot_feature_scatter
+from clmsynth._input_sources import clustbench_source
+from clmsynth.labeling import DatasetContext, generate_additional_labels
 from clmsynth.main import load_config, resolved_for_report, run_pipeline
 
 # The Agg backend is selected in conftest, before this module is imported, so a
@@ -152,7 +151,7 @@ def test_infeasible_allocation_skips_only_the_labelling(tmp_path, monkeypatch):
     the *labeling* is skipped. The dataset is still written, still counted in
     `n_ok`, and its CSV simply has no `Label_0` column.
     """
-    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth._extras.visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -229,7 +228,7 @@ def test_a_target_no_level_fits_leaves_out_only_that_datasets_label(
     `blocked`'s label: it is still written and counted, without `Label_0`, and
     `fits`, after it in iteration order, gets its label.
     """
-    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth._extras.visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -264,7 +263,7 @@ def test_over_claiming_noise_without_a_target_leaves_out_only_the_label(
     rule leaves 10 of cluster 0's 50 points unclaimed and the entries claim 9
     each. The dataset is written and counted, without `Label_0`.
     """
-    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth._extras.visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -293,7 +292,7 @@ def test_byoc_id_mismatch_is_refused_before_any_output(tmp_path, monkeypatch, ca
     against *each dataset's own* cluster ids, and under `byoc` every CSV brings
     its own.
     """
-    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth._extras.visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -397,7 +396,7 @@ def test_path_shaped_dataset_names_are_refused(tmp_path, monkeypatch, caplog, na
     against a known list and cannot carry one of these; byoc trusts the config
     verbatim, which is the only route in.
     """
-    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth._extras.visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -437,7 +436,7 @@ def test_non_byoc_id_mismatch_skips_only_that_dataset(tmp_path, monkeypatch):
     out only that dataset's label. `[CLM-104]` is not, its bound is num_classes,
     which no dataset can change.
     """
-    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth._extras.visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     csv_dir, png_dir, txt_dir = tmp_path / "csv", tmp_path / "png", tmp_path / "txt"
     for d in (csv_dir, png_dir, txt_dir):
@@ -482,7 +481,7 @@ def test_datasets_written_without_a_label_are_reported_separately(tmp_path, monk
     never invisible; the summary simply contradicted it, and the summary is what
     a script reads.
     """
-    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth._extras.visualization, "plot_feature_scatter", lambda *a, **k: True)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -547,7 +546,7 @@ def test_an_unexpected_error_names_its_type_and_the_skip_is_counted(tmp_path, mo
     names a word, not a failure. The end-of-run summary counts the skip, because
     `n_ok` alone cannot tell "1 of 1" from "1 of 2".
     """
-    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth._extras.visualization, "plot_feature_scatter", lambda *a, **k: True)
     real_build_context = clmsynth.main.build_context
 
     def build_context(source, battery, dataset, df):
@@ -608,7 +607,7 @@ def test_plot_failure_does_not_reduce_the_processed_count(tmp_path, monkeypatch)
     Plotting is best-effort on top of it, so a plot that fails must be logged
     but must not turn a dataset that produced correct labels into a failure.
     """
-    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: False)
+    monkeypatch.setattr(clmsynth._extras.visualization, "plot_feature_scatter", lambda *a, **k: False)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -631,7 +630,7 @@ def test_figure_creation_failure_returns_false_like_every_other_failure(tmp_path
     """Finding N4, closed in 0.6.9. Regression pin."""
     frame = pd.DataFrame({"x": [1, 2, 3], "y": [1, 2, 3], "hue": [0, 1, 0]})
     with mock.patch(
-        "clmsynth._visualization.Figure",
+        "clmsynth._extras.visualization.Figure",
         side_effect=RuntimeError("simulated figure-creation failure"),
     ):
         assert (
@@ -650,7 +649,7 @@ def test_figure_creation_failure_returns_false_like_every_other_failure(tmp_path
 def test_interactive_plot_shows_and_keeps_the_figure_open(monkeypatch):
     """Omitting output_path shows and keeps the figure open."""
     show = mock.MagicMock()
-    monkeypatch.setattr("clmsynth._visualization.plt.show", show)
+    monkeypatch.setattr("clmsynth._extras.visualization.plt.show", show)
     frame = pd.DataFrame(
         {"x": [1.0, 2.0, 3.0, 4.0], "y": [1.0, 4.0, 2.0, 3.0], "hue": [0, 1, 0, 1]}
     )
@@ -676,7 +675,7 @@ def test_interactive_plot_shows_and_keeps_the_figure_open(monkeypatch):
 def test_saved_plot_does_not_go_through_pyplot(monkeypatch, tmp_path):
     """pyplot keeps one figure list per process and picks the backend, often a
     GUI one that only works from the main thread; a saved plot uses neither."""
-    monkeypatch.setattr(clmsynth._visualization, "plt", None)
+    monkeypatch.setattr(clmsynth._extras.visualization, "plt", None)
     frame = pd.DataFrame({"x": [1.0, 2.0, 3.0], "y": [1.0, 3.0, 2.0], "hue": [0, 1, 0]})
     saved = plot_feature_scatter(frame, "x", "y", hue_col="hue", info_text="info",
                                  output_path=str(tmp_path / "x.png"))
@@ -908,7 +907,7 @@ def test_the_plot_box_shows_only_what_the_label_was_made_with(
         boxes.append(kwargs.get("info_text"))
         return True
 
-    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", record)
+    monkeypatch.setattr(clmsynth._extras.visualization, "plot_feature_scatter", record)
     config, csv_dir, png_dir, txt_dir = _fabricated_config(tmp_path, dict(_ONE_DATASET))
     config["label_generation"]["clm_label"] = clm_label
     assert run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir) == 1
@@ -1094,7 +1093,7 @@ def minimal_byoc_config(input_dir, output_dir, datasets, clm_label=None):
 
 def run_main(tmp_path, monkeypatch, config, *flags):
     """Drive the CLI over `config` and return (exit code, surviving run folders)."""
-    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", lambda *a, **k: True)
+    monkeypatch.setattr(clmsynth._extras.visualization, "plot_feature_scatter", lambda *a, **k: True)
     config_path = tmp_path / "cfg.json"
     config_path.write_text(json.dumps(config), encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["clmsynth", str(config_path), *flags])
@@ -1371,7 +1370,7 @@ def test_generate_config_exits_two_on_a_missing_payload(tmp_path, monkeypatch):
     it is the first command in the documented quick start, so it is the most
     likely place for a user to mistype a path.
     """
-    from clmsynth import generate_config
+    from clmsynth._config_gen import generate_config
 
     monkeypatch.setattr(sys, "argv", ["clmsynth-config", str(tmp_path / "no_such_payload.yaml")])
     with pytest.raises(SystemExit) as excinfo:
@@ -1388,7 +1387,7 @@ def test_generate_config_exits_two_on_a_malformed_payload(text, tmp_path, monkey
     """A YAML syntax error in the payload, a block of the wrong shape, or a
     clm_label block the engine refuses exits 2 like a missing file, not a
     traceback, and writes nothing."""
-    from clmsynth import generate_config
+    from clmsynth._config_gen import generate_config
 
     payload = tmp_path / "payload.yaml"
     payload.write_text(text, encoding="utf-8")
@@ -1412,7 +1411,7 @@ def test_generate_config_keeps_the_old_config_when_the_write_fails(
     next run used it. The interrupt message says "nothing written"; this keeps
     it true.
     """
-    from clmsynth import generate_config
+    from clmsynth._config_gen import generate_config
 
     payload = tmp_path / "payload.yaml"
     payload.write_text(yaml.safe_dump({"num_classes": 3}), encoding="utf-8")
@@ -1434,7 +1433,7 @@ def test_generate_config_keeps_the_old_config_when_the_write_fails(
 
 def test_generate_config_refuses_to_overwrite_its_payload(tmp_path, monkeypatch, yaml):
     """`clmsynth-config p.yaml p.yaml` must not replace the payload it just read."""
-    from clmsynth import generate_config
+    from clmsynth._config_gen import generate_config
 
     payload = tmp_path / "payload.yaml"
     text = yaml.safe_dump({"num_classes": 3})
@@ -1528,12 +1527,13 @@ def test_clustbench_timeout_is_passed_to_urlopen():
         raise OSError("not connecting in a test")
 
     with (
-        mock.patch("clmsynth.dataset_sources.urllib.request.urlopen", fake_urlopen),
+        mock.patch("clmsynth._input_sources.clustbench_source.urllib.request.urlopen",
+                   fake_urlopen),
         pytest.raises(OSError),
     ):
-        dataset_sources._loadtxt_url("http://example.invalid/data.txt")
+        clustbench_source._loadtxt_url("http://example.invalid/data.txt")
 
-    assert captured["timeout"] == dataset_sources.CLUSTBENCH_TIMEOUT
+    assert captured["timeout"] == clustbench_source.CLUSTBENCH_TIMEOUT
     assert captured["timeout"] is not None, "fetch would inherit the OS default timeout"
 
 
@@ -1545,7 +1545,7 @@ def test_clustbench_timeout_is_passed_to_urlopen():
 def test_clustbench_refuses_a_non_http_base_url(url):
     """`base_url` comes from a shareable config, so only http(s) is opened."""
     with pytest.raises(ValueError) as excinfo:
-        dataset_sources._loadtxt_url(url)
+        clustbench_source._loadtxt_url(url)
     assert "only http(s) is fetched" in str(excinfo.value)
 
 
@@ -1556,10 +1556,11 @@ def test_clustbench_fetch_returns_none_when_the_source_is_unreachable():
     and does not depend on the runner having (or not having) a network.
     """
     with mock.patch(
-        "clmsynth.dataset_sources.urllib.request.urlopen", side_effect=OSError("unreachable")
+        "clmsynth._input_sources.clustbench_source.urllib.request.urlopen",
+        side_effect=OSError("unreachable"),
     ):
         assert (
-            dataset_sources.fetch_clustbench_data(
+            clustbench_source.fetch_clustbench_data(
                 dataset_group="wut",
                 dataset_name="smile",
                 base_url="http://example.invalid/benchmark",

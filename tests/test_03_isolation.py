@@ -5,7 +5,7 @@ single-threaded, deterministic assertion about *ownership of state*.
 
 What is checked, in order:
 
-  RNG ownership        `_fabricated_generator` reproduces a seed exactly after
+  RNG ownership        `fabricated_generator` reproduces a seed exactly after
                        an interleaved call with a different seed, and genuinely
                        differs between seeds (so the first is not vacuous).
                        Direct use of the global np.random stream is ruff
@@ -45,10 +45,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import clmsynth._visualization
+import clmsynth._extras.visualization
 import clmsynth.main
-from clmsynth import _fabricated_generator
-from clmsynth._cli_logging import SingleLineFilter, configure_cli_logging
+from clmsynth._input_sources import fabricated_generator
+from clmsynth._utils.cli_logging import SingleLineFilter, configure_cli_logging
 from clmsynth.main import build_run_dir, run_pipeline
 
 # The folder this session imported clmsynth from. -I also ignores PYTHONPATH, which
@@ -107,7 +107,7 @@ def _no_plots(no_plots):
 
 
 def _fabricate(seed):
-    return _fabricated_generator.generate_synthetic_data(n_samples=200, output_file=None, seed=seed)
+    return fabricated_generator.generate_synthetic_data(n_samples=200, output_file=None, seed=seed)
 
 
 def test_interleaved_seeds_do_not_contaminate_each_other():
@@ -338,7 +338,7 @@ def test_a_no_viz_run_never_reaches_the_plotter(tmp_path, monkeypatch):
         calls.append(1)
         return True
 
-    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", record)
+    monkeypatch.setattr(clmsynth._extras.visualization, "plot_feature_scatter", record)
 
     def run(name, render_plots):
         dirs = [tmp_path / name / d for d in ("csv", "png", "txt")]
@@ -369,7 +369,7 @@ def test_the_no_viz_flag_reaches_the_pipeline(tmp_path, monkeypatch, flags, rend
         calls.append(1)
         return True
 
-    monkeypatch.setattr(clmsynth._visualization, "plot_feature_scatter", record)
+    monkeypatch.setattr(clmsynth._extras.visualization, "plot_feature_scatter", record)
     config_path = tmp_path / "cfg.json"
     config_path.write_text(json.dumps(pipeline_config(tmp_path / "out")), encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["clmsynth", str(config_path), *flags])
@@ -440,7 +440,7 @@ def test_any_other_config_file_without_pyyaml_names_the_extra(tmp_path):
     assert 'pip install "clmsynth[yaml]"' in result.stderr, result.stderr
 
 
-@pytest.mark.parametrize("module", ["generate_config", "_config_wizard"])
+@pytest.mark.parametrize("module", ["_config_gen.generate_config", "_config_gen.config_wizard"])
 def test_the_config_tools_without_pyyaml_name_the_extra(module):
     """Before any payload is read or any question is asked."""
     result = without_yaml(f"from clmsynth.{module} import main\nmain()\n")

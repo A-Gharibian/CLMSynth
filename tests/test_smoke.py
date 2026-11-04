@@ -17,7 +17,7 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from clmsynth.generate_config import generate_base_config
+from clmsynth._config_gen.generate_config import generate_base_config
 from clmsynth.main import load_config, run_pipeline
 from clmsynth.metrics import clustering_mcc
 
@@ -184,7 +184,7 @@ def test_rendered_config_runs(tmp_path, suffix):
     """`clmsynth-config` then `clmsynth`: the two-command flow the README opens with.
     The output path's suffix picks the format.
 
-    python -m clmsynth.generate_config    # payload -> config
+    clmsynth-config payload.yaml          # payload -> config
     python -m clmsynth.main               # config  -> dataset
     """
     rendered = tmp_path / f"rendered_config.{suffix}"

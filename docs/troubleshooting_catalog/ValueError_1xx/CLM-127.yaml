@@ -9,7 +9,6 @@ global_settings:
 label_generation:
   n_labels: 1
   source_labeling: labels0
-  noise: 0.1
   seed: 42
   clm_label:
     num_classes: 4

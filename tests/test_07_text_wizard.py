@@ -27,8 +27,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import clmsynth._config_wizard as wizard
-from clmsynth._questions import SCHEMA
+import clmsynth._config_gen.config_wizard as wizard
+from clmsynth._config_gen.questions import SCHEMA
 from clmsynth.clm_label_engine import generate_clm_labels
 from clmsynth.main import load_config
 

@@ -1,6 +1,6 @@
   # CLMSynth Roadmap
 
-[![Version](https://img.shields.io/badge/version-0.7.5-blue)](https://github.com/A-Gharibian/CLMSynth/releases)
+[![Version](https://img.shields.io/badge/version-0.7.6-blue)](https://github.com/A-Gharibian/CLMSynth/releases)
 
 Planned work from 0.7.6 to 0.9.0. Current behavior is in **`../README.md`**.
 Past changes are in **`../CHANGELOG.md`**.
@@ -9,19 +9,16 @@ Past changes are in **`../CHANGELOG.md`**.
 
 A patch release (`0.0.x`) fixes specified behavior.
 A minor release (`0.x.0`) ships a new capability.
-A major release always uploads validation tests to the Zenodo repository.
+A major release uploads validation tests to the Zenodo repository.
 `[CLM-###]` codes are never renumbered or reused.
 
 ---
 
-## 0.7.6 and 0.7.7
+## 0.7.7
 
-**Source and generator extensions.** Data-source additions, plus an engine hook that reads
-features and noise-dimension. Clusters stay fixed, read-only input to the engine.
+An engine hook that reads features and noise-dimension. Clusters stay fixed, read-only input to the engine.
 
 ### Will be Added
-
-- **Repliclust.** It generates clusters from prompts. *[feature]*
 
 - **`mdcgen` presets pass the parameters mdcgenpy reads.** mdcgenpy's names are
   `n_samples`, `n_feats`, `compactness_factor` and `outliers`; the presets pass `m`,
@@ -34,24 +31,24 @@ features and noise-dimension. Clusters stay fixed, read-only input to the engine
   records, per feature, whether it carries cluster structure. `clustbench` and `byoc`
   report it as unknown. *[feature]*
 
-- **clustbench has no local cache.** Every run downloads its datasets from GitHub,
-   Planned as a cache folder beside the run folders, `<output_dir>/_cache/` or a `cache_dir` key defaulting to it.
-  Concurrent tasks fill it at once. Entries are keyed by the
-  pinned data version, so changing `base_url` never serves stale data.
-  *[improvement]*
+- **More of mdcgenpy through `mdcgen`.** New presets reach the settings the current
+  ones leave out, so `mdcgen` covers clusters that differ in density and size:
+  unequal cluster sizes (mdcgenpy's `k`, `min_samples` and `ki_coeff`), per-cluster
+  distributions, correlation (`corr`) and rotation (`rotate`). *[feature]*
+
+- **clustbench local cache.** Every run downloads its datasets from GitHub as of 0.7.6
 
 - **Labels that follow a feature.** `centroid_dependence` scores points by their
   distance to the cluster center. A chosen feature column or a projection can supply
-  the score instead. With `profile: step`, a label then takes one side of a threshold
-  on that feature within each cluster. The label count sets the threshold, so it
-  differs per cluster. The output also records, per feature, whether it carries label
-  structure. A feature with neither role is noise. Roles are recorded after labeling,
-  since a noise column used as the score carries label structure. A projection reports
-  its weights. *[feature]*
+  the score instead. With `profile: step`. *[feature]*
 
 - **Reading the diagnostic codes from Python.** a logging handler
   that collects the `[CLM-###]` codes a call logged, e.g. to check for `[CLM-306]`
   or `[CLM-309]` after `generate_clm_labels`. *[improvement]*
+
+- **`--help` for `clmsynth-config` and `clmsynth-wizard`.** Each prints its usage and
+  exits. Today `clmsynth-config --help` reads `--help` as a payload path, and
+  `clmsynth-wizard` ignores its arguments and starts asking. *[improvement]*
 
 ---
 
@@ -59,8 +56,7 @@ features and noise-dimension. Clusters stay fixed, read-only input to the engine
 
 - **A Sphinx site.** *[feature]*
 
-- **Dependency pins** exact pins to `>=` in `requirements.txt` and
-  `environment.yml`. *[improvement]*
+
 
 - **One source of truth for settings, before 0.8.0.** Every setting's default, the
   condition it applies under and its allowed values come from one table that the
@@ -68,6 +64,7 @@ features and noise-dimension. Clusters stay fixed, read-only input to the engine
 
 - **A community registry entry.** CLMSynth in the Research Software Directory or
   on WikiData, a one-time submission. *[improvement]*
+
 
 ---
 
@@ -127,3 +124,13 @@ A CLMSynth-GUI is planned, which will use compiled C binaries for near real-time
 
 - **`clmsynth-config` in a pipeline.** Rendered configs piped straight into runs,
   e.g. calibration datasets at MCC 0 to 1 in steps of 0.1. *[feature]*
+
+- **Integer network flow.** Since 0.7.5 every count is rounded exactly from the
+  written values, and the rules' counts are rounded together with their clusters as
+  one integral flow, so `[CLM-150]` and `[CLM-151]` refuse only when no rounding of
+  the rules' counts fits. The label counts are still rounded first, alone:
+  `proportions: [0.5025, 0.4975]` of 200 points gives 101 + 99, and `single_match`
+  refuses label 0 in a 100-point cluster (`[CLM-150]`), though 100 + 100 rounds the
+  same proportions and fits. A transportation formulation over the label counts, the
+  rules and the clusters gives integer counts in one exact solve. `competing_noise`
+  and spillover stay outside it: they take what the matching leaves. *[improvement]*

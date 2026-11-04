@@ -22,27 +22,21 @@ labels whose relationship to those clusters is characterized by user-defined con
 Requires Python 3.12 or newer.
 
 ```bash
-pip install "clmsynth[yaml]"
+pip install "clmsynth[yaml,viz]"
 ```
 
 This installs the console
 scripts `clmsynth`, `clmsynth-config`, and `clmsynth-wizard`. The `yaml` extra adds
 PyYAML, which reads and writes config files other than `.json`; the wizard and
-`clmsynth-config` need it. `pip install clmsynth` alone runs the engine,
-`run_pipeline`, and `.json` configs.
-
-A first run that needs no network or extra uses the small `fabricated_data` config
-bundled in the wheel, and writes to `./OUTPUT`:
-
-```bash
-python -m clmsynth.main "$(python -c "from importlib.resources import files; print(files('clmsynth') / 'test_data_config_offline.json')")"
-```
+`clmsynth-config` need it. The `viz` extra adds matplotlib, which draws the plots in
+`png/`; without it a run writes everything else and says so. `pip install clmsynth`
+alone runs the engine, `run_pipeline`, and `.json` configs.
 
 **Start with the wizard.** `clmsynth-wizard` asks a question per setting and
 writes a runnable config, which is the entry point that needs no files from the
-repository. `clmsynth-config` renders a config from `upstream_payload.yaml`
-instead, and that file ships in the source distribution and the repository, not
-in the wheel.
+repository. `clmsynth-config` renders a config from a payload file
+instead; the repository's `docs/examples/` holds one, `hepta_payload.yaml`, and an
+offline config, `example_config.json`. Neither package ships them.
 
 Working on CLMSynth itself, from a clone:
 
@@ -50,14 +44,7 @@ Working on CLMSynth itself, from a clone:
 pip install -e ".[test]"
 ```
 
-To pin the exact versions used for verification rather than the compatible
-ranges, install those first:
-
-```bash
-pip install -r requirements.txt
-```
-
-[//]: # (Or as a conda environment &#40;mirrors the same versions&#41;:)
+[//]: # (Or as a conda environment:)
 
 [//]: # ()
 [//]: # (```bash)
@@ -151,24 +138,31 @@ writes the config as YAML or JSON,
 and can run the pipeline. Works for every source, including user-provided (`byoc`) data.
 CLMSynth is fully functional from a config file; the wizard helps to *create* one.
 
-1. How to generate a config (edit `upstream_payload.yaml`, or pass your own file). The
-   shipped payload labels `fcps/hepta` [[4]](#references) from `clustbench`: 212 points
+1. How to generate a config (edit a copy of `docs/examples/hepta_payload.yaml`, or pass
+   your own file). The example payload labels `fcps/hepta` [[4]](#references) from `clustbench`: 212 points
    in 3-D, 7 clusters, one rule per cluster. The `clm_label` block is checked with the
    engine's own checks before it is written; what needs the dataset is checked by the run.
    ```bash
-   python -m clmsynth.generate_config                    # reads upstream_payload.yaml, writes test_data_config.yaml
-   python -m clmsynth.generate_config my_payload.yaml    # or an explicit payload (and optionally an output path)
-   python -m clmsynth.generate_config my_payload.yaml my_config.json   # a .json output path writes JSON
+   clmsynth-config docs/examples/hepta_payload.yaml   # writes test_data_config.yaml
+   clmsynth-config my_payload.yaml    # or your own payload (and optionally an output path)
+   clmsynth-config my_payload.yaml my_config.json   # a .json output path writes JSON
    ```
 
 2. Run the pipeline:
    ```bash
    python -m clmsynth.main                   # reads test_data_config.yaml
    python -m clmsynth.main my_config.yaml    # or an explicit config path
+   python -m clmsynth.main docs/examples/example_config.json   # offline: no network, no extra
    python -m clmsynth.main my_config.yaml --no-viz   # skip the plots; matplotlib is never imported
    python -m clmsynth.main my_config.yaml --keep-failed   # keep a failed run's config and log
    python -m clmsynth.main a.json b.json c.yaml --jobs 2  # a batch: each config in its own process
+   python -m clmsynth.main sweep/ --jobs 2 --viz          # a folder's configs as a batch, with plots
    ```
+   `clmsynth` and `python -m clmsynth` run the same command as `python -m clmsynth.main`.
+   A single run draws the plots whenever matplotlib is installed; a batch draws them only with
+   `--viz`, which exits 1 when matplotlib is not installed. A folder adds the configs directly inside
+   it, sorted by name, and must hold one format only (`.json`, or `.yaml`/`.yml`); a folder holding
+   run folders is refused. A config named twice, however its path is written, runs once.
    In a batch every config is a run of its own:
    `--jobs` (default 1) sets how many run at once. Above 1, each run gets `OMP_NUM_THREADS`,
    `OPENBLAS_NUM_THREADS` and `MKL_NUM_THREADS` of 1 unless you set them, so the runs do not each start a thread
@@ -204,9 +198,10 @@ OUTPUT/{YYYYMMDD}_{HHMMSS}_{Source}/
   - 1: nothing written, for a reason beyond the config: a dataset its source
     could not deliver (a failed download; a data CSV that is missing, unreadable
     or refused by byoc's import checks, `[CLM-133]` among them), an output folder
-    that cannot be created, PyYAML missing for a `.yaml` config, a crash.
+    that cannot be created, PyYAML missing for a `.yaml` config, matplotlib
+    missing for `--viz`, a crash.
   - 2: the command line or the config is wrong: a usage error, a missing or
-    malformed config, a missing required key (`[CLM-2xx]`), a `[CLM-1xx]` refusal
+    malformed config, a folder of configs that is refused, a missing required key (`[CLM-2xx]`), a `[CLM-1xx]` refusal
     from the labeling. Nothing is written.
     `clmsynth-config` exits 2 for a payload that is missing, malformed or of the
     wrong shape, or whose `clm_label` block the engine refuses (`[CLM-1xx]`,
@@ -230,13 +225,16 @@ OUTPUT/{YYYYMMDD}_{HHMMSS}_{Source}/
 
 ### Data sources
 
-- **`clustbench`**, geometries downloaded from Gagolewski's **A Framework for Benchmarking Clustering Algorithms**
-  [[1]](#references), whose Python API is imported as `clustbench` and which supplies this source's config key. 
-  Every available reference labeling (`labels0`, `labels1`, …) is fetched.
+- **`clustbench`**, geometries from Gagolewski's **A Framework for Benchmarking Clustering Algorithms**
+  [[1]](#references), downloaded when a run uses this source from the framework's data repository
+  (`clustering-data-v1`, v1.1.0). CLMSynth neither ships nor imports any of it; the source key is named after the
+  framework's own Python package, `clustbench`. Every available reference labeling (`labels0`, `labels1`, …) is
+  fetched. The data repository is AGPL-3.0, and its datasets are provided for research purposes only unless their
+  description says otherwise: cite [[1]](#references), the suite version and each dataset's own references.
 - **`mdcgen`**, fully synthetic geometries via `mdcgenpy` [[2]](#references).
   Use when specific properties (dimensionality, overlap, outliers) are needed that the clustering-benchmarks datasets
   may not cover.
-- **`fabricated_data`**, offline fallback. Cluster IDs are integers `0..K-1`, as in the other generated sources;
+- **`fabricated_data`**, the default `data_source`, offline. Cluster IDs are integers `0..K-1`, as in the other generated sources;
   the generator's readable class names are mapped to codes on import. The `labels_only_4class` preset emits 
   **cluster IDs with no feature columns at all**, a valid CLM run, since recall, balance, allocation, and spillover
   do not need feature values.
@@ -281,6 +279,11 @@ label_generation:
 - Cluster IDs are integers, in the file and wherever the config names a cluster (`single_match`,
   `assignment_matrix`, `competing_noise`); `1.0`, `"C1"` or `true` is refused (`[CLM-133]` in the file,
   `[CLM-141]` in the config). The column's name is free.
+- **[repliclust](https://repliclust.org)** datasets are supported through `byoc`, not as a source of their own:
+  CLMSynth neither installs nor calls repliclust. Run repliclust yourself, save each dataset as a CSV of its
+  features plus the cluster ids in one column (repliclust's integer ids `0..K-1` are accepted as they are), and
+  list the file stems under `byoc_suite.datasets`. A cluster of one or two points, which repliclust can produce
+  with a small `n_samples` and a large `imbalance_ratio`, is refused.
 
 ### `matching_mode` reference
 

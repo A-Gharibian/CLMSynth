@@ -41,7 +41,7 @@ from pathlib import Path
 
 import pytest
 
-from clmsynth._cli_logging import SingleLineFilter
+from clmsynth._utils.cli_logging import SingleLineFilter
 from clmsynth.main import resolved_for_report
 
 # ---------------------------------------------------------------------------

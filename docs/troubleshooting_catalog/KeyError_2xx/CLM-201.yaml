@@ -15,7 +15,6 @@ fabricated_data_suite:
 label_generation:
   n_labels: 1
   source_labeling: labels0
-  noise: 0.1
   seed: 42
   clm_label:
     proportions:

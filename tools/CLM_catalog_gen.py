@@ -47,7 +47,7 @@ from pathlib import Path
 
 import numpy as np
 
-from clmsynth._compat import import_optional_dependency
+from clmsynth._utils.compat import import_optional_dependency
 from clmsynth.clm_errors import CODES
 
 # The catalog is YAML, and stays YAML.
@@ -127,7 +127,6 @@ def base():
         "label_generation": {
             "n_labels": 1,
             "source_labeling": "labels0",
-            "noise": 0.1,
             "seed": 42,
             "clm_label": {
                 "num_classes": 4,

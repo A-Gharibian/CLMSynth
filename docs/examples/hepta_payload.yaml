@@ -3,9 +3,9 @@
 # generate_config.py renders it into a full config.
 #
 # Usage:
-#   python -m clmsynth.generate_config                             # reads this file
-#   python -m clmsynth.generate_config my_payload.yaml             # or an explicit payload
-#   python -m clmsynth.generate_config my_payload.yaml out.yaml    # and an explicit output
+#   clmsynth-config                             # reads this file
+#   clmsynth-config my_payload.yaml             # or an explicit payload
+#   clmsynth-config my_payload.yaml out.yaml    # and an explicit output
 
 data_source: "clustbench"        # clustbench | mdcgen | fabricated_data | byoc
 batteries: ["fcps"]

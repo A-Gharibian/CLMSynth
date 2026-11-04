@@ -15,7 +15,7 @@ from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from numbers import Real
-from typing import Any, Final
+from typing import Any, Final, cast
 
 import numpy as np
 import pandas as pd
@@ -29,6 +29,7 @@ from .clm_errors import (
     clm_missing,
     clm_warn,
 )
+from .config_tree import SETTINGS, choices, default, in_bounds
 from .metrics import (
     MetricCeilings,
     clustering_ari,
@@ -54,9 +55,9 @@ __all__ = [
 
 log: logging.Logger = logging.getLogger(__name__)
 
-MAX_CARDINALITY = 64
-MATCHING_MODES = ("perfect", "single", "random", "custom")
-BALANCE_VALUES = ("balanced", "unbalanced")
+MAX_CARDINALITY = int(cast(float, SETTINGS["clm_label.num_classes"].hi))
+MATCHING_MODES = choices("clm_label.matching_mode")
+BALANCE_VALUES = choices("clm_label.balance")
 
 
 # ---------------------------------------------------------------------------
@@ -124,11 +125,12 @@ def _skewed_proportions(M: int, skew_rule: str, params: dict,
     """The label shares, exact from the written settings: dominant_share 0.7 of
     two labels leaves 3/10, not 0.30000000000000004."""
     if skew_rule == "geometric":
-        r = _exact(params.get("ratio", 0.5))
+        r = _exact(params.get("ratio", default("clm_label.skew_params.ratio")))
         raw = [r ** i for i in range(M)]
     elif skew_rule == "dominant_minority":
-        dom_idx = params.get("dominant_index", 0)
-        dom_share = _exact(params.get("dominant_share", 0.5))
+        dom_idx = params.get("dominant_index", default("clm_label.skew_params.dominant_index"))
+        dom_share = _exact(params.get("dominant_share",
+                                      default("clm_label.skew_params.dominant_share")))
         raw = [(1 - dom_share) / (M - 1)] * M
         raw[dom_idx] = dom_share
     elif skew_rule == "dirichlet":
@@ -136,7 +138,7 @@ def _skewed_proportions(M: int, skew_rule: str, params: dict,
         # Small alpha -> near-degenerate imbalance, large alpha -> near-uniform.
         # Allows batch benchmarks to sample many imbalance scenarios by seed
         # instead of hand-picking proportion vectors.
-        alpha = params.get("alpha", 1.0)
+        alpha = params.get("alpha", default("clm_label.skew_params.alpha"))
         rng = rng if rng is not None else np.random.default_rng(0)
         raw = [_exact(x) for x in rng.dirichlet([alpha] * M)]
     else:
@@ -159,7 +161,7 @@ def _label_shares(cfg: dict[str, Any], rng: np.random.Generator | None = None,
                   warn: bool = True) -> Sequence[_Number]:
     """The label shares resolve_label_counts rounds, with its checks."""
     M = cfg["num_classes"]
-    balance = cfg.get("balance", "balanced")
+    balance = cfg.get("balance", default("clm_label.balance"))
 
     if balance == "balanced":
         if warn and cfg.get("proportions"):
@@ -421,7 +423,7 @@ def _placement(cfg: dict) -> str | None:
     _check_list_of_mappings(noise, "competing_noise", "entry",
                             "{cluster: 1, label: 2, share: 0.5}")
     spatial_noise = [] if random_mode else [
-        e for e in noise if e.get("favors", "boundary") != "random"]
+        e for e in noise if e.get("favors", default("clm_label.competing_noise.favors")) != "random"]
     if cd.get("enabled"):
         return "centroid_dependence.enabled"
     if spatial_noise:
@@ -431,7 +433,8 @@ def _placement(cfg: dict) -> str | None:
 
 def _tolerance(tm: Mapping[str, Any]) -> Any:
     """target_metric.tolerance; when absent, 0 under strict and 0.01 otherwise."""
-    return tm.get("tolerance", 0.0 if tm.get("strict") else 0.01)
+    return tm.get("tolerance",
+                  0.0 if tm.get("strict") else default("clm_label.target_metric.tolerance"))
 
 
 def _validate_target_metric_cfg(cfg: dict, cluster_ids: list | None) -> None:
@@ -448,13 +451,13 @@ def _validate_target_metric_cfg(cfg: dict, cluster_ids: list | None) -> None:
             mode == "custom" and (M < 2 or (K is not None and K < 2))):
         raise clm_error(111, mode=mode, M=M, K="unknown" if K is None else K)
     _check_mapping(tm, "target_metric", "{type: mcc, value: 0.5}")
-    if tm.get("type") not in ("mcc", "ari"):
+    if tm.get("type") not in choices("clm_label.target_metric.type"):
         raise clm_error(112, type=tm.get("type"))
     if "value" not in tm:
         raise clm_missing(209)
     value = tm["value"]
     # True passed as 1; a bare `value:` (None) or a string crashed the comparison.
-    if not _is_real(value) or not (-1.0 <= value <= 1.0):
+    if not _is_real(value) or not in_bounds("clm_label.target_metric.value", value):
         raise clm_error(113, value=value if _is_real(value) else repr(value))
     if "strict" in tm and not isinstance(tm["strict"], (bool, np.bool_)):
         raise clm_error(141, key="target_metric.strict", expected="true or false",
@@ -462,17 +465,18 @@ def _validate_target_metric_cfg(cfg: dict, cluster_ids: list | None) -> None:
     # [CLM-141] A NaN, infinite or boolean tolerance meant [CLM-309]/[CLM-310]
     # could never fire.
     tol = _tolerance(tm)
-    if not _is_finite_real(tol) or tol < 0:
+    if not _is_finite_real(tol) or not in_bounds("clm_label.target_metric.tolerance", tol):
         raise clm_error(141, key="target_metric.tolerance", expected="a finite number >= 0",
                         value=tol)
-    scope = tm.get("scope", "global")
-    if scope not in ("pair", "global"):
+    scope = tm.get("scope", default("clm_label.target_metric.scope"))
+    if scope not in choices("clm_label.target_metric.scope"):
         raise clm_error(122, scope=scope)
     # max_iter is read only by the global search. True ran a single iteration; a
     # negative value skipped the refinement without a word.
-    max_iter = tm.get("max_iter", 40)
+    max_iter = tm.get("max_iter", default("clm_label.target_metric.max_iter"))
     if scope == "global" and (isinstance(max_iter, (bool, np.bool_))
-                              or not isinstance(max_iter, (int, np.integer)) or max_iter < 0):
+                              or not isinstance(max_iter, (int, np.integer))
+                              or not in_bounds("clm_label.target_metric.max_iter", max_iter)):
         raise clm_error(141, key="target_metric.max_iter", expected="an integer >= 0",
                         value=max_iter)
     # probe_seed too is read only by the global search; empty is the run seed, as
@@ -481,7 +485,8 @@ def _validate_target_metric_cfg(cfg: dict, cluster_ids: list | None) -> None:
     probe_seed = tm.get("probe_seed")
     if scope == "global" and probe_seed is not None and (
             isinstance(probe_seed, (bool, np.bool_))
-            or not isinstance(probe_seed, (int, np.integer)) or probe_seed < 0):
+            or not isinstance(probe_seed, (int, np.integer))
+            or not in_bounds("clm_label.target_metric.probe_seed", probe_seed)):
         raise clm_error(141, key="target_metric.probe_seed", expected="an integer >= 0",
                         value=probe_seed)
     if scope == "pair":
@@ -526,7 +531,7 @@ def _validate_target_metric_cfg(cfg: dict, cluster_ids: list | None) -> None:
 def _spillover_rule(cfg: dict) -> Any:
     """spillover_rule as written; absent or empty, proportional_to_marginal."""
     rule = cfg.get("spillover_rule")
-    return "proportional_to_marginal" if rule is None else rule
+    return default("clm_label.spillover_rule") if rule is None else rule
 
 
 def _validate_spillover_cfg(cfg: dict) -> None:
@@ -535,7 +540,7 @@ def _validate_spillover_cfg(cfg: dict) -> None:
     [CLM-128] guard: concentrated_labels must name labels that actually exist.
     """
     rule_name = _spillover_rule(cfg)
-    if rule_name not in ("proportional_to_marginal", "uniform", "concentrated"):
+    if rule_name not in choices("clm_label.spillover_rule"):
         raise clm_error(109, rule_name=rule_name)
     if rule_name != "concentrated":
         return
@@ -618,7 +623,7 @@ def _validate_skew_cfg(cfg: dict) -> None:
     Called from generate_clm_labels *before* resolve_label_counts,
     Unknown skew_rule values stay [CLM-107], raised by _skewed_proportions itself.
     """
-    if cfg.get("balance", "balanced") == "balanced" or cfg.get("proportions"):
+    if cfg.get("balance", default("clm_label.balance")) == "balanced" or cfg.get("proportions"):
         return
 
     M = cfg["num_classes"]
@@ -633,8 +638,8 @@ def _validate_skew_cfg(cfg: dict) -> None:
     problem = None
 
     if rule == "geometric":
-        ratio = params.get("ratio", 0.5)
-        if not _is_finite_real(ratio) or ratio < 0:
+        ratio = params.get("ratio", default("clm_label.skew_params.ratio"))
+        if not _is_finite_real(ratio) or not in_bounds("clm_label.skew_params.ratio", ratio):
             problem = (f"geometric 'ratio' must be a finite number >= 0, got {ratio!r}; a "
                        "negative ratio alternates sign across labels")
 
@@ -643,21 +648,21 @@ def _validate_skew_cfg(cfg: dict) -> None:
             problem = ("dominant_minority needs num_classes >= 2, got 1; the rule "
                        "divides the remaining share by (num_classes - 1)")
         else:
-            share = params.get("dominant_share", 0.5)
-            index = params.get("dominant_index", 0)
-            if not _is_real(share) or not (0.0 <= share <= 1.0):
+            share = params.get("dominant_share", default("clm_label.skew_params.dominant_share"))
+            index = params.get("dominant_index", default("clm_label.skew_params.dominant_index"))
+            if not _is_real(share) or not in_bounds("clm_label.skew_params.dominant_share", share):
                 problem = (f"dominant_minority 'dominant_share' must be a number in "
                            f"[0, 1], got {share!r}")
             elif isinstance(index, bool) or not isinstance(index, (int, np.integer)):
                 problem = (f"dominant_minority 'dominant_index' must be an integer, got "
                            f"{index!r}; it indexes the proportions list directly")
-            elif not (0 <= index < M):
+            elif not in_bounds("clm_label.skew_params.dominant_index", index) or index >= M:
                 problem = (f"dominant_minority 'dominant_index' must be in 0..{M - 1}, "
                            f"got {index!r}")
 
     elif rule == "dirichlet":
-        alpha = params.get("alpha", 1.0)
-        if not _is_finite_real(alpha) or alpha <= 0:
+        alpha = params.get("alpha", default("clm_label.skew_params.alpha"))
+        if not _is_finite_real(alpha) or not in_bounds("clm_label.skew_params.alpha", alpha):
             problem = (f"dirichlet 'alpha' must be a finite number > 0, got {alpha!r}; at "
                        "exactly 0 every draw is 0 and normalising them divides by zero")
         # Each draw is about alpha, so from alpha ~ float max / M their sum overflows
@@ -678,20 +683,23 @@ def _validate_centroid_cfg(cfg: dict) -> None:
     wherever placement reads it.
     """
     cd = cfg.get("centroid_dependence") or {}
-    enabled = cd.get("enabled", False)
+    enabled = cd.get("enabled", default("clm_label.centroid_dependence.enabled"))
     if enabled:
-        favors = cd.get("favors", "core")
-        if favors not in ("core", "boundary"):
+        favors = cd.get("favors", default("clm_label.centroid_dependence.favors"))
+        if favors not in choices("clm_label.centroid_dependence.favors"):
             raise clm_error(129, favors=favors)
-    noise_placed = any(e.get("favors", "boundary") in ("core", "boundary")
-                       for e in cfg.get("competing_noise") or [])
+    noise_placed = any(
+        e.get("favors", default("clm_label.competing_noise.favors")) in ("core", "boundary")
+        for e in cfg.get("competing_noise") or [])
     if not (enabled or noise_placed):
         return
-    profile = cd.get("profile", "linear")
-    if profile not in ("linear", "exponential", "step"):
+    profile = cd.get("profile", default("clm_label.centroid_dependence.profile"))
+    if profile not in choices("clm_label.centroid_dependence.profile"):
         raise clm_error(110, profile=profile)
-    steepness = cd.get("steepness", 3.0)
-    if profile == "exponential" and (not _is_finite_real(steepness) or steepness < 0):
+    steepness = cd.get("steepness", default("clm_label.centroid_dependence.steepness"))
+    if profile == "exponential" and (
+            not _is_finite_real(steepness)
+            or not in_bounds("clm_label.centroid_dependence.steepness", steepness)):
         raise clm_error(141, key="centroid_dependence.steepness",
                         expected="a finite number >= 0", value=steepness)
 
@@ -701,8 +709,8 @@ def _validate_split_cfg(cfg: dict) -> None:
     """
     if cfg.get("matching_mode") != "custom":
         return
-    split_rule = cfg.get("split_rule", "proportional_to_size")
-    if split_rule not in ("proportional_to_size", "equal"):
+    split_rule = cfg.get("split_rule", default("clm_label.split_rule"))
+    if split_rule not in choices("clm_label.split_rule"):
         raise clm_error(108, split_rule=split_rule)
 
 
@@ -715,8 +723,8 @@ def _noise_entry(i: int, entry: Mapping[str, Any],
         if key not in entry:
             raise clm_missing(207, where=f"competing_noise entry {i}", key=key)
     k, label = entry["cluster"], entry["label"]
-    share = entry.get("share", 1.0)
-    favors = entry.get("favors", "boundary")
+    share = entry.get("share", default("clm_label.competing_noise.share"))
+    favors = entry.get("favors", default("clm_label.competing_noise.favors"))
 
     # [CLM-141], not [CLM-119]: a config error, not a dataset's.
     _check_cluster_id(k, f"competing_noise entry {i}: cluster")
@@ -727,9 +735,9 @@ def _noise_entry(i: int, entry: Mapping[str, Any],
     if not (0 <= label < M):
         raise clm_error(118, label=label, hi=M - 1, problem="out of range")
     # True passed as 1.0; a string crashed the comparison.
-    if not _is_real(share) or not (0.0 <= share <= 1.0):
+    if not _is_real(share) or not in_bounds("clm_label.competing_noise.share", share):
         raise clm_error(117, share=share if _is_real(share) else repr(share))
-    if favors not in ("core", "boundary", "random"):
+    if favors not in choices("clm_label.competing_noise.favors"):
         raise clm_error(116, favors=favors)
     return k, label, share, favors
 
@@ -920,7 +928,7 @@ def _size_source(cfg: dict, label: int) -> str:
     resolve_label_counts' precedence; 'perfect' never reaches [CLM-150]. It must
     not raise: it runs inside the target_metric solver's probes, which catch only
     InfeasibleAllocationError."""
-    if cfg.get("balance", "balanced") == "balanced":
+    if cfg.get("balance", default("clm_label.balance")) == "balanced":
         return f"balance 'balanced' (1/{cfg['num_classes']} of the points per label)"
     props = cfg.get("proportions")
     if props:
@@ -962,7 +970,7 @@ def allocate(cfg: dict[str, Any], rules: list[Rule], m_counts: np.ndarray,
              cluster_sizes: dict[int, int]) -> tuple[dict[int, dict[int, int]], dict[int, int]]:
     """Turns rules into integer per-(cluster, label) point demands.
     """
-    split_rule = cfg.get("split_rule", "proportional_to_size")
+    split_rule = cfg.get("split_rule", default("clm_label.split_rule"))
     recall_per_label: dict[int, Fraction] = {}
     claimed_per_label: dict[int, Fraction] = {}
     rules_per_label: dict[int, list[str]] = {}
@@ -1173,10 +1181,10 @@ def assign_points_in_cluster(
     out = np.full(n, -1, dtype=int)
     available = np.ones(n, dtype=bool)
 
-    enabled = centroid_cfg.get("enabled", False)
-    profile = centroid_cfg.get("profile", "linear")
-    favors = centroid_cfg.get("favors", "core")
-    steepness = centroid_cfg.get("steepness", 3.0)
+    enabled = centroid_cfg.get("enabled", default("clm_label.centroid_dependence.enabled"))
+    profile = centroid_cfg.get("profile", default("clm_label.centroid_dependence.profile"))
+    favors = centroid_cfg.get("favors", default("clm_label.centroid_dependence.favors"))
+    steepness = centroid_cfg.get("steepness", default("clm_label.centroid_dependence.steepness"))
 
     # Distances are needed by the global centroid_dependence AND by any core or
     # boundary competing_noise override, which places its label even when the
@@ -1388,7 +1396,8 @@ def _run_allocation_pipeline(cluster_labels, coords, cfg, rules, cluster_ids,
             coords[idx], demand[k], this_spill,
             # `or`, not a .get default: a bare `centroid_dependence:` key parses to
             # None, and assign_points_in_cluster calls .get() on whatever it is given.
-            cfg.get("centroid_dependence") or {"enabled": False}, rng,
+            cfg.get("centroid_dependence")
+            or {"enabled": default("clm_label.centroid_dependence.enabled")}, rng,
             favors_overrides=favors_overrides.get(k),
         )
     return out
@@ -1543,7 +1552,7 @@ def solve_alpha_for_target_metric(cluster_labels: np.ndarray | pd.Series, coords
     metric_fn = _METRIC_FUNCS[tm["type"]]
     target = tm["value"]
     tol = _tolerance(tm)
-    max_iter = tm.get("max_iter", 40)
+    max_iter = tm.get("max_iter", default("clm_label.target_metric.max_iter"))
     # Defaults to the RUN's seed, which is the stream the delivered labeling is
     # generated on.
     probe_seed = tm.get("probe_seed")
@@ -1694,7 +1703,7 @@ def _check_classes_and_mode(cfg: dict) -> None:
     # bool is an int subclass: `num_classes: yes` would otherwise pass as 1.
     if isinstance(M, bool) or not isinstance(M, (int, np.integer)):
         raise clm_error(126, M=repr(M), max_val=MAX_CARDINALITY)
-    if not (1 <= M <= MAX_CARDINALITY):
+    if not in_bounds("clm_label.num_classes", M):
         raise clm_error(126, M=M, max_val=MAX_CARDINALITY)
 
     # The mode decides which of the other keys are read at all, so it is checked
@@ -1825,7 +1834,7 @@ def generate_clm_labels(cluster_labels: np.ndarray | pd.Series | Sequence[int],
     ceiling: float | None = None  # size ceiling of the label counts, when they are fixed
     if tm:
         _warn_recall_targets_ignored(cfg)
-        if tm.get("scope", "global") == "pair":
+        if tm.get("scope", default("clm_label.target_metric.scope")) == "pair":
             # Exact single-pair MCC: size the target label so all of it
             # fits its cluster (recall 1), no numerical search.
             m_counts = _pair_label_counts(cfg, cluster_sizes, m_counts, N)
@@ -1864,7 +1873,7 @@ def generate_clm_labels(cluster_labels: np.ndarray | pd.Series | Sequence[int],
                  target=m_counts.tolist())
 
     if tm:
-        if tm.get("scope", "global") == "pair":
+        if tm.get("scope", default("clm_label.target_metric.scope")) == "pair":
             sm = cfg["single_match"]
             # Only mcc reaches here ([CLM-123]); the ari branch is kept, unused.
             pair_fn = clustering_mcc_pair if tm["type"] == "mcc" else clustering_ari_pair

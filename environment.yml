@@ -1,18 +1,17 @@
 # Conda environment for CLMSynth.
 #   conda env create -f environment.yml
 #   conda activate clmsynth
-# Versions mirror requirements.txt.
 name: clmsynth
 channels:
   - conda-forge
 dependencies:
-  - python=3.14
-  - numpy=2.5.3
-  - pandas=3.1.0
-  - scipy=1.18.1
-  - scikit-learn=1.9.1
-  - matplotlib-base=3.11.2
-  - pyyaml=6.0.3   # optional: config files other than .json
+  - python>=3.12,<3.16
+  - numpy>=2.0
+  - pandas>=3.0
+  - scipy>=1.13
+  - scikit-learn>=1.4.2
+  - matplotlib-base>=3.8.4
+  - pyyaml>=6.0.1   # optional: config files other than .json
   # Optional, feature-specific:
   # - pip:
   #     - git+https://github.com/CN-TU/mdcgenpy # data_source: "mdcgen"

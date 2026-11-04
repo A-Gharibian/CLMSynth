@@ -223,6 +223,17 @@ def test_perfect_mode_cardinality_guard_precedes_indexing():
     assert "[CLM-102]" in str(excinfo.value)
 
 
+def test_perfect_mode_refuses_a_recall_override():
+    """[CLM-111] in build_rules: a direct call under `perfect` with a recall
+    override is refused, not run with the override ignored.
+    Driven through build_rules; the entry point refuses target_metric first.
+    """
+    with pytest.raises(ValueError) as excinfo:
+        build_rules({"num_classes": 4, "matching_mode": "perfect"}, [0, 1, 2, 3],
+                    recall_target_override=0.5)
+    assert "[CLM-111]" in str(excinfo.value)
+
+
 # ---------------------------------------------------------------------------
 # Branching: mutually exclusive combinations
 # ---------------------------------------------------------------------------

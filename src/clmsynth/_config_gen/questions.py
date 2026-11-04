@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-# _questions.py
+# _config_gen/questions.py
 """The wizard's questions, as data.
 
 This module holds the question set the CLI wizard asks, one :class:`Question`
@@ -9,6 +9,9 @@ per prompt, separated from the wizard that reads them.
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal
+
+from ..config_tree import default
+from ..dataset_sources import SOURCES
 
 Kind = Literal["str", "int", "float", "bool", "choice",
                "int_list", "float_list", "str_list", "selection", "id", "ids"]
@@ -61,13 +64,10 @@ _QUESTIONS: Final[Sequence[Question]] = [
     # -- 1. Data source -----------------------------------------------------
     Question(
         "global_settings.data_source", "choice", "Data source",
-        explain="Choose where the base clusters come from:\n"
-                "  clustbench      : real benchmark datasets downloaded online (Gagolewski suite)\n"
-                "  mdcgen          : synthetic clusters generated on the fly (needs the mdcgenpy package)\n"
-                "  fabricated_data : tiny offline example data (no internet, no extra packages)\n"
-                "  byoc            : your OWN CSV file (features + one cluster-id column)",
-        default="clustbench",
-        choices=("clustbench", "mdcgen", "fabricated_data", "byoc")),
+        explain="Choose where the base clusters come from:\n" + "\n".join(
+            f"  {key:<15} : {source.blurb}" for key, source in SOURCES.items()),
+        default=default("global_settings.data_source"),
+        choices=tuple(SOURCES)),
     Question(
         "global_settings.output_dir", "str", "Where to save results (folder)",
         explain="Where results go. Usually just press Enter to keep 'OUTPUT';\n"
@@ -340,8 +340,8 @@ _QUESTIONS: Final[Sequence[Question]] = [
         default=0, lo=0, engine_min=0,
         visible_when=_skew_live("dominant_minority")),
     Question(
-        "clm_label.skew_params.dominant_share", "float", "its share of all points (0..1, e.g. 0.6)",
-        default=0.6, lo=0.0, hi=1.0, engine_min=0.0, engine_max=1.0,
+        "clm_label.skew_params.dominant_share", "float", "its share of all points (0..1, e.g. 0.5)",
+        default=0.5, lo=0.0, hi=1.0, engine_min=0.0, engine_max=1.0,
         visible_when=_skew_live("dominant_minority")),
     # alpha > 0 strictly: the engine divides by the normalized draw, so exactly 0
     # is a divide-by-zero. lo_strict makes the wizard refuse 0.0 as the engine does.
@@ -360,6 +360,8 @@ _QUESTIONS: Final[Sequence[Question]] = [
         "output.path", "str", "Save this config to",
         default="test_data_config.yaml"),
     Question("run.now", "bool", "Run the pipeline now?", default=True),
+    # Asked only with matplotlib installed; without it the run skips the plots.
+    Question("run.plots", "bool", "Draw the plots?", default=True),
 ]
 
 SCHEMA: Final[Mapping[str, Question]] = {q.key: q for q in _QUESTIONS}

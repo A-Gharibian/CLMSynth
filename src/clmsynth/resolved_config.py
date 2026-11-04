@@ -12,7 +12,7 @@ from typing import Any, Final
 
 import numpy as np
 
-from .clm_label_engine import BALANCE_VALUES, MATCHING_MODES
+from .config_tree import choices, default
 
 __all__ = [
     "BALANCE",
@@ -33,25 +33,33 @@ __all__ = [
 
 RESOLVED_CONFIG_NAME = "resolved_config.yaml"
 
-# Pipeline defaults, read by main.py.
-DATA_SOURCE = "clustbench"
-OUTPUT_DIR = "OUTPUT"
-N_LABELS = 0
-SOURCE_LABELING = "labels0"
+# The run's defaults, from config_tree.
+DATA_SOURCE: Final[str] = default("global_settings.data_source")
+OUTPUT_DIR: Final[str] = default("global_settings.output_dir")
+N_LABELS: Final[int] = default("label_generation.n_labels")
+SOURCE_LABELING: Final[str] = default("label_generation.source_labeling")
 
-# Engine defaults, restated from clm_label_engine.
-BALANCE = "balanced"
-SPLIT_RULE = "proportional_to_size"
-SPILLOVER_RULE = "proportional_to_marginal"
+BALANCE: Final[str] = default("clm_label.balance")
+SPLIT_RULE: Final[str] = default("clm_label.split_rule")
+SPILLOVER_RULE: Final[str] = default("clm_label.spillover_rule")
+# Which parameters each skew_rule reads.
 SKEW_PARAMS: Final[Mapping[str, Mapping[str, Any]]] = {
-    "geometric": {"ratio": 0.5},
-    "dominant_minority": {"dominant_index": 0, "dominant_share": 0.5},
-    "dirichlet": {"alpha": 1.0},
+    rule: {key: default(f"clm_label.skew_params.{key}") for key in keys}
+    for rule, keys in (("geometric", ("ratio",)),
+                       ("dominant_minority", ("dominant_index", "dominant_share")),
+                       ("dirichlet", ("alpha",)))
 }
-CENTROID: Final[Mapping[str, Any]] = {"enabled": False, "profile": "linear", "favors": "core",
-                                      "steepness": 3.0}
-NOISE_ENTRY: Final[Mapping[str, Any]] = {"share": 1.0, "favors": "boundary"}
-TARGET_METRIC: Final[Mapping[str, Any]] = {"scope": "global", "tolerance": 0.01, "max_iter": 40}
+CENTROID: Final[Mapping[str, Any]] = {
+    key: default(f"clm_label.centroid_dependence.{key}")
+    for key in ("enabled", "profile", "favors", "steepness")}
+NOISE_ENTRY: Final[Mapping[str, Any]] = {
+    key: default(f"clm_label.competing_noise.{key}") for key in ("share", "favors")}
+TARGET_METRIC: Final[Mapping[str, Any]] = {
+    key: default(f"clm_label.target_metric.{key}") for key in ("scope", "tolerance", "max_iter")}
+
+_MATCHING_MODES = choices("clm_label.matching_mode")
+_BALANCE_VALUES = choices("clm_label.balance")
+_SCOPES = choices("clm_label.target_metric.scope")
 
 
 def resolve_config(config: Mapping[str, Any], source: str, batteries: list[str],
@@ -92,7 +100,7 @@ def _resolve_label_generation(label_cfg: Mapping[str, Any], label_seed: int) -> 
 
 def _resolve_clm(clm: Any) -> Any:
     """The clm_label block as generate_clm_labels reads it for its matching_mode."""
-    if not isinstance(clm, Mapping) or clm.get("matching_mode") not in MATCHING_MODES:
+    if not isinstance(clm, Mapping) or clm.get("matching_mode") not in _MATCHING_MODES:
         return clm          # refused as it stands: [CLM-141], [CLM-202] or [CLM-101]
     mode = clm["matching_mode"]
     out = _present(clm, "num_classes")
@@ -146,7 +154,7 @@ def _resolve_clm(clm: Any) -> Any:
 def _resolve_counts(clm: Mapping[str, Any]) -> dict[str, Any]:
     """balance, then proportions or skew_rule, whichever resolve_label_counts reads."""
     balance = clm.get("balance", BALANCE)
-    if balance not in BALANCE_VALUES:
+    if balance not in _BALANCE_VALUES:
         return _present(clm, "proportions", "balance", "skew_rule", "skew_params")  # [CLM-132]
     if balance == "balanced":
         return {"balance": balance}                          # proportions ignored: [CLM-301]
@@ -186,7 +194,7 @@ def _resolve_target(tm: Any) -> Any:
     if not isinstance(tm, Mapping):
         return tm
     scope = tm.get("scope", TARGET_METRIC["scope"])
-    if scope not in ("pair", "global"):
+    if scope not in _SCOPES:
         return tm                                            # [CLM-122]
     out = _present(tm, "type", "value")
     out["scope"] = scope

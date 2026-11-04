@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: MIT
-# _fabricated_generator.py
 """Offline synthetic-feature generator.
 Six numeric feature types, plus a categorical column generator.
 """
