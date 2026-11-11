@@ -46,7 +46,7 @@ file can execute by other means as well.
 CodeQL reports "uncontrolled data used in path expression" where a path typed by
 the invoking user reaches `open()`:
 
-- `main.py` — `sys.argv[1]`, the config path (`python -m clmsynth.main my_config.yaml`)
+- `__main__.py` — `sys.argv[1]`, the config path (`clmsynth my_config.yaml`)
 - `_config_gen/generate_config.py`, `sys.argv[1]` and `sys.argv[2]`, the payload and output paths
 - `_config_gen/config_wizard.py`, the save path the wizard asks for at the prompt
 
@@ -58,7 +58,7 @@ the program. These are dismissed in code scanning as *Won't fix*.
 ### `py/path-injection`: paths from the configuration file
 
 One sink is different in kind: `output_dir` in the configuration reaches the
-run-folder and summary writes in `main.py`. Under the shareable-config case
+run-folder and summary writes in `_single_run.py`. Under the shareable-config case
 above, that value can come from someone else.
 
 Impact is nonetheless limited:
@@ -74,7 +74,7 @@ Impact is nonetheless limited:
 
 **Names are guarded; directories are deliberately not.** Battery and dataset
 names from the configuration are refused when path-shaped — `_is_plain_name` and
-`_drop_path_shaped_names` in `main.py` reject any name containing `/`, `\`, `:`,
+`_drop_path_shaped_names` in `_single_run.py` reject any name containing `/`, `\`, `:`,
 or equal to `.` or `..`, tested against traversal, separator and drive-relative
 forms. A name is not supposed to be a path, so a separator in one is a category
 error and can be refused without ambiguity.

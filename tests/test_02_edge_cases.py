@@ -14,10 +14,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from clmsynth.byoc_source import fetch_byoc_data
+from clmsynth import run_pipeline
+from clmsynth.byoc_source import fetch_byoc_data, validate_import
 from clmsynth.clm_label_engine import generate_clm_labels, resolve_label_counts
 from clmsynth.labeling import build_context
-from clmsynth.main import run_pipeline
 
 N = 1000
 CLUSTERS = np.concatenate([np.full(400, 0), np.full(300, 1), np.full(200, 2), np.full(100, 3)])
@@ -730,16 +730,18 @@ def test_byoc_duplicate_rows_are_not_silently_deduplicated(tmp_path):
     assert len(result) == 6
 
 
-def test_byoc_duplicate_column_names_are_rejected(tmp_path, caplog):
+@pytest.mark.parametrize("start", ["", "﻿", "\n"], ids=["plain", "a-BOM", "a-blank-line"])
+def test_byoc_duplicate_column_names_are_rejected(tmp_path, caplog, start):
     """pandas renames the second `f1` to `f1.1`, so the column you meant is ambiguous.
 
     Previously this only had to load without tripping. Since the import
     requirements landed it is a rejection: silently working with `f1.1` means
     the geometry is built from a column the user never named, and which of the
-    two originals it holds depends on their order in the file.
+    two originals it holds depends on their order in the file. A BOM or a blank
+    line before the header, both of which pandas skips, does not hide the repeat.
     """
     (tmp_path / "dup_cols.csv").write_text(
-        "f1,f1,cluster\n1.0,2.0,0\n3.0,4.0,1\n5.0,6.0,0\n7.0,8.0,0\n9.0,1.0,1\n2.0,3.0,1\n",
+        f"{start}f1,f1,cluster\n1.0,2.0,0\n3.0,4.0,1\n5.0,6.0,0\n7.0,8.0,0\n9.0,1.0,1\n2.0,3.0,1\n",
         encoding="utf-8",
     )
     with caplog.at_level(logging.ERROR, logger="clmsynth"):
@@ -785,6 +787,15 @@ def test_byoc_duplicate_column_names_are_rejected(tmp_path, caplog):
             "missing value",
         ),
         (
+            pd.DataFrame({"f1": [1.0, 1.0, float("inf"), 2.0, 2.0, float("-inf")],
+                          "cluster": [0] * 3 + [1] * 3}),
+            "infinite value",
+        ),
+        (
+            pd.DataFrame({"": range(6), "f1": [1.0] * 6, "cluster": [0] * 3 + [1] * 3}),
+            "header cell(s) [1] have no name",
+        ),
+        (
             pd.DataFrame({"f1": ["a", "b", "c", "d", "e", "f"], "cluster": [0] * 3 + [1] * 3}),
             "non-numeric",
         ),
@@ -805,6 +816,8 @@ def test_byoc_duplicate_column_names_are_rejected(tmp_path, caplog):
         "single-cluster",
         "nan-cluster",
         "nan-feature",
+        "inf-feature",
+        "unnamed-column",
         "non-numeric-feature",
         "string-cluster-ids",
         "float-cluster-ids",
@@ -883,7 +896,8 @@ def test_byoc_tag_columns_ride_along_outside_the_geometry(tmp_path):
 
 
 def test_byoc_standardize_leaves_a_tag_alone(tmp_path):
-    """Min-max rescaling is a feature operation; a passenger is not rescaled."""
+    """Min-max rescaling is a feature operation; a passenger is not rescaled, and
+    is carried as the text the file holds."""
     outcome = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
     frame = pd.DataFrame(
         {"f1": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], "outcome": outcome, "cluster": [0] * 3 + [1] * 3}
@@ -899,7 +913,33 @@ def test_byoc_standardize_leaves_a_tag_alone(tmp_path):
     assert result is not None
     out = build_context("byoc", "local", "scaled", result).to_dataframe()
     assert out["f1"].min() == 0.0 and out["f1"].max() == 1.0
-    assert out["outcome"].tolist() == outcome
+    assert out["outcome"].tolist() == [str(value) for value in outcome]
+
+
+@pytest.mark.parametrize("values", [("007", "010"), ("NA", "x"), ("1.50", "2")],
+                         ids=["leading-zeros", "the-text-NA", "trailing-zero"])
+def test_byoc_tag_values_are_carried_as_written(tmp_path, values):
+    """A tag is copied to the output unchanged, an identifier among them. Read with
+    the features, it went through type inference: 007 became 7, the text NA a blank."""
+    rows = "".join(f"{i / 10},{values[i % 2]},{i % 2}\n" for i in range(6))
+    (tmp_path / "tagged.csv").write_text(f"f1,tag,cluster\n{rows}", encoding="utf-8")
+    result = fetch_byoc_data(
+        dataset_name="tagged", input_dir=str(tmp_path), cluster_column="cluster",
+        tag_columns=["tag"],
+    )
+    assert result is not None
+    out = build_context("byoc", "local", "tagged", result).to_dataframe()
+    assert out["tag"].tolist() == [values[i % 2] for i in range(6)]
+
+
+def test_a_frame_with_numbered_columns_builds_a_context():
+    """pd.DataFrame(X) names its columns 0, 1, ...: a name that is not text carries
+    no prefix, so it is a feature."""
+    frame = pd.DataFrame(np.arange(12.0).reshape(6, 2))
+    frame["GroundTruth_labels0"] = [0] * 3 + [1] * 3
+    ctx = build_context("unit", "battery", "dataset", frame)
+    assert ctx.features.shape == (6, 2)
+    assert list(ctx.ground_truths) == ["labels0"]
 
 
 def test_byoc_boolean_column_is_a_feature_not_a_dropped_column(tmp_path):
@@ -959,6 +999,59 @@ def test_byoc_accepts_a_well_formed_import(tmp_path):
     assert len(result) == 9
 
 
+def _six_rows(cluster_column="cluster"):
+    return pd.DataFrame({"f1": np.linspace(0, 1, 6), "f2": np.linspace(1, 0, 6),
+                         cluster_column: [0] * 3 + [1] * 3})
+
+
+def test_byoc_cluster_column_s_name_is_free(tmp_path):
+    """A reserved name is refused for a feature, not for the cluster column, which
+    never reaches the output under its own name. Cluster_0 is what a CLMSynth
+    output calls it, so an output can be read back in."""
+    _six_rows("Cluster_0").to_csv(tmp_path / "data.csv", index=False)
+    result = fetch_byoc_data(dataset_name="data", input_dir=str(tmp_path),
+                             cluster_column="Cluster_0")
+    assert result is not None
+    assert result["GroundTruth_labels0"].nunique() == 2
+
+
+def test_byoc_stem_0_is_a_dataset(tmp_path):
+    """`datasets: [0]` names 0.csv: the number 0 read as "no CSV given"."""
+    _six_rows().to_csv(tmp_path / "0.csv", index=False)
+    assert fetch_byoc_data(dataset_name=0, input_dir=str(tmp_path),  # type: ignore[arg-type]
+                           cluster_column="cluster") is not None
+
+
+@pytest.mark.parametrize(("key", "value"), [("standardize", "false"), ("tag_columns", 5)])
+def test_byoc_setting_of_the_wrong_type_is_refused(tmp_path, key, value):
+    """[CLM-141], which stops the run. A quoted "false" is truthy and rescaled the
+    features; a number for tag_columns skipped each dataset with "'int' object is
+    not iterable"."""
+    _six_rows().to_csv(tmp_path / "data.csv", index=False)
+    with pytest.raises(ValueError) as excinfo:
+        fetch_byoc_data(dataset_name="data", input_dir=str(tmp_path), cluster_column="cluster",
+                        **{key: value})
+    assert getattr(excinfo.value, "code", None) == 141
+    assert f"byoc_suite.{key}" in str(excinfo.value)
+
+
+def test_validate_import_reports_a_cluster_column_the_frame_lacks():
+    """It returns every reason a frame is not a usable import, and a frame without
+    the cluster column gave none: only the fetcher checked that."""
+    frame = _six_rows("c")
+    problems = validate_import(frame, list(frame.columns), "cluster")
+    assert any("cluster column 'cluster'" in problem for problem in problems)
+
+
+def test_only_the_prefix_of_a_ground_truth_comes_off():
+    """Two columns landed on one key, and a ground truth was lost without a word,
+    when every occurrence of the prefix was stripped."""
+    frame = _six_rows("GroundTruth_a")
+    frame["GroundTruth_GroundTruth_a"] = [1] * 3 + [0] * 3
+    ctx = build_context("unit", "battery", "dataset", frame)
+    assert set(ctx.ground_truths) == {"a", "GroundTruth_a"}
+
+
 def test_emoji_feature_column_name_loads(tmp_path):
     """Feature names are carried through to the output CSV and plot axes verbatim."""
     result = write_byoc_csv(
@@ -1011,9 +1104,12 @@ def test_config_value_with_trailing_space_is_rejected():
         (CLUSTERS.astype(float), COORDS, "are not integers, such as 0.0"),
         ([*CLUSTERS[:999].tolist(), True], COORDS, "1 of the 1000 cluster ids are not integers"),
         (CLUSTERS, COORDS[:900], "coords has 900 rows"),
+        (CLUSTERS[:, None], COORDS, "cluster_labels must be 1-D, got shape (1000, 1)"),
+        (np.column_stack([CLUSTERS, CLUSTERS]), COORDS, "cluster_labels must be 1-D"),
+        (CLUSTERS, np.float64(1.0), "coords has no rows"),
     ],
     ids=["nan-ids", "inf-ids", "mixed-list", "string-ids", "float-ids", "bool-in-list",
-         "short-coords"],
+         "short-coords", "ids-in-one-column", "ids-in-two-columns", "scalar-coords"],
 )
 @pytest.mark.parametrize("mode", ["random", "custom"])
 def test_unusable_dataset_input_is_refused(cluster_labels, coords, problem, mode):
@@ -1037,6 +1133,191 @@ def test_unusable_dataset_input_is_refused(cluster_labels, coords, problem, mode
         generate_clm_labels(cluster_labels, coords, cfg, seed=1)
     assert getattr(excinfo.value, "code", None) == 133
     assert problem in str(excinfo.value)
+
+
+@pytest.mark.parametrize("profile", ["step", "linear", "exponential"])
+@pytest.mark.parametrize("bad", [np.nan, np.inf], ids=["nan", "inf"])
+def test_coordinates_that_placement_reads_must_be_finite(bad, profile):
+    """[CLM-133]. One NaN or infinite coordinate turns every distance of its cluster
+    into NaN: `step` would place arbitrary points without a word, and the other
+    profiles end in numpy's "Probabilities contain NaN". Coordinates that nothing
+    reads are not checked."""
+    coords = COORDS.astype(float)
+    coords[0, 0] = bad
+    cfg = {
+        "num_classes": 2,
+        "balance": "balanced",
+        "matching_mode": "custom",
+        "assignment_matrix": [{"label": 0, "clusters": [0], "recall_target": 0.5}],
+        "centroid_dependence": {"enabled": True, "favors": "core", "profile": profile},
+    }
+    with pytest.raises(ValueError) as excinfo:
+        generate_clm_labels(CLUSTERS, coords, cfg, seed=1)
+    assert getattr(excinfo.value, "code", None) == 133
+    assert "1 value(s) in coords are NaN or infinite" in str(excinfo.value)
+
+    del cfg["centroid_dependence"]
+    assert len(generate_clm_labels(CLUSTERS, coords, cfg, seed=1)) == len(CLUSTERS)
+
+
+@pytest.mark.parametrize("profile", ["step", "linear", "exponential"])
+@pytest.mark.parametrize(
+    "scale,dtype", [(1e160, np.float64), (1e20, np.float32), (100, np.float16)],
+    ids=["float64-1e160", "float32-1e20", "float16-100"],
+)
+def test_coordinates_too_large_for_a_distance_are_refused(scale, dtype, profile):
+    """[CLM-133]. A distance squares the coordinates, which overflows above 1e154,
+    or 1e19 in float32 and 255 in float16: `step` would place arbitrary points and
+    the other profiles end in numpy's "Probabilities contain NaN". The refusal says
+    to standardize or rescale; coordinates that nothing reads are not checked."""
+    coords = (COORDS.astype(float) * scale).astype(dtype)
+    cfg = {
+        "num_classes": 2,
+        "balance": "balanced",
+        "matching_mode": "custom",
+        "assignment_matrix": [{"label": 0, "clusters": [0], "recall_target": 0.5}],
+        "centroid_dependence": {"enabled": True, "favors": "core", "profile": profile},
+    }
+    with pytest.raises(ValueError) as excinfo:
+        generate_clm_labels(CLUSTERS, coords, cfg, seed=1)
+    assert getattr(excinfo.value, "code", None) == 133
+    assert "Standardize or rescale the features" in str(excinfo.value)
+
+    del cfg["centroid_dependence"]
+    assert len(generate_clm_labels(CLUSTERS, coords, cfg, seed=1)) == len(CLUSTERS)
+
+
+@pytest.mark.parametrize("coords", [COORDS.astype(object), COORDS.astype(str)],
+                         ids=["object", "text"])
+def test_coordinates_that_are_not_numbers_are_refused(coords):
+    """[CLM-133]. An object array has no square root and text reached numpy's mean,
+    both uncoded. Values are not converted; coordinates that nothing reads are not
+    checked."""
+    cfg = {
+        "num_classes": 2,
+        "balance": "balanced",
+        "matching_mode": "custom",
+        "assignment_matrix": [{"label": 0, "clusters": [0], "recall_target": 0.5}],
+        "centroid_dependence": {"enabled": True, "favors": "core", "profile": "linear"},
+    }
+    with pytest.raises(ValueError) as excinfo:
+        generate_clm_labels(CLUSTERS, coords, cfg, seed=1)
+    assert getattr(excinfo.value, "code", None) == 133
+    assert "not numbers" in str(excinfo.value)
+
+    del cfg["centroid_dependence"]
+    assert len(generate_clm_labels(CLUSTERS, coords, cfg, seed=1)) == len(CLUSTERS)
+
+
+# ---------------------------------------------------------------------------
+# Units, dtypes and numpy values a direct caller may pass
+# ---------------------------------------------------------------------------
+
+TWO = np.repeat([0, 1], 100)
+TWO_COORDS = np.random.default_rng(0).normal(size=(200, 2))
+
+
+def two_labels(**extra):
+    """Label i on cluster i at recall 0.8, balanced."""
+    return {"num_classes": 2, "balance": "balanced", "matching_mode": "custom",
+            "assignment_matrix": [{"label": i, "clusters": [i], "recall_target": 0.8}
+                                  for i in range(2)], **extra}
+
+
+def placed_by_centroid(profile):
+    return two_labels(
+        centroid_dependence={"enabled": True, "favors": "core", "profile": profile})
+
+
+@pytest.mark.parametrize(("profile", "scale"), [("step", 1e-10), ("exponential", 1e-13),
+                                                ("linear", 1e-24)])
+def test_placement_does_not_depend_on_the_units(profile, scale):
+    """Nanometres written in metres keep their order. The pick breaks ties with an
+    absolute 1e-9 and divides by span + 1e-12, so a score whose span is below 1e-6
+    is rescaled to 0..1 first; any other score takes the pick as it is."""
+    cfg = placed_by_centroid(profile)
+    plain = generate_clm_labels(TWO, TWO_COORDS, cfg, seed=1).to_numpy()
+    small = generate_clm_labels(TWO, TWO_COORDS * scale, cfg, seed=1).to_numpy()
+    assert (plain == small).mean() > 0.99
+
+
+def test_a_constant_cluster_in_float16_is_placed():
+    """Points at one place tie, whatever their dtype: float16 cannot hold the 1e-12
+    the weights add to a span of 0, which divided 0 by 0."""
+    coords = np.ones((200, 2), dtype=np.float16)
+    cfg = placed_by_centroid("linear")
+    pd.testing.assert_series_equal(
+        generate_clm_labels(TWO, coords, cfg, seed=1),
+        generate_clm_labels(TWO, coords.astype(float), cfg, seed=1))
+
+
+@pytest.mark.parametrize("mode", ["custom", "random"])
+def test_a_series_input_keeps_its_index(mode):
+    """The labels of a Series carry its index, so they align on the caller's frame."""
+    truth = pd.Series(TWO, index=np.arange(200) + 1000)
+    labels = generate_clm_labels(truth, TWO_COORDS, two_labels(matching_mode=mode), seed=1)
+    assert labels.index.equals(truth.index)
+
+
+@pytest.mark.parametrize(("kind", "per_cluster"), [(np.int8, 100), (np.uint8, 200),
+                                                   (np.int16, 20000)])
+def test_a_numpy_num_classes_gives_the_labels_of_an_int(kind, per_cluster):
+    """A numpy integer kept its width in the counts, where a share times N
+    overflowed: "Python integer 200 out of bounds for int8"."""
+    truth = np.repeat([0, 1], per_cluster)
+    pd.testing.assert_series_equal(
+        generate_clm_labels(truth, None, two_labels(num_classes=kind(2)), seed=1),
+        generate_clm_labels(truth, None, two_labels(), seed=1))
+
+
+def recall_in_two_rows(kind):
+    return {"num_classes": 3, "matching_mode": "custom", "balance": "balanced",
+            "assignment_matrix": [{"clusters": [0], "label": 0, "recall_target": kind(0.6)},
+                                  {"clusters": [1], "label": 0, "recall_target": kind(0.4)}]}
+
+
+def shares_of_two_entries(kind):
+    return {"num_classes": 3, "matching_mode": "custom", "balance": "balanced",
+            "assignment_matrix": [{"clusters": [0], "label": 0, "recall_target": 0.5}],
+            "competing_noise": [
+                {"cluster": 1, "label": 1, "share": kind(0.6), "favors": "random"},
+                {"cluster": 1, "label": 2, "share": kind(0.4), "favors": "random"}]}
+
+
+def tied_proportions(kind):
+    return {"num_classes": 2, "matching_mode": "custom", "balance": "unbalanced",
+            "proportions": [kind(0.7), kind(0.3)], "assignment_matrix": []}
+
+
+@pytest.mark.parametrize(("build", "truth"), [
+    (recall_in_two_rows, TWO), (shares_of_two_entries, TWO),
+    (tied_proportions, np.repeat([0, 1], [717, 718])),
+], ids=["recall-0.6+0.4", "share-0.6+0.4", "proportions-0.7+0.3-of-1435"])
+def test_float32_values_count_as_written(build, truth):
+    """np.float32(0.6) is 0.6 as written, not the 0.6000000238 float() widens it
+    to: 0.6 + 0.4 passed 1 ([CLM-153], [CLM-152]) and a 1004.5 tie was lost."""
+    pd.testing.assert_series_equal(
+        generate_clm_labels(truth, None, build(np.float32), seed=1),
+        generate_clm_labels(truth, None, build(float), seed=1))
+
+
+def test_a_search_budget_past_a_c_int_is_not_a_smaller_search():
+    """scipy takes max_iter as a C int: from 2**31 its "Unable to parse arguments"
+    read as a spent budget, and the search stopped at the grid."""
+    truth = np.repeat([0, 1, 2], 40)
+    coords = np.random.default_rng(0).normal(size=(120, 2))
+
+    def achieved(max_iter):
+        report: dict = {}
+        cfg = {"num_classes": 3, "balance": "balanced", "matching_mode": "custom",
+               "assignment_matrix": [{"label": i, "clusters": [i], "recall_target": 0.8}
+                                     for i in range(3)],
+               "target_metric": {"type": "mcc", "value": 0.54, "tolerance": 0.005,
+                                 "max_iter": max_iter}}
+        generate_clm_labels(truth, coords, cfg, seed=1, report=report)
+        return report["achieved"]
+
+    assert achieved(2**31) == achieved(40)
 
 
 @pytest.mark.parametrize("container", [list, tuple])

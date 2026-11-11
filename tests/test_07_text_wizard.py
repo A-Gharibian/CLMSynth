@@ -28,9 +28,9 @@ import numpy as np
 import pytest
 
 import clmsynth._config_gen.config_wizard as wizard
+from clmsynth import load_config
 from clmsynth._config_gen.questions import SCHEMA
 from clmsynth.clm_label_engine import generate_clm_labels
-from clmsynth.main import load_config
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -239,7 +239,6 @@ def test_canned_answers_build_an_engine_valid_config(stdin, yaml):
             "",  # cluster_column -> cluster
             "",  # carry any column through? -> no
             "",  # standardize -> no
-            "",  # seed -> 42
             # build_label_generation
             "",  # n_labels -> 1
             "",  # label seed -> 42
@@ -256,6 +255,7 @@ def test_canned_answers_build_an_engine_valid_config(stdin, yaml):
             "",  # spillover_rule -> proportional_to_marginal
             "",  # competing noise? -> no
             "",  # centroid dependence? -> no
+            "",  # follow a feature? -> no
         ]
     )
 
@@ -341,4 +341,47 @@ def test_the_wizard_asks_again_for_nan_or_inf(stdin):
     assert wizard.ask_float("share", lo=0.0, hi=1.0) == 0.5
     stdin.extend(["0.5, nan", "0.4, 0.6"])
     assert wizard.ask_floats("proportions") == [0.4, 0.6]
+    assert not stdin
+
+
+@pytest.mark.parametrize(("ask", "then"), [
+    (lambda: wizard.ask_choice("Pick", ("a", "b")), []),
+    (lambda: wizard.ask_selection("Pick", ["a", "b"]), []),
+    (lambda: wizard._registry_suite("fabricated_data"), ["", ""]),
+], ids=["a-choice", "a-selection", "a-group"])
+def test_a_character_isdigit_accepts_is_asked_again(stdin, ask, then):
+    """A superscript 2 passes isdigit and int() refuses it, so one keystroke ended
+    the wizard with a traceback."""
+    stdin.extend(["²", "1", *then])
+    ask()
+    assert not stdin
+
+
+def test_byoc_answers_every_run_refuses_are_asked_again(stdin):
+    """A stem with a folder part and the cluster column as a tag: each question
+    says it must not be, and the answer stood. No seed is asked: byoc reads a file."""
+    stdin.extend([
+        "",  # input_dir -> INPUT
+        "sub/data",  # CSV file name(s), asked again
+        "data",
+        "",  # cluster_column -> cluster
+        "yes",  # carry a column through
+        "cluster",  # the cluster column, asked again
+        "site",
+        "",  # standardize -> no
+    ])
+    suite = wizard._byoc_suite()
+    assert not stdin
+    assert suite["datasets"] == ["data"]
+    assert suite["tag_columns"] == ["site"]
+    assert "seed" not in suite
+
+
+def test_a_seed_is_asked_only_of_a_source_that_reads_it(stdin):
+    """clustbench downloads fixed data, and its seed question promised a result
+    that nothing computed."""
+    stdin.extend(["", ""])  # the group, its datasets
+    assert "seed" not in wizard._registry_suite("clustbench")
+    stdin.extend(["", "", ""])  # the group, its datasets, the seed
+    assert wizard._registry_suite("fabricated_data")["seed"] == 42
     assert not stdin

@@ -14,7 +14,7 @@ import pandas as pd
 
 from .byoc_source import TAG_PREFIX
 from .clm_errors import clm_missing
-from .clm_label_engine import _check_config, generate_clm_labels
+from .clm_label_engine import _FEATURE_COLUMNS, _check_config, generate_clm_labels
 from .config_tree import default
 from .metrics import clustering_ari, clustering_mcc
 
@@ -165,11 +165,12 @@ def build_context(source: str, battery: str, dataset: str, df: pd.DataFrame) -> 
     DatasetContext
         With ``generated_labels`` still empty.
     """
-    gt_cols = [c for c in df.columns if c.startswith("GroundTruth_")]
-    tag_cols = [c for c in df.columns if c.startswith(TAG_PREFIX)]
+    # A name that is not text, as pd.DataFrame(X) gives its columns, carries no prefix.
+    gt_cols = [c for c in df.columns if isinstance(c, str) and c.startswith("GroundTruth_")]
+    tag_cols = [c for c in df.columns if isinstance(c, str) and c.startswith(TAG_PREFIX)]
     feature_cols = [c for c in df.columns
                     if c not in gt_cols and c not in tag_cols and c != "Cohort_Class"]
-    ground_truths = {c.replace("GroundTruth_", ""): df[c] for c in gt_cols}
+    ground_truths = {c.removeprefix("GroundTruth_"): df[c] for c in gt_cols}
     # The transport prefix comes off here, so the CSV shows the user's own name.
     tags = df[tag_cols].rename(columns=lambda c: c[len(TAG_PREFIX):])
     return DatasetContext(battery, dataset, df[feature_cols], source=source,
@@ -222,6 +223,9 @@ class LabelGenerator:
         cluster_labels = context.ground_truths[self.source_labeling].to_numpy()
         coords = context.features.to_numpy()
         clm_config = _require_clm_config(self.clm_config)
+        if isinstance(clm_config, Mapping) and clm_config.get("feature_dependence"):
+            # to_numpy() drops the names an entry finds its feature by.
+            clm_config = {**clm_config, _FEATURE_COLUMNS: list(context.features.columns)}
 
         for i in range(self.n_labels):
             report: dict[str, Any] = {}

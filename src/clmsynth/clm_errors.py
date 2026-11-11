@@ -32,13 +32,13 @@ class InfeasibleAllocationError(ValueError):
     cannot fit within cluster capacities, or when target_metric.strict refuses
     a delivered labeling outside the tolerance ([CLM-154]).
     A ValueError subclass, but caught *separately* by target_metric's search
-    loop ("try a different alpha") and by main.py (skip the label).
+    loop ("try a different alpha") and by _single_run.py (skip the label).
     """
 
 
 class MissingConfigKey(KeyError):
     """A required config key is absent: a key with no default, so no dataset can
-    be labelled and main.py stops the run. A KeyError subclass; the message
+    be labelled and _single_run.py stops the run. A KeyError subclass; the message
     carries the code.
     """
 
@@ -84,9 +84,10 @@ CODES: Final[Mapping[int, str]] = {
          "MCC has an exact closed-form inverse, ARI does not.",
     124: "target_metric.scope 'pair' requires matching_mode 'single': the target pair is "
          "the single_match (cluster, label). Use scope 'global' for 'custom'.",
-    125: "centroid placement requires per-point feature vectors: {placement} is set but "
-         "coords is {got}. Provide an (N, d) feature array with d >= 2, or disable "
-         "centroid_dependence and any competing_noise favors 'core'/'boundary'.",
+    125: "placement by features requires per-point feature vectors: {placement} is set but "
+         "coords is {got}. Provide an (N, d) feature array with d >= 2 that holds every "
+         "feature a feature_dependence entry names, or disable centroid_dependence, "
+         "feature_dependence and any competing_noise favors 'core'/'boundary'.",
     126: "num_classes must be an integer between 1 and {max_val} (got {M}).",
     127: "the dataset's cluster count K={K} exceeds the supported maximum of {max_val}.",
     128: "spillover_rule 'concentrated': concentrated_labels must be a LIST of integer "
@@ -186,8 +187,9 @@ CODES: Final[Mapping[int, str]] = {
     304: "spillover_rule {rule!r}: the delivered label counts {achieved} differ from their "
          "targets {target}. 'proportional_to_marginal' refills every label to its target; "
          "'uniform' and 'concentrated' do not.",
-    # One code, three causes; {cause} names which. Precedent: 104, 131.
-    305: "competing_noise: entry {entry} {effect}: {cause}.",
+    # One code, two blocks and several causes; {where} names the block, {cause} the
+    # cause. Precedent: 104, 131, 142.
+    305: "{where}: entry {entry} {effect}: {cause}.",
     306: "target_metric: did not converge within tolerance after {n_iter} of {max_iter} "
          "iterations. "
          "Best found: alpha={best_alpha:.4f}, achieved={best_metric:.4f} "
@@ -208,9 +210,9 @@ CODES: Final[Mapping[int, str]] = {
     310: "target_metric scope 'pair': the DELIVERED labeling achieves pair {type}="
          "{achieved:.4f}, outside the requested {target} +/- {tol}: {cause}. Treat the "
          "achieved value above as authoritative, not the requested one.",
-    311: "matching_mode='random': centroid_dependence ignored and not validated, labels "
-         "are drawn with no regard to the clusters, so no point is placed by its distance "
-         "to a centroid.",
+    # One code, two blocks; {block} names which.
+    311: "matching_mode='random': {block} ignored and not validated, labels "
+         "are drawn with no regard to the clusters, so no point is placed by {by}.",
 }
 
 

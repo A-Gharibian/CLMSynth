@@ -60,9 +60,6 @@ Optional, depending on which source/utility you use:
 pip install git+https://github.com/CN-TU/mdcgenpy    # only needed for data_source: "mdcgen"
 ```
 
-`mdcgenpy` is GPL-3.0, so CLMSynth never ships it: you install it yourself. Every dependency
-CLMSynth ships is permissively licensed.
-
 ## Use directly 
 
 **CLMSynth** integrates with both downstream and upstream Python pipelines,
@@ -150,15 +147,23 @@ CLMSynth is fully functional from a config file; the wizard helps to *create* on
 
 2. Run the pipeline:
    ```bash
-   python -m clmsynth.main                   # reads test_data_config.yaml
-   python -m clmsynth.main my_config.yaml    # or an explicit config path
-   python -m clmsynth.main docs/examples/example_config.json   # offline: no network, no extra
-   python -m clmsynth.main my_config.yaml --no-viz   # skip the plots; matplotlib is never imported
-   python -m clmsynth.main my_config.yaml --keep-failed   # keep a failed run's config and log
-   python -m clmsynth.main a.json b.json c.yaml --jobs 2  # a batch: each config in its own process
-   python -m clmsynth.main sweep/ --jobs 2 --viz          # a folder's configs as a batch, with plots
+   clmsynth                   # reads test_data_config.yaml
+   clmsynth my_config.yaml    # or an explicit config path
+   clmsynth docs/examples/example_config.json   # offline: no network, no extra
+   clmsynth my_config.yaml --no-viz   # skip the plots; matplotlib is never imported
+   clmsynth my_config.yaml --keep-failed   # keep a failed run's config and log
+   clmsynth a.json b.json c.yaml --jobs 2  # a batch: each config in its own process
+   clmsynth sweep/ --jobs 2 --viz          # a folder's configs as a batch, with plots
    ```
-   `clmsynth` and `python -m clmsynth` run the same command as `python -m clmsynth.main`.
+   `python -m clmsynth` runs the same command. A tool that can only run a script *file*, not
+   `-m`, cannot use the installed `__main__.py`;
+   give it a two-line wrapper instead:
+   ```python
+   # run_clmsynth.py
+   from clmsynth.__main__ import main
+   main()
+   ```
+   then run `run_clmsynth.py` with the usual `clmsynth` arguments.
    A single run draws the plots whenever matplotlib is installed; a batch draws them only with
    `--viz`, which exits 1 when matplotlib is not installed. A folder adds the configs directly inside
    it, sorted by name, and must hold one format only (`.json`, or `.yaml`/`.yml`); a folder holding
@@ -182,7 +187,8 @@ OUTPUT/{YYYYMMDD}_{HHMMSS}_{Source}/
 │   ├── {YYYYMMDD}_{HHMMSS}_{Source}.log     # the run's log
 │   └── {source}-{battery}-{dataset}.txt     # seeds + config + MCC/ARI (as shown on plots);
 │                                            #   under scope: pair, the reachable pair MCC;
-│                                            #   under a target, what the engine reported
+│                                            #   under a target, what the engine reported;
+│                                            #   for mdcgen, which features are noise
 ├── csv/{source}-{battery}-{dataset}.csv     # features + Cluster_n + Label_n
 ├── png/{source}-{battery}-{dataset}-Cluster_0.png
 └── png/{source}-{battery}-{dataset}-Label_0.png   # one per generated label
@@ -196,12 +202,13 @@ OUTPUT/{YYYYMMDD}_{HHMMSS}_{Source}/
 - **Exit status:**
   - 0: every dataset written with all its labels.
   - 1: nothing written, for a reason beyond the config: a dataset its source
-    could not deliver (a failed download; a data CSV that is missing, unreadable
+    could not deliver (a failed download; a data CSV that is unreadable
     or refused by byoc's import checks, `[CLM-133]` among them), an output folder
     that cannot be created, PyYAML missing for a `.yaml` config, matplotlib
     missing for `--viz`, a crash.
   - 2: the command line or the config is wrong: a usage error, a missing or
-    malformed config, a folder of configs that is refused, a missing required key (`[CLM-2xx]`), a `[CLM-1xx]` refusal
+    malformed config, a folder of configs that is refused, `batteries` or `datasets` unset or naming what the
+    source does not have (a misspelt name, a data CSV that is not there), a missing required key (`[CLM-2xx]`), a `[CLM-1xx]` refusal
     from the labeling. Nothing is written.
     `clmsynth-config` exits 2 for a payload that is missing, malformed or of the
     wrong shape, or whose `clm_label` block the engine refuses (`[CLM-1xx]`,
@@ -233,7 +240,21 @@ OUTPUT/{YYYYMMDD}_{HHMMSS}_{Source}/
   description says otherwise: cite [[1]](#references), the suite version and each dataset's own references.
 - **`mdcgen`**, fully synthetic geometries via `mdcgenpy` [[2]](#references).
   Use when specific properties (dimensionality, overlap, outliers) are needed that the clustering-benchmarks datasets
-  may not cover.
+  may not cover. Its presets, by battery:
+
+  | Battery       | Datasets                                                                                       |
+  |---------------|------------------------------------------------------------------------------------------------|
+  | `basic`       | `blobs_2d_5c`, `blobs_3d_10c`                                                                  |
+  | `high_dim`    | `hd_50d_5c`, `hd_100d_10c`                                                                     |
+  | `challenging` | `overlapping_2d`, `noisy_3d` (75 outliers)                                                     |
+  | `noise_dims`  | `noise_5d_2n` (two noise features in every cluster), `noise_5d_per_cluster` (noise features chosen per cluster) |
+  | `varied`      | `sizes_2d_4c`, `min_size_3d_6c`, `ki_coeff_3d_6c` (cluster sizes), `mixed_dist_2d_3c` (a distribution per cluster), `correlated_3d_4c`, `axis_aligned_2d_4c` (no rotation) |
+
+  A preset is the arguments of mdcgenpy's `ClusterGenerator`, and any other key of `mdcgen_suite` goes on to it
+  under mdcgenpy's own name, such as `n_samples`, `n_feats`, `compactness_factor`, `outliers` or `n_noise`.
+  mdcgenpy labels its outliers `-1`, which a run reads as one more cluster: a dataset has them only where the
+  preset or `mdcgen_suite.outliers` names a count. The summary `.txt` of an `mdcgen` dataset records which features
+  carry cluster structure and which are noise.
 - **`fabricated_data`**, the default `data_source`, offline. Cluster IDs are integers `0..K-1`, as in the other generated sources;
   the generator's readable class names are mapped to codes on import. The `labels_only_4class` preset emits 
   **cluster IDs with no feature columns at all**, a valid CLM run, since recall, balance, allocation, and spillover
@@ -279,8 +300,8 @@ label_generation:
 - Cluster IDs are integers, in the file and wherever the config names a cluster (`single_match`,
   `assignment_matrix`, `competing_noise`); `1.0`, `"C1"` or `true` is refused (`[CLM-133]` in the file,
   `[CLM-141]` in the config). The column's name is free.
-- **[repliclust](https://repliclust.org)** datasets are supported through `byoc`, not as a source of their own:
-  CLMSynth neither installs nor calls repliclust. Run repliclust yourself, save each dataset as a CSV of its
+- **[repliclust](https://repliclust.org)** datasets are supported through `byoc`, not as a source of their own.
+  Run repliclust yourself, save each dataset as a CSV of its
   features plus the cluster ids in one column (repliclust's integer ids `0..K-1` are accepted as they are), and
   list the file stems under `byoc_suite.datasets`. A cluster of one or two points, which repliclust can produce
   with a small `n_samples` and a large `imbalance_ratio`, is refused.
@@ -294,7 +315,8 @@ label_generation:
    **Note:** the current implementation places up to `recall_target × m_{l*}` points of `l*` into `k*`,
    so it requires `|k*| ≥ m_{l*}`.
 - `random`, labels drawn from the resolved proportions, ignoring cluster structure entirely.
-   `centroid_dependence` is ignored there (`[CLM-311]`), so data without features runs.
+   `centroid_dependence` and `feature_dependence` are ignored there (`[CLM-311]`), so data
+   without features runs.
 - `custom`, one or more explicit `assignment_matrix` rules, each routing a `recall_target` 
    fraction of one label's points into a set of clusters. Supports surjective (many clusters → one label),
    partial, and overlapping alignments. Unclaimed cluster capacity follows `spillover_rule`.
@@ -345,6 +367,35 @@ the exact value.
 > `matching_mode: single` with `scope: pair` over a custom distribution coupled
 > with a binary MCC solver [[3]](#References).
 
+### Labels that follow a feature
+
+`feature_dependence` (only under `single`/`custom`) places a label's points by one feature
+column instead of at random. Each entry names a label and a feature:
+
+```yaml
+clm_label:
+  feature_dependence:
+    - {label: 1, feature: Feature_3, favors: high}
+    - {label: 0, feature: Feature_7, favors: value, value: 0.75, profile: step}
+```
+
+- `favors`: `high` (default) or `low` takes the highest or the lowest values of the feature
+  in each cluster; `value` takes the values closest to `value`, in the units of the output
+  CSV (after byoc's `standardize`, when that is on).
+- `profile`: `linear` (default) leans towards the favored points, `step` takes exactly the
+  best ones. On a single feature `linear` is weak, above all for `value`.
+- An entry moves only the points the matching places (an `assignment_matrix` row or
+  `single_match`), inside their cluster. Spillover and `competing_noise` points stay where
+  they are, so the effect fades as the agreement falls. The label counts, MCC and ARI are
+  those of the same config without the block.
+- One entry per label. Entries are placed in the order written, before the other labels.
+- It cannot be combined with `centroid_dependence` enabled (`[CLM-141]`). A dataset without
+  the named column, or with fewer than two features, is skipped (`[CLM-125]`). An entry that
+  moves nothing warns (`[CLM-305]`; under `random`, `[CLM-311]`).
+- A feature is named by its column, so the block needs a `DatasetContext`
+  (`generate_additional_labels`, or a run). A direct `generate_clm_labels` call has no
+  column names and refuses it (`[CLM-125]`).
+
 ## Citing
 
 If you use this software as a benchmark, you can export the citation file from the
@@ -369,4 +420,4 @@ to your discussion.
    fundamental clustering problems. *Data in Brief*, 30, 105501.
    <https://doi.org/10.1016/j.dib.2020.105501>
 5. Gharibian, A., Kudělka, M. (2026). A synthetic data generator for cluster and label matching evaluation,
-SoftwareX, Volume 36, 103077. <https://doi.org/10.1016/j.softx.2026.103077>
+   SoftwareX, Volume 36, 103077. <https://doi.org/10.1016/j.softx.2026.103077>

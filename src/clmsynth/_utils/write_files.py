@@ -45,10 +45,8 @@ def write_text_atomic(path: str | Path, text: str) -> None:
     """Writes `text` to `path` so the file holds either its old content or all of
     the new.
 
-    Written in place, a failed write, an interrupt or a second writer on the same
-    path left a truncated or interleaved config that could still parse. The text
-    goes to a temporary file in the same folder and os.replace swaps it in. A
-    symlinked `path` is followed, so the link survives.
+    The text goes to a temporary file in the same folder and os.replace swaps it
+    in. A symlinked `path` is followed, so the link survives.
     """
     def write(tmp: Path) -> None:
         # open(..., "x") rather than tempfile.mkstemp, which creates the file 0600:

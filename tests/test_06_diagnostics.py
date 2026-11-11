@@ -45,6 +45,7 @@ looks correct while being not what was configured.
 Those are the cases where a regression is invisible without this module.
 """
 
+import json
 import logging
 from pathlib import Path
 from typing import cast
@@ -53,12 +54,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from clmsynth import run_pipeline
+from clmsynth._single_run import PER_DATASET_CODES
+
 # The Agg backend is selected once in conftest, before any test module is
 # imported, so no GUI toolkit is initialized even if something reaches
 # matplotlib despite the plot suppression below.
 from clmsynth.byoc_source import fetch_byoc_data
 from clmsynth.clm_label_engine import generate_clm_labels
-from clmsynth.main import PER_DATASET_CODES, run_pipeline
 
 # How each catalog band surfaces its diagnostic.
 RAISES, LOGGED = "raises", "logged"
@@ -130,7 +133,7 @@ def test_catalog_diagnostic_fires(config_path, mechanism, tmp_path, caplog, yaml
 
     # Catalog paths are relative to the catalog root, which is what makes a
     # fixture reproducible by hand (`cd docs/troubleshooting_catalog && python -m
-    # clmsynth.main ValueError_1xx/CLM-127.yaml`). pytest runs from wherever it
+    # clmsynth ValueError_1xx/CLM-127.yaml`). pytest runs from wherever it
     # was invoked, so both ends are resolved here rather than depending on cwd:
     # output into tmp_path, input against the catalog's own _data/.
     if source == "byoc":
@@ -435,6 +438,65 @@ def test_valueless_payload_key_renders_its_default(key, expected, tmp_path, yaml
         else loaded["label_generation"]["clm_label"][key]
     )
     assert got == expected
+
+
+@pytest.mark.parametrize(
+    "overrides,read",
+    [
+        ({"target_metric": {"type": "mcc", "value": 0.5, "tolerance": 1e-05}},
+         lambda clm: clm["target_metric"]["tolerance"]),
+        ({"proportions": [0.99999, 1e-05, 0.0, 0.0]}, lambda clm: clm["proportions"][1]),
+    ],
+    ids=["a-scalar", "in-a-list"],
+)
+def test_a_small_float_is_rendered_as_a_number(overrides, read, tmp_path, yaml):
+    """`str(1e-05)` has no dot, and PyYAML reads a float without one as text: the
+    rendered tolerance or proportion would be refused as a string."""
+    from clmsynth._config_gen.generate_config import generate_base_config
+
+    out = tmp_path / "out.yaml"
+    generate_base_config({**MINIMAL_PAYLOAD, **overrides}, output_path=str(out))
+
+    clm = yaml.safe_load(out.read_text(encoding="utf-8"))["label_generation"]["clm_label"]
+    assert read(clm) == 1e-05
+
+
+_BYOC = {"data_source": "byoc", "batteries": ["local"], "datasets": ["data"]}
+
+
+@pytest.mark.parametrize(
+    "overrides,section,key,expected",
+    [
+        ({"source_labeling": 'a"b'}, "label_generation", "source_labeling", 'a"b'),
+        ({**_BYOC, "datasets": ["\U0001f600"]}, "byoc_suite", "datasets", ["\U0001f600"]),
+        ({**_BYOC, "standardize": "false"}, "byoc_suite", "standardize", "false"),
+    ],
+    ids=["a-quote", "text-past-the-bmp", "a-quoted-false"],
+)
+@pytest.mark.parametrize("name", ["out.yaml", "out.json"])
+def test_a_payload_value_is_written_as_it_is(overrides, section, key, expected, name, tmp_path,
+                                             yaml):
+    """A quote in source_labeling went between the template's quotes unescaped, and
+    the rendering was not YAML. An emoji was written as two escapes, which YAML
+    reads as two lone characters and JSON cannot write. `standardize: "false"`
+    was rendered as true; as written, the run refuses it ([CLM-141])."""
+    from clmsynth._config_gen.generate_config import generate_base_config
+
+    out = tmp_path / name
+    generate_base_config({**MINIMAL_PAYLOAD, **overrides}, output_path=str(out))
+    text = out.read_text(encoding="utf-8")
+    loaded = json.loads(text) if name.endswith(".json") else yaml.safe_load(text)
+    assert loaded[section][key] == expected
+
+
+@pytest.mark.usefixtures("yaml")
+def test_generate_config_creates_the_folder_of_its_output(tmp_path):
+    """As the wizard does: an output path in a folder that is not there exited 1."""
+    from clmsynth._config_gen.generate_config import generate_base_config
+
+    out = tmp_path / "new" / "folder" / "out.yaml"
+    generate_base_config(dict(MINIMAL_PAYLOAD), output_path=str(out))
+    assert out.is_file()
 
 
 # ---------------------------------------------------------------------------

@@ -27,7 +27,8 @@ m_counts     = resolve_label_counts(cfg, N, rng)          # Stage 1
 if perfect:  m_counts = cluster sizes (requires M==K)     # Stage 2
 if random:   return draw-from-p, shuffled (early return)  # Stage 2
 validate spillover concentrated_labels [CLM-128], centroid favors [CLM-129],
-    and target_metric (incl. scope==pair guards [CLM-123/124/130])
+    target_metric (incl. scope==pair guards [CLM-123/124/130]),
+    and the feature_dependence entries [CLM-207/104/141], then their columns [CLM-125]
 if target_metric:                                         # Stage 7
     if scope==pair: m_counts = _pair_label_counts(...); alpha = 1  # 7a exact, single mode
     else:           alpha    = solve_alpha_for_target_metric(...)  # 7b numerical, global
@@ -148,6 +149,11 @@ targets (`[CLM-144]`) are checked once by `_validate_competing_noise_cfg`, befor
 allocation and the search, since they hold for every dataset. Here: joint capacity
 (`[CLM-152]`).
 
+`[CLM-305]` names the block it is about, and also carries the warnings of a
+`feature_dependence` entry (Stage 6). In a cluster where a label is a competing-noise
+label, its `feature_dependence` entry is ignored: those points stay where
+`competing_noise` puts them.
+
 ## Stage 5: Spillover (`_spillover_draws`)
 
 Fills the capacity left unclaimed by Stages 3-4:
@@ -181,11 +187,44 @@ labels follow, each with its own core/boundary/random placement
 (`favors_overrides`), in the points the targets leave. The order changes which
 points carry a label, never how many per cluster.
 
+With `feature_dependence`, a label follows one feature column instead. Each entry
+gives its label a score per point, on the raw values of the column:
+
+| `favors`      | Score                         |
+|---------------|-------------------------------|
+| `high`, `low` | the value, or its negative    |
+| `value`       | minus the distance to `value` |
+
+and a profile, `linear` or `step`, picked by the same weighted sampling
+(`feature_scores`). The order inside a cluster is then: the entries, in the order
+written; the other target labels, biggest first, at random; the `competing_noise`
+labels; spillover. An entry goes first because a bigger label placed at random
+before it would take the points it favors. It moves only the points the matching
+places: the label's spillover points stay random, so the effect fades as MCC
+falls. `value` is in the units of the feature columns the run writes; where it
+lies outside a cluster's range, the entry acts as `high` or `low` there. The
+entries are checked once by `_validate_feature_dependence_cfg` (a missing key
+`[CLM-207]`, the label `[CLM-104]`, anything else `[CLM-141]`, including a second
+entry for a label and `centroid_dependence` enabled beside entries). An entry
+that moves nothing warns `[CLM-305]`, for the delivered labeling only: a label the
+matching places nowhere, a cluster where the label is competing noise, a cluster
+the label fills (as under `perfect`), or a `value` its `favors` does not read.
+Under `random` the block is neither read nor validated (`[CLM-311]`).
+
+Placement by distance or by a feature needs at least two features: one-feature
+data, data without features and a dataset that lacks an entry's column are
+`[CLM-125]`, judged per dataset, so that dataset is skipped and the run goes on.
+The engine takes `coords` as an array, so `LabelGenerator.apply` hands it the
+column names; a direct `generate_clm_labels` call has none and refuses the block
+with `[CLM-125]`.
+
 **Key invariant:** placement operates strictly after allocation. The
 cluster--label contingency table, and therefore MCC and ARI, is fixed by
 Stages 1-5, so spatial structure can be varied (core vs. boundary vs. random)
 while MCC/ARI stay identical. This orthogonality is combinatorial, not geometric:
-it holds even for non-convex clusters whose centroid is meaningless.
+it holds even for non-convex clusters whose centroid is meaningless. It covers
+`feature_dependence` entries too, which is why a target-metric search scores its
+probes without them.
 
 ## Stage 7: Target-metric solving
 
@@ -243,7 +282,8 @@ inside a grid step where the outcome changes, in two cases only: no grid level f
 `[CLM-152]` is followed by another code (the levels that fill the noisy cluster exactly,
 often a band narrower than a step), or the target was missed and a level that fits
 neighbours one that does not. It halves that step down
-to half a point of the largest label, the levels it finds join the refinement, and
+to half a point of the largest label, or, while no level fits at all, to half a point
+of the dataset; the levels it finds join the refinement, and
 every probe after the grid counts against `max_iter`. Every infeasible probe keeps its
 `[CLM-15x]` error, and a missed target
 logs one warning per code naming the levels it blocked. If
@@ -366,22 +406,29 @@ label_generation:
       profile: "linear"             # linear | exponential | step
       favors: "core"                # core | boundary
       steepness: 3.0                # exponential only
+    feature_dependence:             # single/custom only; one entry per label. With
+                                     # centroid_dependence enabled it is refused ([CLM-141]).
+      - {label: 1, feature: "Feature_3", favors: "high", profile: "linear"}
+                                     # favors: high | low | value (with `value: <number>`)
+                                     # profile: linear | step
 ```
 
 ## Project layout
 
 | File                                          | Role                                                                                                                                                                                                                                                                                                        |
 |-----------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `../src/clmsynth/main.py`                     | Entry point, defaults to `test_data_config.yaml`.                                                                                                                                                                                                                                                           |
+| `../src/clmsynth/__main__.py`                 | The `clmsynth` command: reads the command line, defaults to `test_data_config.yaml`, hands the configs to a single run or a batch. The only place that exits the process.                                                                                                                                  |
+| `../src/clmsynth/_single_run.py`              | One config, one run folder: `run_single`, `run_pipeline`, `load_config`, the summary txt and the run's exit status.                                                                                                                                                                                         |
+| `../src/clmsynth/main.py`                     | Deprecated import path, removed in 0.7.8.                                                                                                                                                                                                                                                                   |
 | `../src/clmsynth/dataset_sources.py`          | The interface to the data sources and their shared registry: the `fabricated_data` wrapper, and the `clustbench` and `mdcgen` names re-exported from the two modules below. For byoc see below.                                                                                                            |
 | `../src/clmsynth/_input_sources/clustbench_source.py` | Online `clustbench` source: Gagolewski benchmark downloads, with the battery list, descriptions and dataset names.                                                                                                                                                                                  |
-| `../src/clmsynth/_input_sources/mdcgen_source.py` | Synthetic `mdcgen` source: named presets generated by `mdcgenpy`, with their batteries and descriptions.                                                                                                                                                                                                |
+| `../src/clmsynth/_input_sources/mdcgen_source.py` | Synthetic `mdcgen` source: named presets generated by `mdcgenpy`, with their batteries and descriptions; outliers only where named, and the record of which features are noise.                                                                                                                                                                                                |
 | `../src/clmsynth/_input_sources/fabricated_generator.py` | Feature generator with perfect-separation labels, used by the `fabricated_data` source.                                                                                                                                                                                                          |
 | `../src/clmsynth/byoc_source.py`              | Bring-your-own-clusters: imports user-provided CSV, with optional min-max standardization on import.                                                                                                                                                                                                        |
 | `../src/clmsynth/labeling.py`                 | `DatasetContext` holds features, every ground-truth labeling, every generated label and its report, and scores the labels. `LabelGenerator` is the run's `label_generation` block: it calls the CLM engine once per label, with seed + i; without a `clm_label` block it refuses with [CLM-207].              |
 | `../src/clmsynth/clm_label_engine.py`         | The CLM label-assignment: proportions/skew, matching modes, recall targets, allocation, spillover, competing noise, spatial placement, and the global target-metric solver.                                                                                                                                 |
 | `../src/clmsynth/clm_errors.py`               | Diagnostics: message templates keyed by a `[CLM-###]` code (1xx `ValueError`, 15x `InfeasibleAllocationError`, 3xx warnings) plus helpers.                                                                                                                                                                  |
-| `../src/clmsynth/config_tree.py`              | Each setting's default, accepted values and bounds, read by the engine, `resolved_config.py` and `main.py`.                                                                                                                                                                                                  |
+| `../src/clmsynth/config_tree.py`              | Each setting's default, accepted values and bounds, read by the engine, `resolved_config.py` and `_single_run.py`.                                                                                                                                                                                                  |
 | `../src/clmsynth/metrics.py`                  | Three standalone measures: `clustering_mcc` (multiclass MCC / Gorodkin R_K, Hungarian-matched to maximise R_K), `clustering_mcc_pair` (the quantity `target_metric.scope: pair` with `type: mcc`), and `clustering_ari` (adjusted Rand index). `MetricCeilings`: the size ceiling. |
 | `../src/clmsynth/_extras/visualization.py`    | Scatter-plot, annotated with measured MCC/ARI and the generating config. Drawn only with matplotlib installed.                                                                                                                                                                                              |
 | `../src/clmsynth/_extras/batch_run.py`        | Several configs, or a folder of them, as a batch: each config in its own process.                                                                                                                                                                                                                         |
@@ -413,7 +460,7 @@ flowchart TD
     Totals --> Mode{"random?"}
 
     Mode -- "yes" --> RandomOptions{"target metric or \ncompeting noise?"}
-    RandomOptions -- "no" --> Random["Shuffle resolved totals\nCLM-311 if centroid_dependence is on"]
+    RandomOptions -- "no" --> Random["Shuffle resolved totals\nCLM-311 if centroid_dependence is on\nor feature_dependence is set"]
     Random --> Return["Return label series"]
     RandomOptions -- "yes" --> RandomError["Reject incompatible setting\nCLM-114 or CLM-115"]
     Mode -- "no: single or custom" --> Guards
@@ -442,7 +489,7 @@ flowchart TD
         Noise -- "yes" --> Competing["Reserve competing claims, \nup to what each label \nhas left; CLM-152; \nwarning CLM-305"]
         Noise -- "no" --> Spillover["Draw spillover labels\nCLM-109"]
         Competing --> Spillover
-        Spillover --> Place["Assign points per cluster\nTarget labels first, \nthen competing noise, \nspillover fills the rest"]
+        Spillover --> Place["Assign points per cluster\nfeature_dependence labels first, \nthen the other targets, \nthen competing noise, \nspillover fills the rest"]
     end
 
     FinalRun --> Assigned["Final assigned label array"]
@@ -475,9 +522,9 @@ distinguishable from linear in practice.
 Every raise/warning above carries a stable `[CLM-###]` code from a single
 registry: `1xx` config `ValueError`, `15x` `InfeasibleAllocationError` (a
 `ValueError` subclass, caught by the solver as "try another alpha" and by
-`main.py` to skip the label; `[CLM-154]` is not a probe code: it is raised once,
+`_single_run.py` to skip the label; `[CLM-154]` is not a probe code: it is raised once,
 after the final labeling, under `target_metric.strict`), `3xx` warnings. Missing required config keys
-surface as `2xx` `MissingConfigKey`, a `KeyError` subclass; `main.py` stops the
+surface as `2xx` `MissingConfigKey`, a `KeyError` subclass; `_single_run.py` stops the
 run on one, since a required key has no default.
 
 **Numbers that are also exit statuses.** A shell reports a process ended by a signal

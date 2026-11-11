@@ -1,4 +1,4 @@
-$ python -m clmsynth.main InfeasibleAllocation_15x/CLM-153.yaml --no-viz
+$ python -m clmsynth InfeasibleAllocation_15x/CLM-153.yaml --no-viz
 # exit code: 3
 
 INFO - Starting Test Data Orchestrator...

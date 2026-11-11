@@ -2,7 +2,7 @@
 # Regenerated against the shipped engine by tools/CLM_catalog_gen.py
 # in the CLMSynth source repository.
 # Reproduce: cd to this catalog's root, then
-#     python -m clmsynth.main ValueError_1xx/CLM-105.yaml --no-viz
+#     python -m clmsynth ValueError_1xx/CLM-105.yaml --no-viz
 global_settings:
   data_source: fabricated_data
   output_dir: _scratch/CLM-105

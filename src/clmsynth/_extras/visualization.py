@@ -2,6 +2,7 @@
 # _extras/visualization.py
 """Scatter-plot rendering for the pipeline outputs."""
 
+import itertools
 import json
 import logging
 import os
@@ -18,6 +19,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 
+from ..config_tree import default
 from ..metrics import clustering_ari, clustering_mcc
 
 log = logging.getLogger(__name__)
@@ -107,8 +109,10 @@ def plot_feature_scatter(
         else:
             ax.scatter(df[x_col], df[y_col], s=36, alpha=0.8, linewidths=0.48,
                        edgecolors="face")
-        ax.set_xlabel(x_col)
-        ax.set_ylabel(y_col)
+        # parse_math off wherever a name is drawn: a `$` in a column or dataset name
+        # is text, not the start of a formula.
+        ax.set_xlabel(x_col, parse_math=False)
+        ax.set_ylabel(y_col, parse_math=False)
 
         # Fixed axes rectangle: the scatter panel occupies the same position and
         # width on every plot.
@@ -117,9 +121,10 @@ def plot_feature_scatter(
         # Bold title, with an optional smaller gray subtitle stacked beneath it.
         # x centers them over the fixed axes rectangle, not the whole figure.
         display_title = title if title else f"Scatter Plot: {x_col} vs {y_col}"
-        fig.suptitle(display_title, fontsize=14, fontweight='bold', x=0.385, y=0.965)
+        fig.suptitle(display_title, fontsize=14, fontweight='bold', x=0.385, y=0.965,
+                     parse_math=False)
         if subtitle:
-            ax.set_title(subtitle, fontsize=10, color='dimgray', pad=8)
+            ax.set_title(subtitle, fontsize=10, color='dimgray', pad=8, parse_math=False)
 
         # Legend at the top of the right margin (2 columns once there are many
         # categories, so a bijection over K clusters keeps a bounded height).
@@ -129,6 +134,8 @@ def plot_feature_scatter(
             leg = ax.legend(handles=handles, bbox_to_anchor=(1.02, 1.0), loc='upper left',
                             borderaxespad=0., title=hue_col, fontsize=8,
                             ncol=(2 if n_cats > 16 else 1))
+            for text in (leg.get_title(), *leg.get_texts()):
+                text.set_parse_math(False)
 
         # CLM-config box tucked just under the legend, high on the right margin.
         if info_text:
@@ -138,7 +145,7 @@ def plot_feature_scatter(
                 leg_box = leg.get_window_extent().transformed(ax.transAxes.inverted())
                 y_top = leg_box.y0 - 0.04
             ax.text(1.02, y_top, info_text, transform=ax.transAxes, fontsize=7.5,
-                    va='top', ha='left', family='monospace',
+                    va='top', ha='left', family='monospace', parse_math=False,
                     bbox={'boxstyle': 'round', 'facecolor': '#f7f7f7',
                           'edgecolor': '#cccccc'})
 
@@ -188,12 +195,16 @@ def _clm_info_text(clm_config: dict) -> str:
         for i in range(0, len(vals), 2):          # two values per line
             lines.append("  " + ", ".join(vals[i:i + 2]))
     else:
-        lines.append(f"balance: {clm_config.get('balance', '-')}")
+        lines.append(f"balance: {clm_config.get('balance', default('clm_label.balance'))}")
     if mode != "random" and cd.get("enabled"):
         lines.append("centrality:")
         lines.append(f"  {cd.get('favors', 'core')}/{cd.get('profile', 'linear')}")
     else:
         lines.append("centrality: off")
+    if mode != "random":
+        for entry in clm_config.get("feature_dependence") or []:
+            lines.append(f"label {entry.get('label')}: {entry.get('feature')} "
+                         f"({entry.get('favors', 'high')})")
     if tm:
         lines.append(f"target: {tm.get('type')}={tm.get('value')}")
     else:
@@ -205,22 +216,25 @@ def render_dataset_plots(final_df: pd.DataFrame, feature_cols: list[str],
                          png_dir: Path, stem: str, gt_col: str | None,
                          source_labeling: str, plot_title: str,
                          label_results: list[dict[str, Any]],
-                         clm_config: dict | None) -> None:
+                         clm_config: dict | None) -> bool:
     """Best-effort PNGs for one dataset, during the run or afterwards from its
-    folder (plot_run_folder)."""
+    folder (plot_run_folder). Returns whether a plot was drawn."""
     if len(feature_cols) < 2:
         log.warning(f"'{stem}' has fewer than 2 features; skipping plots.")
-        return
+        return False
     x_col, y_col = feature_cols[0], feature_cols[1]
+    drew = False
 
     if gt_col is not None and gt_col in final_df.columns:
-        if not plot_feature_scatter(
+        if plot_feature_scatter(
             final_df, x_col=x_col, y_col=y_col,
             hue_col=gt_col,
             output_path=str(png_dir / f"{stem}-{gt_col}.png"),
             title=plot_title,
             subtitle=f"ground-truth clusters ({gt_col})",
         ):
+            drew = True
+        else:
             log.warning(f"'{stem}': ground-truth plot failed; CSV/labels are unaffected.")
     else:
         log.warning(f"ground-truth for '{source_labeling}' not found for '{stem}'; skipping plot.")
@@ -234,7 +248,7 @@ def render_dataset_plots(final_df: pd.DataFrame, feature_cols: list[str],
         subtitle = None
         if r["mcc"] is not None:
             subtitle = f"MCC {r['mcc']:.3f}  ·  ARI {r['ari']:.3f}   (vs {gt_col})"
-        if not plot_feature_scatter(
+        if plot_feature_scatter(
             final_df, x_col=x_col, y_col=y_col,
             hue_col=r["name"],
             output_path=str(png_dir / f"{stem}-{r['name']}.png"),
@@ -242,7 +256,10 @@ def render_dataset_plots(final_df: pd.DataFrame, feature_cols: list[str],
             subtitle=subtitle,
             info_text=clm_info,
         ):
+            drew = True
+        else:
             log.warning(f"'{stem}': plot for '{r['name']}' failed; CSV/labels are unaffected.")
+    return drew
 
 
 _SUMMARY_CONFIG = "===== CLM label configuration =====\n"
@@ -260,9 +277,10 @@ def plot_run_folder(run_dir: str | Path) -> int:
             log.warning(f"'{stem}' has no summary '{txt}'; skipping its plots.")
             continue
         text = txt.read_text(encoding="utf-8")
-        # The summary opens with Source, Dataset, Rows and Ground-truth labeling.
-        head = {k.strip(): v for k, v in (line.split(": ", 1)
-                                          for line in text.splitlines()[:4])}
+        # The summary opens with Source, Dataset, Rows, Features and Ground-truth
+        # labeling, up to its first empty line.
+        head = {k.strip(): v for k, v in (
+            line.split(": ", 1) for line in itertools.takewhile(str.strip, text.splitlines()))}
         title = f"{head['Source'].rpartition(' (')[0]}: {head['Dataset']}"
         source_labeling, _, gt = head["Ground-truth labeling"].partition("  ->  ")
         gt_col = None if gt == "(none)" else gt
@@ -273,9 +291,12 @@ def plot_run_folder(run_dir: str | Path) -> int:
             clm_config = None
 
         df = pd.read_csv(csv_path)
-        # Tag columns lose their prefix in the CSV and count as features here; the
-        # plots use the first two columns, which are features when there are two.
+        # Tag columns lose their prefix in the CSV, where they follow the features:
+        # the summary says how many of the first columns are features. One without
+        # that line counts the tags too.
         features = [c for c in df.columns if not re.fullmatch(r"(Cluster|Label)_\d+", c)]
+        if head.get("Features", "").isdecimal():
+            features = features[:int(head["Features"])]
         label_results = []
         for label in (c for c in df.columns if re.fullmatch(r"Label_\d+", c)):
             mcc = ari = None
@@ -284,7 +305,6 @@ def plot_run_folder(run_dir: str | Path) -> int:
                 ari = float(clustering_ari(df[gt_col], df[label]))
             label_results.append({"name": label, "mcc": mcc, "ari": ari})
 
-        render_dataset_plots(df, features, run_dir / "png", stem, gt_col, source_labeling,
-                             title, label_results, clm_config)
-        n += 1
+        n += render_dataset_plots(df, features, run_dir / "png", stem, gt_col,
+                                  source_labeling, title, label_results, clm_config)
     return n

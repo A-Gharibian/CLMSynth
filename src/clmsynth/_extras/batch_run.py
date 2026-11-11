@@ -5,14 +5,13 @@ configs a command line names, folders included."""
 
 import logging
 import os
-import re
-import signal
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from .._utils.signals import Terminated, raise_terminated
+from .._utils.cli_logging import run_named_in
+from .._utils.signals import Terminated, sigterm_raises
 
 __all__ = ["batch_configs", "run_batch"]
 
@@ -76,15 +75,14 @@ def batch_configs(paths: list[str]) -> tuple[list[str], bool]:
 
 def _run_config(config: str, flags: list[str], env: dict[str, str]) -> tuple[int, str]:
     """One config as its own clmsynth process: its exit status and its output."""
-    proc = subprocess.run([sys.executable, "-m", "clmsynth.main", config, *flags],
+    # After "--", a config whose name starts with a dash is still a path.
+    proc = subprocess.run([sys.executable, "-m", "clmsynth", *flags, "--", config],
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                           env=env, check=False)
     # A child killed by a signal reports -N; a shell reports it as 128 + N.
     code = proc.returncode if proc.returncode >= 0 else 128 - proc.returncode
     return code, proc.stdout
 
-
-_RUN_LINE = re.compile(r" - INFO - Run (\S+) from config ")
 
 def _batch_status(codes: list[int]) -> int:
     """A batch read like a run whose datasets are its configs: 0 when every config
@@ -100,17 +98,22 @@ def _batch_status(codes: list[int]) -> int:
     return 1 if 1 in codes else 2
 
 
-def run_batch(configs: list[str], jobs: int, flags: list[str]) -> int:
+def run_batch(configs: list[str], jobs: int, render_plots: bool = False,
+              keep_failed: bool = False) -> int:
     """Each config in its own clmsynth process, `jobs` at a time, so each run keeps
     its own folder, log and exit status. A run's output is printed whole when it
     ends. Returns the batch's exit status (`_batch_status`)."""
+    # Every run is told: a run started on its own draws plots by default.
+    flags = ["--viz" if render_plots else "--no-viz"]
+    if keep_failed:
+        flags.append("--keep-failed")
     env = dict(os.environ)
     if jobs > 1:
         # Otherwise each worker may start a BLAS thread per core.
         for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
             env.setdefault(var, "1")
     n = len(configs)
-    plots = "with plots" if "--viz" in flags else "without plots (--viz draws them)"
+    plots = "with plots" if render_plots else "without plots (--viz draws them)"
     log.info(f"Batch of {n} config(s), {min(jobs, n)} at a time, {plots}.")
 
     results: dict[int, tuple[int, str]] = {}
@@ -126,16 +129,14 @@ def run_batch(configs: list[str], jobs: int, flags: list[str]) -> int:
                for i, config in enumerate(configs)}
     # A scheduler or Ctrl-C signals every process of the job: each run stops and
     # cleans up itself, and the batch starts nothing new.
-    previous_sigterm = signal.signal(signal.SIGTERM, raise_terminated)
-    try:
-        for future in as_completed(futures):
-            report(futures[future], *future.result())
-    except KeyboardInterrupt:
-        stopped = 130
-    except Terminated:
-        stopped = 143
-    finally:
-        signal.signal(signal.SIGTERM, previous_sigterm)
+    with sigterm_raises():
+        try:
+            for future in as_completed(futures):
+                report(futures[future], *future.result())
+        except KeyboardInterrupt:
+            stopped = 130
+        except Terminated:
+            stopped = 143
     if stopped:
         log.warning("Stopping: no further config starts; waiting for the running ones.")
     pool.shutdown(wait=True, cancel_futures=True)
@@ -148,8 +149,8 @@ def run_batch(configs: list[str], jobs: int, flags: list[str]) -> int:
             log.warning(f"{config}: not started")
             continue
         code, output = results[i]
-        run = _RUN_LINE.search(output)
-        where = f"run {run.group(1)}" if run else "no run folder"
+        run = run_named_in(output)
+        where = f"run {run}" if run else "no run folder"
         (log.info if code == 0 else log.warning)(f"{config}: exit {code}, {where}")
     codes = [code for code, _ in results.values()]
     status = _batch_status([*codes, stopped] if stopped else codes)

@@ -1,4 +1,4 @@
-$ python -m clmsynth.main Warnings_3xx/CLM-301.yaml --no-viz
+$ python -m clmsynth Warnings_3xx/CLM-301.yaml --no-viz
 # exit code: 0
 
 INFO - Starting Test Data Orchestrator...

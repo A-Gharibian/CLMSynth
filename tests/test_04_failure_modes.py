@@ -26,16 +26,24 @@ What is checked:
                        error, 1 nothing written for another reason, such as a
                        missing data CSV or an output_dir blocked by a file,
                        which used to hang on Windows; SIGTERM exits 143
+  --help               `clmsynth-config` and `clmsynth-wizard` print their usage
+                       and exit 0, writing nothing and asking nothing
   network timeout      `CLUSTBENCH_TIMEOUT` is passed to `urlopen`
+  mdcgen presets       each preset passes only names mdcgenpy reads, with the
+                       size and dimension it names; a run records which
+                       features are noise
 
 """
 
 import errno
 import json
 import logging
+import os
 import re
 import signal
+import subprocess
 import sys
+import types
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -47,12 +55,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import clmsynth.__main__
 import clmsynth._extras.visualization
-import clmsynth.main
+import clmsynth._single_run
+from clmsynth import dataset_sources, load_config, run_pipeline
 from clmsynth._extras.visualization import plot_feature_scatter
 from clmsynth._input_sources import clustbench_source
+from clmsynth._input_sources.mdcgen_source import MDCGEN_CONFIGS
+from clmsynth._single_run import ConfigFileError, run_single
+from clmsynth._utils.write_files import discard_failed_run, resolved_for_report
 from clmsynth.labeling import DatasetContext, generate_additional_labels
-from clmsynth.main import load_config, resolved_for_report, run_pipeline
 
 # The Agg backend is selected in conftest, before this module is imported, so a
 # headless runner cannot fail for display reasons. This module renders for real
@@ -391,10 +403,11 @@ def test_path_shaped_dataset_names_are_refused(tmp_path, monkeypatch, caplog, na
     """A dataset name is a file stem, and is used to build paths in both directions.
 
     byoc resolves `input_dir/<dataset>.csv` to READ and
-    `csv/<source>__<battery>__<dataset>.csv` to WRITE, so a separator or a `..`
+    `csv/<source>-<battery>-<dataset>.csv` to WRITE, so a separator or a `..`
     reaches outside both configured folders. The registry sources filter names
     against a known list and cannot carry one of these; byoc trusts the config
-    verbatim, which is the only route in.
+    verbatim, which is the only route in. Such a name refuses the run before its
+    first dataset.
     """
     monkeypatch.setattr(clmsynth._extras.visualization, "plot_feature_scatter", lambda *a, **k: True)
 
@@ -411,10 +424,10 @@ def test_path_shaped_dataset_names_are_refused(tmp_path, monkeypatch, caplog, na
             "byoc", infeasible_config(inputs, tmp_path, [name, "good"]), csv_dir, png_dir, txt_dir
         )
 
-    assert n_ok == 1, "the well-named dataset should still be processed"
-    assert "is not a plain name" in caplog.text
+    assert n_ok == 0, "a path-shaped name refuses the run"
+    assert "not a plain name" in caplog.text
     written = {p.name for p in csv_dir.rglob("*.csv")}
-    assert written == {"byoc-local-good.csv"}, f"unexpected output: {written}"
+    assert not written, f"unexpected output: {written}"
     # Nothing escaped the run folders, which is the property that matters.
     assert not list(tmp_path.parent.glob("*escape*"))
     assert not list(tmp_path.glob("*escape*"))
@@ -547,14 +560,14 @@ def test_an_unexpected_error_names_its_type_and_the_skip_is_counted(tmp_path, mo
     `n_ok` alone cannot tell "1 of 1" from "1 of 2".
     """
     monkeypatch.setattr(clmsynth._extras.visualization, "plot_feature_scatter", lambda *a, **k: True)
-    real_build_context = clmsynth.main.build_context
+    real_build_context = clmsynth._single_run.build_context
 
     def build_context(source, battery, dataset, df):
         if dataset == "broken":
             raise KeyError("cluster")
         return real_build_context(source, battery, dataset, df)
 
-    monkeypatch.setattr(clmsynth.main, "build_context", build_context)
+    monkeypatch.setattr(clmsynth._single_run, "build_context", build_context)
 
     inputs = tmp_path / "input"
     inputs.mkdir()
@@ -639,6 +652,43 @@ def test_figure_creation_failure_returns_false_like_every_other_failure(tmp_path
             )
             is False
         )
+
+
+def test_a_dollar_in_a_name_is_text_not_a_formula(tmp_path):
+    """Names reached matplotlib as mathtext: `x$_$y`, a column name byoc accepts,
+    was a parse error, and the dataset lost its plots."""
+    frame = pd.DataFrame({"x$_$y": [0.0, 1.0, 2.0], "f2": [0.0, 1.0, 0.5],
+                          "Cluster_0": [0, 1, 1]})
+    target = tmp_path / "plot.png"
+    assert plot_feature_scatter(frame, "x$_$y", "f2", hue_col="Cluster_0",
+                                output_path=str(target))
+    assert target.is_file()
+
+
+def test_plot_run_folder_draws_and_counts_what_the_run_would(tmp_path, monkeypatch):
+    """One feature and a tag: the run skips the plots. Read back from its folder,
+    the tag counted as a second feature and was drawn against the first, and the
+    dataset was counted as plotted. The summary says how many columns are
+    features."""
+    inputs = tmp_path / "input"
+    inputs.mkdir()
+    pd.DataFrame({"f1": np.arange(20) / 10, "site": ["north", "south"] * 10,
+                  "cluster": np.repeat([0, 1], 10)}).to_csv(inputs / "data.csv", index=False)
+    config = minimal_byoc_config(inputs, tmp_path / "out", ["data"])
+    config["byoc_suite"]["tag_columns"] = ["site"]
+    code, survivors = run_main(tmp_path, monkeypatch, config, "--no-viz")
+    assert code == 0
+
+    drawn = []
+
+    def record(*args, **kwargs):
+        drawn.append(kwargs)
+        return True
+
+    monkeypatch.setattr(clmsynth._extras.visualization, "plot_feature_scatter", record)
+    run_dir = tmp_path / "out" / survivors[0]
+    assert clmsynth._extras.visualization.plot_run_folder(run_dir) == 0
+    assert not drawn
 
 
 # ---------------------------------------------------------------------------
@@ -734,9 +784,24 @@ def test_unloadable_config_exits_two(tmp_path, request, name, content):
     if content is not None:
         path.write_text(content, encoding="utf-8")
 
-    with pytest.raises(SystemExit) as excinfo:
+    with pytest.raises(ConfigFileError):
         load_config(str(path))
-    assert excinfo.value.code == 2
+    assert run_single(str(path)) == 2
+
+
+@pytest.mark.parametrize("name,encoding", [("cfg.json", "utf-16"), ("cfg.yaml", "latin-1")],
+                         ids=["utf-16-json", "latin-1-yaml"])
+def test_a_config_that_is_not_utf8_exits_two(tmp_path, request, name, encoding):
+    """PowerShell 5.1's `>` writes UTF-16 and an editor may save Latin-1: the
+    decoding error is a config file error, not a traceback."""
+    if name.endswith(".yaml"):
+        request.getfixturevalue("yaml")
+    path = tmp_path / name
+    path.write_bytes('{"note": "café"}'.encode(encoding))
+
+    with pytest.raises(ConfigFileError, match="not UTF-8"):
+        load_config(str(path))
+    assert run_single(str(path)) == 2
 
 
 @pytest.mark.parametrize("value", [[1, 2], "byoc"], ids=["list", "string"])
@@ -748,7 +813,7 @@ def test_a_global_settings_that_is_not_a_mapping_exits_two(value, tmp_path, monk
     monkeypatch.setattr(sys, "argv", ["clmsynth", str(config_path)])
     monkeypatch.chdir(tmp_path)
     with caplog.at_level(logging.CRITICAL, logger="clmsynth"), pytest.raises(SystemExit) as excinfo:
-        clmsynth.main.main()
+        clmsynth.__main__.main()
     assert excinfo.value.code == 2
     assert "'global_settings' must be a mapping" in caplog.text, caplog.text
     assert [p.name for p in tmp_path.iterdir()] == ["cfg.json"], "the run created something"
@@ -838,6 +903,37 @@ _ONE_DATASET = {"batteries": ["fabricated"], "datasets": ["baseline_4class"], "s
 
 
 @pytest.mark.parametrize(
+    "change,said",
+    [
+        ({"batteries": 5}, "'fabricated_data_suite.batteries' is 5"),
+        ({"datasets": 5}, "'fabricated_data_suite.datasets' is 5"),
+        ({"datasets": False}, "'fabricated_data_suite.datasets' is False"),
+        ({"datasets": None}, "'fabricated_data_suite.datasets' not set"),
+        ({"datasets": []}, "'fabricated_data_suite.datasets' not set"),
+        ({"datasets": "absent"}, "'fabricated_data_suite.datasets' not set"),
+        ({"datasets": ["baseline_4class", "baselin_2class"]},
+         "'baselin_2class' (did you mean 'baseline_2class'?)"),
+        ({"batteries": ["fabricated", "fabricatd"]},
+         "'fabricatd' (did you mean 'fabricated'?)"),
+    ],
+    ids=["batteries-a-number", "datasets-a-number", "datasets-false", "datasets-valueless",
+         "datasets-empty", "datasets-absent", "dataset-misspelt", "battery-misspelt"],
+)
+def test_a_selection_the_source_does_not_have_refuses_the_run(change, said, tmp_path, caplog):
+    """`batteries` and `datasets` are "all" or a list of names the source has. A
+    misspelt name beside a good one used to be dropped and the run exited 0; a
+    number exited 2 without a word; an unset or false `datasets` meant all."""
+    suite = {**_ONE_DATASET, **change}
+    if change.get("datasets") == "absent":
+        del suite["datasets"]
+    config, csv_dir, png_dir, txt_dir = _fabricated_config(tmp_path, suite)
+    with caplog.at_level(logging.ERROR, logger="clmsynth"):
+        assert run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir, False) == 0
+    assert said in caplog.text, caplog.text
+    assert not list(csv_dir.glob("*.csv"))
+
+
+@pytest.mark.parametrize(
     "key,value",
     [
         ("fabricated_data_suite", ["fabricated"]),
@@ -891,8 +987,17 @@ def test_an_unused_suite_of_any_shape_is_not_read(value, tmp_path):
             "centrality: off",
             "0.7",
         ),
+        (
+            {
+                "num_classes": 4,
+                "matching_mode": "single",
+                "single_match": {"cluster": 0, "label": 0},
+            },
+            "balance: balanced",
+            "balance: -",
+        ),
     ],
-    ids=["perfect-unread-proportions", "random-balanced"],
+    ids=["perfect-unread-proportions", "random-balanced", "balance-left-to-its-default"],
 )
 def test_the_plot_box_shows_only_what_the_label_was_made_with(
     clm_label, shown, hidden, tmp_path, monkeypatch
@@ -900,7 +1005,7 @@ def test_the_plot_box_shows_only_what_the_label_was_made_with(
     """The info box beside a label plot listed proportions 'perfect' never reads
     (and crashed converting them, after the CSV was written, so the dataset was
     counted as skipped), proportions 'balanced' ignores, and a centrality
-    'random' never applies."""
+    'random' never applies. A balance left to its default read `balance: -`."""
     boxes = []
 
     def record(*args, **kwargs):
@@ -991,7 +1096,7 @@ def test_a_source_that_ignores_the_suite_seed_never_mentions_it(tmp_path, caplog
 
 def test_resolve_seed_keeps_the_documented_default():
     """An absent key is still 42; only a valueless one draws."""
-    from clmsynth.main import _resolve_seed
+    from clmsynth._single_run import _resolve_seed
 
     assert _resolve_seed({}, "x.seed") == (42, "default; the key is absent")
     assert _resolve_seed({"seed": 7}, "x.seed") == (7, "set in the config")
@@ -1017,10 +1122,14 @@ def test_resolve_seed_keeps_the_documented_default():
         ({"num_classes": 2, "matching_mode": "bogus_mode"}, 20, ["solo"], 2),
         ({"num_classes": 2}, 20, ["solo"], 2),
         ({"num_classes": 3, "matching_mode": "perfect"}, 20, ["solo"], 2),
-        ({"num_classes": 2, "matching_mode": "perfect"}, 20, ["no_such_dataset"], 1),
+        ({"num_classes": 2, "matching_mode": "perfect"}, 20, ["no_such_dataset"], 2),
+        ({"num_classes": 2, "matching_mode": "perfect"}, 20, ["solo", "no_such_dataset"], 2),
+        ({"num_classes": 2, "matching_mode": "perfect"}, 20, "all", 2),
+        ({"num_classes": 2, "matching_mode": "perfect"}, 20, ["header_only"], 1),
     ],
     ids=["success-0", "label-left-out-3", "coded-config-error-2", "missing-key-2",
-         "every-dataset-refused-2", "csv-missing-1"],
+         "every-dataset-refused-2", "csv-missing-2", "csv-missing-beside-a-good-one-2",
+         "byoc-datasets-all-2", "unusable-csv-1"],
 )
 def test_the_exit_codes_stay_distinguishable(tmp_path, monkeypatch, clm_label, n_zero,
                                              datasets, expected_exit):
@@ -1032,11 +1141,15 @@ def test_the_exit_codes_stay_distinguishable(tmp_path, monkeypatch, clm_label, n
     3-point cluster 0 ([CLM-150]), so the dataset is written without its label.
     A missing matching_mode ([CLM-202]) has no default, so no dataset can be
     labelled. Perfect matching of 3 labels to 2 clusters ([CLM-102]) refuses the
-    only dataset. The run folder stays exactly when something was written.
+    only dataset. A name with no CSV is a selection the source does not have, so
+    the config is refused, also beside a good one; a CSV that is there and cannot
+    be imported is beyond the config. The run folder stays exactly when something
+    was written.
     """
     inputs = tmp_path / "input"
     inputs.mkdir()
     write_byoc_batch(inputs, [("solo", n_zero)])
+    (inputs / "header_only.csv").write_text("f1,f2,cluster\n", encoding="utf-8")
 
     code, survivors = run_main(
         tmp_path, monkeypatch, minimal_byoc_config(inputs, tmp_path / "out", datasets, clm_label)
@@ -1101,7 +1214,7 @@ def run_main(tmp_path, monkeypatch, config, *flags):
     out = Path(config["global_settings"]["output_dir"])
     code: str | int | None = 0
     try:
-        clmsynth.main.main()
+        clmsynth.__main__.main()
     except SystemExit as exit_signal:
         code = exit_signal.code
     return code, sorted(p.name for p in out.iterdir()) if out.is_dir() else []
@@ -1110,8 +1223,8 @@ def run_main(tmp_path, monkeypatch, config, *flags):
 def test_a_run_that_writes_nothing_leaves_no_run_folder(tmp_path, monkeypatch):
     """The reported case: byoc pointed at a folder holding no such CSV.
 
-    The fetcher reports the missing file and returns None, so no dataset is
-    processed and the run exits 1. What used to survive that was a timestamped
+    The run names the missing file and refuses the selection, so no dataset is
+    processed and it exits 2. What used to survive that was a timestamped
     folder containing an empty csv/, png/ and txt/ and a copy of the config --
     indistinguishable at a glance from a run that succeeded, and picked up by
     anything globbing the output directory. --keep-failed keeps it on request.
@@ -1123,7 +1236,7 @@ def test_a_run_that_writes_nothing_leaves_no_run_folder(tmp_path, monkeypatch):
         tmp_path, monkeypatch, minimal_byoc_config(inputs, tmp_path / "out", ["no_such_dataset"])
     )
 
-    assert code == 1, f"expected exit 1 for a run that processed nothing, got {code}"
+    assert code == 2, f"expected exit 2 for a dataset that is not there, got {code}"
     assert survivors == [], f"an empty run folder survived: {survivors}"
 
 
@@ -1243,10 +1356,10 @@ def test_sigterm_stops_the_run_like_ctrl_c(tmp_path, monkeypatch):
 
     def terminated(*args, **kwargs):
         handler = signal.getsignal(signal.SIGTERM)
-        assert callable(handler), f"main() installed no SIGTERM handler: {handler!r}"
+        assert callable(handler), f"the run installed no SIGTERM handler: {handler!r}"
         handler(signal.SIGTERM, None)
 
-    monkeypatch.setattr(clmsynth.main, "run_pipeline", terminated)
+    monkeypatch.setattr(clmsynth._single_run, "run_pipeline", terminated)
     code, survivors = run_main(
         tmp_path, monkeypatch, minimal_byoc_config(inputs, tmp_path / "out", ["solo"]),
         "--keep-failed")
@@ -1286,7 +1399,7 @@ def test_a_run_folder_holding_anything_real_is_never_removed(tmp_path, litter):
     target = run_dir / litter
     target.write_text("content", encoding="utf-8")
 
-    assert clmsynth.main.discard_failed_run(run_dir, keep_failed=False) is False
+    assert discard_failed_run(run_dir, keep_failed=False) is False
     assert run_dir.is_dir(), "a run folder holding real content was removed"
     assert target.is_file(), "the content itself was removed"
 
@@ -1301,7 +1414,7 @@ def test_the_failed_run_predicate_accepts_exactly_the_scaffolding(tmp_path):
     """
     run_dir = _failed_run_scaffold(tmp_path)
 
-    assert clmsynth.main.discard_failed_run(run_dir, keep_failed=False) is True
+    assert discard_failed_run(run_dir, keep_failed=False) is True
     assert not run_dir.exists()
 
 
@@ -1445,6 +1558,232 @@ def test_generate_config_refuses_to_overwrite_its_payload(tmp_path, monkeypatch,
     assert payload.read_text(encoding="utf-8") == text
 
 
+@pytest.mark.usefixtures("yaml")
+@pytest.mark.parametrize("kind", ["a-folder", "utf-16"])
+def test_generate_config_exits_two_on_a_payload_it_cannot_read(kind, tmp_path, monkeypatch):
+    """A folder was a PermissionError traceback on Windows, and text in another
+    encoding a UnicodeDecodeError: neither is one of the two errors the read was
+    guarded for."""
+    from clmsynth._config_gen import generate_config
+
+    payload = tmp_path / "payload.yaml"
+    if kind == "a-folder":
+        payload.mkdir()
+    else:
+        payload.write_bytes("num_classes: 3\n".encode("utf-16"))
+    monkeypatch.setattr(sys, "argv", ["clmsynth-config", str(payload), str(tmp_path / "out.yaml")])
+    with pytest.raises(SystemExit) as excinfo:
+        generate_config.main()
+    assert excinfo.value.code == 2
+    assert not (tmp_path / "out.yaml").exists()
+
+
+# ---------------------------------------------------------------------------
+# Settings a run cannot use, and what a selection names twice
+# ---------------------------------------------------------------------------
+
+
+def run_status(tmp_path, config):
+    """run_single on `config`, written to a file: its exit status."""
+    path = tmp_path / "cfg.json"
+    path.write_text(json.dumps(config), encoding="utf-8")
+    return run_single(str(path), render_plots=False)
+
+
+def one_fabricated(tmp_path, **suite):
+    """A one-dataset fabricated config that writes under tmp_path/OUT."""
+    return {
+        "global_settings": {"data_source": "fabricated_data", "output_dir": str(tmp_path / "OUT")},
+        "fabricated_data_suite": {**_ONE_DATASET, **suite},
+        "label_generation": {"n_labels": 1, "seed": 42,
+                             "clm_label": {"num_classes": 4, "matching_mode": "perfect"}},
+    }
+
+
+@pytest.mark.parametrize(("value", "statuses"), [(5, {2}), (None, {0, 2})],
+                         ids=["a-number", "valueless"])
+def test_an_output_dir_that_is_not_text_is_no_traceback(value, statuses, tmp_path, monkeypatch,
+                                                        caplog):
+    """`Path(5)` was an uncaught TypeError before anything was logged: exit 2,
+    naming the key. A valueless `output_dir:` runs or is refused, never a traceback."""
+    monkeypatch.chdir(tmp_path)
+    config = one_fabricated(tmp_path)
+    config["global_settings"]["output_dir"] = value
+    with caplog.at_level(logging.ERROR, logger="clmsynth"):
+        status = run_status(tmp_path, config)
+    assert status in statuses
+    assert status != 2 or "output_dir" in caplog.text
+
+
+def test_an_output_dir_with_a_null_character_is_reported(tmp_path, caplog):
+    """mkdir raises ValueError for it, which the OSError handler around the run
+    folder missed: exit 1, as for any folder that cannot be created."""
+    config = one_fabricated(tmp_path)
+    config["global_settings"]["output_dir"] = str(tmp_path / "bad\0name")
+    with caplog.at_level(logging.ERROR, logger="clmsynth"):
+        assert run_status(tmp_path, config) == 1
+    assert "Cannot create the output folder" in caplog.text
+
+
+@pytest.mark.parametrize("name", ["no?such", "no/such"], ids=["a-question-mark", "a-slash"])
+def test_an_unknown_data_source_is_refused_whatever_its_characters(name, tmp_path, caplog):
+    """The run folder is named after the source before the source is checked. `?`
+    made Windows refuse the folder, and the run exited 1 about the output folder;
+    `/` made two levels of run folder, of which the failed run removed the inner."""
+    config = one_fabricated(tmp_path)
+    config["global_settings"]["data_source"] = name
+    with caplog.at_level(logging.ERROR, logger="clmsynth"):
+        assert run_status(tmp_path, config) == 2
+    assert "Valid options" in caplog.text
+    out = tmp_path / "OUT"
+    assert not out.exists() or not list(out.iterdir())
+
+
+def test_n_labels_0_does_not_read_clm_label(tmp_path):
+    """clm_label is not read when n_labels is 0, and the saved config leaves it out,
+    but byoc's precheck of the cluster ids read it and stopped the run."""
+    inputs = tmp_path / "input"
+    inputs.mkdir()
+    pd.DataFrame({"f1": np.arange(20) / 10, "f2": np.arange(20) / 5,
+                  "cluster": np.repeat([8, 9], 10)}).to_csv(inputs / "data.csv", index=False)
+    clm = {"num_classes": 2, "matching_mode": "single", "single_match": {"cluster": 0, "label": 0}}
+    config = minimal_byoc_config(inputs, tmp_path / "OUT", ["data"], clm)
+    config["label_generation"]["n_labels"] = 0
+    assert run_status(tmp_path, config) == 0
+    written = next((tmp_path / "OUT").rglob("csv/*.csv"))
+    assert "Label_0" not in written.read_text(encoding="utf-8").splitlines()[0]
+
+
+def test_an_empty_n_samples_takes_the_preset_s_size(tmp_path):
+    """`n_samples:` with no value is the preset's size, as absent: `int(None)`
+    skipped every dataset with a raw TypeError."""
+    config, csv_dir, png_dir, txt_dir = _fabricated_config(
+        tmp_path, {**_ONE_DATASET, "n_samples": None})
+    assert run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir, False) == 1
+    assert len(pd.read_csv(next(csv_dir.glob("*.csv")))) == 800
+
+
+@pytest.mark.parametrize("n_samples", [0, "100", 1], ids=["zero", "text", "too-few"])
+def test_an_n_samples_no_preset_can_use_is_named(n_samples, tmp_path, caplog):
+    """0 skipped the dataset with "division by zero" and 1 with pandas' "Bin edges
+    must be unique": neither named the setting."""
+    config, csv_dir, png_dir, txt_dir = _fabricated_config(
+        tmp_path, {**_ONE_DATASET, "n_samples": n_samples})
+    with caplog.at_level(logging.ERROR, logger="clmsynth"):
+        assert run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir, False) == 0
+    assert "fabricated_data_suite.n_samples" in caplog.text, caplog.text
+
+
+def test_a_dataset_named_twice_runs_once_with_a_warning(tmp_path, caplog):
+    """As a batch does with a config named twice. It ran twice and counted 2, while
+    the saved config holds it once."""
+    config, csv_dir, png_dir, txt_dir = _fabricated_config(
+        tmp_path, {**_ONE_DATASET, "datasets": ["baseline_4class", "baseline_4class"]})
+    report: dict[str, int] = {}
+    with caplog.at_level(logging.WARNING, logger="clmsynth"):
+        assert run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir, False,
+                            report=report) == 1
+    assert report["resolved"] == 1
+    assert "'fabricated/baseline_4class' is named more than once" in caplog.text
+
+
+def test_fetch_refuses_a_key_the_source_does_not_take(caplog):
+    """run_pipeline refuses a misspelt suite key; `fetch`, which takes the same keys,
+    ran it on the default without a word. The fetcher contract holds: None, and
+    the key in the log."""
+    with caplog.at_level(logging.ERROR, logger="clmsynth"):
+        assert dataset_sources.fetch("fabricated_data", "fabricated", "baseline_2class",
+                                     n_sample=10) is None
+    assert "'n_sample'" in caplog.text
+
+
+def test_run_pipeline_makes_its_csv_folder(tmp_path):
+    """The txt and png folders are made when first written to; a csv folder that is
+    not there skipped every dataset with an OSError."""
+    config, *_ = _fabricated_config(tmp_path, dict(_ONE_DATASET))
+    out = tmp_path / "new"
+    assert run_pipeline("fabricated_data", config, out / "csv", out / "png", out / "txt",
+                        False) == 1
+
+
+def test_the_summary_says_a_dataset_is_short_of_its_labels(tmp_path, monkeypatch):
+    """Three of five labels fit: the summary listed three and never said two were
+    missing, so it read as a run of three. Only the log had it."""
+    def three_of_them(context, generator):
+        generate_additional_labels(context, n_labels=3, clm_config=generator.clm_config, seed=1)
+
+    monkeypatch.setattr(clmsynth._single_run, "_label_dataset", three_of_them)
+    config, csv_dir, png_dir, txt_dir = _fabricated_config(tmp_path, dict(_ONE_DATASET))
+    config["label_generation"]["n_labels"] = 5
+    report: dict[str, int] = {}
+    assert run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir, False,
+                        report=report) == 1
+    assert report["short"] == 1
+    assert "3 of 5 labels written" in next(txt_dir.glob("*.txt")).read_text(encoding="utf-8")
+
+
+def test_a_batch_passes_a_config_whose_name_starts_with_a_dash(tmp_path, monkeypatch):
+    """`clmsynth -- -a.json b.json` reached each child as a bare argument, which
+    its argparse read as an option: exit 2 for a config that runs."""
+    from clmsynth._extras import batch_run
+
+    (tmp_path / "-a.json").write_text(json.dumps(one_fabricated(tmp_path)), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    root = str(Path(clmsynth.__file__).resolve().parents[1])
+    env = {**os.environ, "PYTHONPATH": root}
+    code, output = batch_run._run_config("-a.json", ["--no-viz"], env)
+    assert code == 0, output[-300:]
+
+
+# ---------------------------------------------------------------------------
+# --help for the two guides
+# ---------------------------------------------------------------------------
+
+GUIDES = {"clmsynth-config": "clmsynth._config_gen.generate_config",
+          "clmsynth-wizard": "clmsynth._config_gen.config_wizard"}
+
+
+def run_guide(command, flag, folder):
+    """`<command> <flag>` in a child working in `folder`, with nothing on stdin.
+
+    -I and the path insert are as in `03_isolation`: the child imports the clmsynth
+    this session did, whatever PYTHONPATH holds.
+    """
+    root = str(Path(clmsynth.__file__).resolve().parents[1])
+    code = (f"import sys\nsys.path.insert(0, {root!r})\nsys.argv = [{command!r}, {flag!r}]\n"
+            f"from {GUIDES[command]} import main\nmain()\n")
+    return subprocess.run([sys.executable, "-I", "-c", code], cwd=folder,
+                          stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                          timeout=60, check=False)
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+@pytest.mark.parametrize("command", GUIDES)
+def test_help_prints_usage_and_exits_0(command, flag, tmp_path):
+    done = run_guide(command, flag, tmp_path)
+    assert done.returncode == 0, done.stderr
+    assert "usage" in done.stdout.lower()
+    assert command in done.stdout
+
+
+@pytest.mark.parametrize("command", GUIDES)
+def test_help_writes_nothing_and_asks_nothing(command, tmp_path):
+    done = run_guide(command, "--help", tmp_path)
+    assert done.returncode == 0, done.stderr
+    assert not list(tmp_path.iterdir())
+
+
+def test_config_help_names_its_arguments(tmp_path):
+    text = run_guide("clmsynth-config", "--help", tmp_path).stdout.lower()
+    assert "payload" in text and "output" in text
+
+
+def test_a_mistyped_option_is_a_usage_error_not_a_payload(tmp_path):
+    done = run_guide("clmsynth-config", "--helpp", tmp_path)
+    assert done.returncode == 2
+    assert "not found" not in done.stderr and "usage" in done.stderr.lower()
+
+
 # ---------------------------------------------------------------------------
 # Row alignment: the guarantee the whole dataset format rests on
 # ---------------------------------------------------------------------------
@@ -1567,3 +1906,111 @@ def test_clustbench_fetch_returns_none_when_the_source_is_unreachable():
             )
             is None
         )
+
+
+# ---------------------------------------------------------------------------
+# mdcgen presets
+#
+# mdcgenpy is not on PyPI and is stubbed: the stub records what a preset asked
+# for, which is what these check.
+# ---------------------------------------------------------------------------
+
+MDCGEN_PRESETS = [(group, name) for group, presets in MDCGEN_CONFIGS.items() for name in presets]
+IGNORED_BY_MDCGENPY = {"m", "n", "cp", "out"}
+MDCGEN_SIZES = [("basic", "blobs_2d_5c", 1000, 2), ("basic", "blobs_3d_10c", 2000, 3),
+                ("high_dim", "hd_50d_5c", 1000, 50), ("high_dim", "hd_100d_10c", 2000, 100),
+                ("challenging", "overlapping_2d", 1000, 2), ("challenging", "noisy_3d", 1500, 3)]
+
+
+@pytest.fixture
+def mdcgenpy(monkeypatch):
+    """A stand-in for mdcgenpy.clusters; yields the keyword arguments of each call."""
+    calls = []
+
+    class ClusterGenerator:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+            self.kwargs = kwargs
+
+        def generate_data(self):
+            k = self.kwargs.get("k", 3)
+            n = int(self.kwargs.get("n_samples", 100))
+            d = int(self.kwargs.get("n_feats", 2))
+            parts = len(k) if isinstance(k, (list, tuple)) else int(k)
+            return np.random.default_rng(0).normal(size=(n, d)), np.arange(n) % parts
+
+    package, clusters = types.ModuleType("mdcgenpy"), types.ModuleType("mdcgenpy.clusters")
+    vars(clusters)["ClusterGenerator"] = ClusterGenerator
+    vars(package)["clusters"] = clusters
+    monkeypatch.setitem(sys.modules, "mdcgenpy", package)
+    monkeypatch.setitem(sys.modules, "mdcgenpy.clusters", clusters)
+    return calls
+
+
+@pytest.mark.parametrize(("group", "name"), MDCGEN_PRESETS)
+def test_a_preset_passes_only_names_mdcgenpy_reads(mdcgenpy, group, name):
+    dataset_sources.fetch("mdcgen", group, name, seed=3)
+    assert not IGNORED_BY_MDCGENPY & set(mdcgenpy[0])
+
+
+@pytest.mark.parametrize(("group", "name", "n", "d"), MDCGEN_SIZES)
+def test_a_preset_gets_the_size_and_dimension_it_names(mdcgenpy, group, name, n, d):
+    frame = dataset_sources.fetch("mdcgen", group, name, seed=3)
+    assert (mdcgenpy[0].get("n_samples"), mdcgenpy[0].get("n_feats")) == (n, d)
+    assert frame is not None
+    assert frame.filter(like="Feature_").shape == (n, d)
+
+
+def test_the_overlapping_preset_sets_compactness(mdcgenpy):
+    dataset_sources.fetch("mdcgen", "challenging", "overlapping_2d", seed=3)
+    assert mdcgenpy[0].get("compactness_factor") == 0.1
+
+
+def test_the_noisy_preset_sets_a_count_of_outliers(mdcgenpy):
+    """mdcgenpy's outliers is a count; the preset's `out: 0.05` is not one."""
+    dataset_sources.fetch("mdcgen", "challenging", "noisy_3d", seed=3)
+    outliers = mdcgenpy[0].get("outliers", 0)
+    assert isinstance(outliers, int) and outliers > 0
+
+
+@pytest.mark.parametrize("key", ["n_noise", "min_samples", "ki_coeff", "corr", "rotate",
+                                 "distributions"])
+def test_a_preset_reaches_the_setting(key):
+    """Noise dimensions, unequal sizes, distributions, correlation and rotation."""
+    assert any(key in preset for presets in MDCGEN_CONFIGS.values()
+               for preset in presets.values())
+
+
+def test_a_preset_has_unequal_cluster_sizes():
+    """Through mdcgenpy's k, min_samples or ki_coeff."""
+    assert any(isinstance(preset.get("k"), (list, tuple)) or {"min_samples", "ki_coeff"} & set(preset)
+               for presets in MDCGEN_CONFIGS.values() for preset in presets.values())
+
+
+def test_an_old_suite_name_is_translated_or_refused(mdcgenpy):
+    """A suite key in its old name, such as `cp`, is translated to the name mdcgenpy
+    reads or the fetch is refused: mdcgenpy would ignore it without a word."""
+    frame = dataset_sources.fetch("mdcgen", "basic", "blobs_2d_5c", seed=3, cp=0.2)
+    assert frame is None or (mdcgenpy and mdcgenpy[0].get("compactness_factor") == 0.2
+                             and "cp" not in mdcgenpy[0])
+
+
+def test_mdcgen_records_which_features_are_noise(tmp_path, mdcgenpy):
+    """Only an mdcgen dataset has this record."""
+    noisy = [(group, name) for group, presets in MDCGEN_CONFIGS.items()
+             for name, preset in presets.items() if "n_noise" in preset]
+    assert noisy, "no preset sets n_noise"
+    group, name = noisy[0]
+    clm = {"num_classes": 2, "matching_mode": "custom", "balance": "balanced",
+           "assignment_matrix": [{"clusters": [k], "label": k, "recall_target": 0.8}
+                                 for k in range(2)]}
+    config: dict[str, Any] = {
+        "global_settings": {"data_source": "mdcgen"},
+        "mdcgen_suite": {"batteries": [group], "datasets": [name], "seed": 3},
+        "label_generation": {"n_labels": 1, "seed": 1, "clm_label": clm}}
+    csv_dir, png_dir, txt_dir = (tmp_path / sub for sub in ("csv", "png", "txt"))
+    for folder in (csv_dir, png_dir, txt_dir):
+        folder.mkdir()
+    run_pipeline("mdcgen", config, csv_dir, png_dir, txt_dir, render_plots=False)
+    summary = next(txt_dir.glob("*.txt")).read_text(encoding="utf-8")
+    assert re.search(r"(?is)cluster structure.*noise", summary)

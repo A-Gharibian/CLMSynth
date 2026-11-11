@@ -24,7 +24,7 @@ global_settings:
 # --- LABEL GENERATION ---
 label_generation:
   n_labels: {n_labels}          # produces Label_0, Label_1, ...
-  source_labeling: "{source_labeling}"
+  source_labeling: {source_labeling}
   seed: {label_seed}
 
   # --- CLUSTER-LABEL MATCHING (CLM) CONFIGURATION ---
@@ -55,7 +55,7 @@ label_generation:
     centroid_dependence:
       enabled: {centroid_enabled}  # If false, which points of a cluster get each label is random
       profile: {centroid_profile}  # Options: 'linear', 'exponential', 'step'
-      favors: {centroid_favors}    # Options: 'core', 'boundary'{steepness}
+      favors: {centroid_favors}    # Options: 'core', 'boundary'{steepness}{feature_dependence}
 """
 
 SIZING_TEMPLATE = """

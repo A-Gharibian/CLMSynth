@@ -25,6 +25,10 @@ def _label_arrays(labels_true: ArrayLike, labels_pred: ArrayLike,
                   *pair: object) -> tuple[np.ndarray, np.ndarray]:
     """Both label arrays, refused when no documented use would pass them; `pair` is
     the (cluster, label) of a pair measure."""
+    # np.asarray coerces a list like [1, "1"] to all-strings, hiding mixed
+    # types from the object-dtype check below.  Pre-check raw lists.
+    _mixed = any(isinstance(a, (list, tuple)) and infer_dtype(a) in ("mixed", "mixed-integer")
+                 for a in (labels_true, labels_pred))
     t, p = np.asarray(labels_true), np.asarray(labels_pred)
     if t.ndim != 1 or p.ndim != 1:
         problem = "labels_true and labels_pred must be 1-D"
@@ -36,7 +40,7 @@ def _label_arrays(labels_true: ArrayLike, labels_pred: ArrayLike,
              or (a.dtype.kind in "fO" and pd.Series(a).isin([np.inf, -np.inf]).any())
              for a in (t, p)):
         problem = "labels_true or labels_pred holds missing values (NaN, None or inf)"
-    elif any(a.dtype == object and infer_dtype(a) in ("mixed", "mixed-integer") for a in (t, p)):
+    elif _mixed or any(a.dtype == object and infer_dtype(a) in ("mixed", "mixed-integer") for a in (t, p)):
         problem = "labels_true or labels_pred mixes id types, such as int and str"
     elif pair and not (t == pair[0]).any():
         problem = f"labels_true has no cluster {pair[0]!r}"
@@ -202,9 +206,18 @@ class MetricCeilings:
         """Both size lists as int64 arrays, after checking they are 1-D lists of
         counts >= 0 with the same total."""
         try:
-            t = np.asarray(cluster_sizes, dtype=np.int64)
-            p = np.asarray(label_sizes, dtype=np.int64)
-            counts = t.ndim == p.ndim == 1 and (t >= 0).all() and (p >= 0).all()
+            t = np.asarray(cluster_sizes)
+            p = np.asarray(label_sizes)
+            if t.dtype.kind not in "iu" or p.dtype.kind not in "iu":
+                counts = False
+            elif any(isinstance(x, (bool, np.bool_)) for a in (cluster_sizes, label_sizes)
+                     for x in np.asarray(a, dtype=object).ravel()):
+                counts = False
+            else:
+                counts = bool(t.ndim == p.ndim == 1 and (t >= 0).all() and (p >= 0).all())
+                if counts:
+                    t = t.astype(np.int64)
+                    p = p.astype(np.int64)
         except (TypeError, ValueError, OverflowError):
             counts = False
         if not counts:

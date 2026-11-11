@@ -1,8 +1,8 @@
   # CLMSynth Roadmap
 
-[![Version](https://img.shields.io/badge/version-0.7.6-blue)](https://github.com/A-Gharibian/CLMSynth/releases)
+[![Version](https://img.shields.io/badge/version-0.7.7-blue)](https://github.com/A-Gharibian/CLMSynth/releases)
 
-Planned work from 0.7.6 to 0.9.0. Current behavior is in **`../README.md`**.
+Planned work from 0.7.7 to 0.9.0. Current behavior is in **`../README.md`**.
 Past changes are in **`../CHANGELOG.md`**.
 
 ## Conventions
@@ -14,56 +14,19 @@ A major release uploads validation tests to the Zenodo repository.
 
 ---
 
-## 0.7.7
-
-An engine hook that reads features and noise-dimension. Clusters stay fixed, read-only input to the engine.
-
-### Will be Added
-
-- **`mdcgen` presets pass the parameters mdcgenpy reads.** mdcgenpy's names are
-  `n_samples`, `n_feats`, `compactness_factor` and `outliers`; the presets pass `m`,
-  `n`, `cp` and `out`, which it ignores, so a preset does not get the
-  size, dimension or outliers (labelled -1) count it names.  *[feature]*
-
-- **Noise dimensions from `mdcgen`.** New presets set mdcgenpy's `n_noise`. The
-  listed columns become uniform noise for every point, or for chosen clusters only.
-  mdcgenpy validates `add_noise` but never applies it, so it is not used. The output
-  records, per feature, whether it carries cluster structure. `clustbench` and `byoc`
-  report it as unknown. *[feature]*
-
-- **More of mdcgenpy through `mdcgen`.** New presets reach the settings the current
-  ones leave out, so `mdcgen` covers clusters that differ in density and size:
-  unequal cluster sizes (mdcgenpy's `k`, `min_samples` and `ki_coeff`), per-cluster
-  distributions, correlation (`corr`) and rotation (`rotate`). *[feature]*
-
-- **clustbench local cache.** Every run downloads its datasets from GitHub as of 0.7.6
-
-- **Labels that follow a feature.** `centroid_dependence` scores points by their
-  distance to the cluster center. A chosen feature column or a projection can supply
-  the score instead. With `profile: step`. *[feature]*
-
-- **Reading the diagnostic codes from Python.** a logging handler
-  that collects the `[CLM-###]` codes a call logged, e.g. to check for `[CLM-306]`
-  or `[CLM-309]` after `generate_clm_labels`. *[improvement]*
-
-- **`--help` for `clmsynth-config` and `clmsynth-wizard`.** Each prints its usage and
-  exits. Today `clmsynth-config --help` reads `--help` as a payload path, and
-  `clmsynth-wizard` ignores its arguments and starts asking. *[improvement]*
-
----
-
 ## 0.7.8 and 0.7.9
 
 - **A Sphinx site.** *[feature]*
 
+- **clustbench local cache.** Every run downloads its datasets from GitHub as of 0.7.6
 
+- **Reading the diagnostic codes from Python.** A way to collect the `[CLM-###]` codes
+  of the warnings a call logged, so that a script can check them after
+  `generate_clm_labels`.
 
-- **One source of truth for settings, before 0.8.0.** Every setting's default, the
+- **One source of truth for settings** Every setting's default, the
   condition it applies under and its allowed values come from one table that the
   engine, the saved run config and the wizard all read. *[improvement]*
-
-- **A community registry entry.** CLMSynth in the Research Software Directory or
-  on WikiData, a one-time submission. *[improvement]*
 
 
 ---

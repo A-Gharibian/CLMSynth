@@ -73,6 +73,8 @@ _TREE: Final = (
     Setting("clm_label.centroid_dependence.profile", "linear",
             choices=("linear", "exponential", "step")),
     Setting("clm_label.centroid_dependence.steepness", 3.0, lo=0),
+    Setting("clm_label.feature_dependence.favors", "high", choices=("high", "low", "value")),
+    Setting("clm_label.feature_dependence.profile", "linear", choices=("linear", "step")),
 )
 
 SETTINGS: Final[Mapping[str, Setting]] = MappingProxyType({s.path: s for s in _TREE})
@@ -94,6 +96,8 @@ def choices(path: str) -> tuple[str, ...]:
 def in_bounds(path: str, value: Any) -> bool:
     """Whether a number is within the run's bounds for `path`. NaN never is."""
     s = SETTINGS[path]
+    if value != value:
+        return False
     above = s.lo is None or (value > s.lo if s.lo_strict else value >= s.lo)
     below = s.hi is None or value <= s.hi
     return bool(above and below)

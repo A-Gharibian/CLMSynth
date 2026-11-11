@@ -4,8 +4,22 @@
 """
 
 import logging
+import re
 
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
+
+_RUN_LINE = re.compile(r" - INFO - Run (\S+) from config ")
+
+
+def run_line(run: str, config: object) -> str:
+    """The log line that ties a run folder, named by time and source only, to its config."""
+    return f"Run {run} from config '{config}'."
+
+
+def run_named_in(output: str) -> str | None:
+    """The run folder named by `run_line` in a run's captured output, if it made one."""
+    found = _RUN_LINE.search(output)
+    return found.group(1) if found else None
 
 
 class SingleLineFilter(logging.Filter):

@@ -4,15 +4,17 @@
 by the user, never a dependency) from named presets. ``dataset_sources`` is its
 interface and re-exports these names."""
 
+import copy
 import logging
 from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from typing import Any, Final
 
+import numpy as np
 import pandas as pd
 
 from .._utils.compat import import_optional_dependency
-from . import Source
+from . import FEATURE_RECORD, Source
 
 log: logging.Logger = logging.getLogger(__name__)
 
@@ -29,24 +31,137 @@ MDCGEN_METADATA: Final[Mapping[str, Mapping[str, str]]] = {
         "description": "Clusters with heavy overlap, variable compactness, or simulated noise/outliers.",
         "examples": "overlapping_2d, noisy_3d"
     },
+    "noise_dims": {
+        "description": "Clusters with noise features: columns that carry no cluster structure, "
+                       "in every cluster or in chosen clusters.",
+        "examples": "noise_5d_2n, noise_5d_per_cluster"
+    },
+    "varied": {
+        "description": "Clusters that differ in size, distribution, correlation or rotation.",
+        "examples": "sizes_2d_4c, mixed_dist_2d_3c"
+    },
 }
 
+# Each preset is the keyword arguments of mdcgenpy's ClusterGenerator, by its names.
 MDCGEN_CONFIGS: Final[Mapping[str, Mapping[str, Mapping[str, Any]]]] = {
     "basic": {
-        "blobs_2d_5c": {"m": 1000, "n": 2, "k": 5},
-        "blobs_3d_10c": {"m": 2000, "n": 3, "k": 10},
+        "blobs_2d_5c": {"n_samples": 1000, "n_feats": 2, "k": 5},
+        "blobs_3d_10c": {"n_samples": 2000, "n_feats": 3, "k": 10},
     },
     "high_dim": {
-        "hd_50d_5c": {"m": 1000, "n": 50, "k": 5},
-        "hd_100d_10c": {"m": 2000, "n": 100, "k": 10},
+        "hd_50d_5c": {"n_samples": 1000, "n_feats": 50, "k": 5},
+        "hd_100d_10c": {"n_samples": 2000, "n_feats": 100, "k": 10},
     },
     "challenging": {
-        "overlapping_2d": {"m": 1000, "n": 2, "k": 4, "cp": 0.1},
-        "noisy_3d": {"m": 1500, "n": 3, "k": 5, "out": 0.05},
+        "overlapping_2d": {"n_samples": 1000, "n_feats": 2, "k": 4, "compactness_factor": 0.1},
+        "noisy_3d": {"n_samples": 1500, "n_feats": 3, "k": 5, "outliers": 75},
+    },
+    "noise_dims": {
+        # Columns by position, from 0: Feature_4 and Feature_5 here.
+        "noise_5d_2n": {"n_samples": 1000, "n_feats": 5, "k": 4, "n_noise": [3, 4]},
+        # One list per cluster.
+        "noise_5d_per_cluster": {"n_samples": 1000, "n_feats": 5, "k": 3,
+                                 "n_noise": [[3, 4], [4], []]},
+    },
+    "varied": {
+        "sizes_2d_4c": {"n_samples": 1000, "n_feats": 2, "k": [500, 300, 150, 50]},
+        "min_size_3d_6c": {"n_samples": 1200, "n_feats": 3, "k": 6, "min_samples": 150},
+        "ki_coeff_3d_6c": {"n_samples": 1200, "n_feats": 3, "k": 6, "ki_coeff": 20.0},
+        # One distribution per cluster.
+        "mixed_dist_2d_3c": {"n_samples": 1500, "n_feats": 2, "k": 3,
+                             "distributions": ["gaussian", "uniform", "logistic"]},
+        "correlated_3d_4c": {"n_samples": 1200, "n_feats": 3, "k": 4, "corr": 0.8},
+        "axis_aligned_2d_4c": {"n_samples": 1000, "n_feats": 2, "k": 4, "rotate": False},
     },
 }
 
 MDCGEN_HEAVY: Final[AbstractSet[str]] = {"high_dim"}
+
+# mdcgenpy adds 50 outliers, labelled -1, unless it is told a count, and a run reads
+# -1 as one more cluster. A dataset has outliers only where its preset or the suite
+# names `outliers`.
+OUTLIERS_UNLESS_NAMED: Final[int] = 0
+
+# mdcgenpy's names for the keys the presets carried before 0.7.7. It keeps a keyword
+# it does not know without reading it.
+_OLD_NAMES: Final[Mapping[str, str]] = {
+    "m": "n_samples", "n": "n_feats", "cp": "compactness_factor", "out": "outliers"}
+
+
+def _with_mdcgenpy_names(kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    """The suite's keys with an old name replaced by mdcgenpy's, each with a warning.
+    `out` was a share of the points; `outliers` is a count, worked out by the
+    caller."""
+    renamed: dict[str, Any] = {}
+    for key, value in kwargs.items():
+        new = _OLD_NAMES.get(key)
+        if new is None:
+            renamed[key] = value
+        elif new in kwargs:
+            log.warning(f"mdcgen_suite: '{key}' is ignored, since '{new}' is set too.")
+        elif key == "out":
+            renamed[key] = value
+        else:
+            log.warning(f"mdcgen_suite: '{key}' is read as mdcgenpy's '{new}'. Write "
+                        f"'{new}: {value}'; mdcgenpy itself does not read '{key}'.")
+            renamed[new] = value
+    return renamed
+
+
+def _outliers_from_share(config: dict[str, Any]) -> None:
+    """Replaces an old `out` with `outliers`: below 1 it is a share of n_samples,
+    otherwise a count."""
+    share = config.pop("out")
+    try:
+        count = round(share * config["n_samples"]) if 0 < share < 1 else int(share)
+    except (TypeError, ValueError, KeyError):
+        log.warning(f"mdcgen_suite: 'out: {share!r}' is ignored; write 'outliers', a count "
+                    "of points.")
+        return
+    log.warning(f"mdcgen_suite: 'out: {share}' is read as mdcgenpy's 'outliers: {count}', a "
+                f"count of points. Write 'outliers: {count}'; mdcgenpy itself does not read "
+                "'out'.")
+    config["outliers"] = count
+
+
+def _per_cluster_functions(clusters: Any, config: dict[str, Any]) -> None:
+    """A list of distribution names, one per cluster, as the functions mdcgenpy keeps
+    for them: its own check reads a name inside a list as a list of letters."""
+    names = config.get("distributions")
+    by_name = getattr(getattr(clusters, "distributions", None), "get_dist_function", None)
+    if (by_name is not None and isinstance(names, (list, tuple))
+            and all(isinstance(name, str) for name in names)):
+        config["distributions"] = [by_name(name) for name in names]
+
+
+def _noise_columns(n_noise: Any, n_clusters: int) -> list[set[int]]:
+    """Per cluster, the columns mdcgenpy overwrites with uniform noise: `n_noise` is
+    a list of columns for every cluster, or one list per cluster."""
+    if not isinstance(n_noise, (list, tuple)) or not n_noise:
+        return [set() for _ in range(n_clusters)]
+    if all(isinstance(columns, (list, tuple)) for columns in n_noise):
+        return [set(columns) for columns in n_noise]
+    return [set(n_noise) for _ in range(n_clusters)]
+
+
+def _feature_record(features: list[str], n_noise: Any, n_clusters: int) -> list[str]:
+    """Which features carry cluster structure, as lines of the summary txt."""
+    noise = _noise_columns(n_noise, n_clusters)
+    everywhere = set.intersection(*noise) if noise else set()
+    somewhere = (set.union(*noise) if noise else set()) - everywhere
+    kept = [name for j, name in enumerate(features) if j not in everywhere | somewhere]
+    lines = ["cluster structure: " + (", ".join(kept) or "none")]
+    if everywhere:
+        lines.append("noise in every cluster: "
+                     + ", ".join(name for j, name in enumerate(features) if j in everywhere))
+    for j in sorted(somewhere):
+        if j < len(features):
+            where = ", ".join(str(c) for c, columns in enumerate(noise) if j in columns)
+            lines.append(f"noise in cluster(s) {where}, cluster structure in the others: "
+                         f"{features[j]}")
+    if not everywhere and not somewhere:
+        lines.append("noise: none")
+    return lines
 
 
 def fetch_mdcgen_data(
@@ -75,22 +190,35 @@ def fetch_mdcgen_data(
         log.error(f"No configuration mapping found for {dataset_group}/{dataset_name}.")
         return None
 
-    config = {**preset, **kwargs, "seed": seed}
+    # A copy: mdcgenpy rewrites the lists it is given.
+    config = {"outliers": OUTLIERS_UNLESS_NAMED, **copy.deepcopy(dict(preset)),
+              **_with_mdcgenpy_names(kwargs), "seed": seed}
+    if "out" in config:
+        _outliers_from_share(config)
+    k = config.get("k")
+    n_noise = copy.deepcopy(config.get("n_noise"))
 
     try:
+        _per_cluster_functions(clusters, config)
         cluster_gen = ClusterGenerator(**config)
         data, labels = cluster_gen.generate_data()
     except Exception as e:
         log.error(f"Failed to generate dataset using mdcgenpy: {e}")
         return None
 
+    labels = np.asarray(labels).ravel()
     feature_cols = [f"Feature_{i + 1}" for i in range(data.shape[1])]
     df = pd.DataFrame(data, columns=feature_cols)
     df["GroundTruth_labels0"] = labels
     df["Cohort_Class"] = labels
+    n_clusters = len(k) if isinstance(k, (list, tuple)) else int(np.sum(np.unique(labels) >= 0))
+    df.attrs[FEATURE_RECORD] = _feature_record(feature_cols, n_noise, n_clusters)
 
-    log.info(f"Generated '{dataset_group}/{dataset_name}' (seed={seed}): {df.shape[0]} rows, "
-             f"{len(feature_cols)} features, 1 labeling(s).")
+    n_outliers = int(np.sum(labels == -1))
+    outliers = (f", {n_outliers} of them outliers with cluster id -1, which a run reads as one "
+                "more cluster" if n_outliers else "")
+    log.info(f"Generated '{dataset_group}/{dataset_name}' (seed={seed}): {df.shape[0]} rows"
+             f"{outliers}, {len(feature_cols)} features, 1 labeling(s).")
     return df
 
 

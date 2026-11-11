@@ -17,8 +17,8 @@ from typing import Any
 import pandas as pd
 import pytest
 
+from clmsynth import load_config, run_pipeline
 from clmsynth._config_gen.generate_config import generate_base_config
-from clmsynth.main import load_config, run_pipeline
 from clmsynth.metrics import clustering_mcc
 
 # The dataset the offline source generates for this preset.
@@ -185,7 +185,7 @@ def test_rendered_config_runs(tmp_path, suffix):
     The output path's suffix picks the format.
 
     clmsynth-config payload.yaml          # payload -> config
-    python -m clmsynth.main               # config  -> dataset
+    clmsynth                              # config  -> dataset
     """
     rendered = tmp_path / f"rendered_config.{suffix}"
     # dict(): the module-level payload is shared, and a renderer that mutated

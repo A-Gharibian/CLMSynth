@@ -12,9 +12,9 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false          # never abandon an upload half-done
 
-# Where a final release (X.Y.Z) is uploaded: testpypi or pypi. Where a release
-# candidate (X.Y.ZrcN) is uploaded: testpypi, or none to build and verify it only,
-# its dist kept as this run's artifact.
+# Where a final release (X.Y.Z) is uploaded: testpypi, pypi or none. Where a
+# release candidate (X.Y.ZrcN) is uploaded: testpypi or none. none builds and
+# verifies the tag only, its dist kept as this run's artifact.
 env:
   FINAL_RELEASE_INDEX: pypi
   RC_RELEASE_INDEX: testpypi
@@ -53,8 +53,8 @@ jobs:
         id: route
         run: |
           case "$FINAL_RELEASE_INDEX" in
-            testpypi|pypi) ;;
-            *) echo "::error::FINAL_RELEASE_INDEX is '$FINAL_RELEASE_INDEX'; it must be testpypi or pypi. Nothing was uploaded."
+            testpypi|pypi|none) ;;
+            *) echo "::error::FINAL_RELEASE_INDEX is '$FINAL_RELEASE_INDEX'; it must be testpypi, pypi or none. Nothing was uploaded."
                exit 1 ;;
           esac
           case "$RC_RELEASE_INDEX" in

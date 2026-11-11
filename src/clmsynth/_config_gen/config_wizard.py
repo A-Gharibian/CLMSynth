@@ -7,6 +7,7 @@ Configuration Generator (CLI wizard).
 Run as a module, not as a file.
 """
 
+import argparse
 import json
 import math
 import subprocess
@@ -156,7 +157,8 @@ def ask_choice(prompt, choices: tuple[str, ...], default=None, explain=None) -> 
         v = _read(prompt, default)
         if v in choices:
             return v
-        if v.isdigit() and 1 <= int(v) <= len(choices):
+        # isdecimal, not isdigit, which is true for a superscript 2 that int() refuses.
+        if v.isdecimal() and 1 <= int(v) <= len(choices):
             return choices[int(v) - 1]
         print(f"    (choose 1-{len(choices)} or type the name)")
 
@@ -247,7 +249,7 @@ def ask_selection(prompt, options, default=None, explain=None):
             tok = tok.strip()
             if not tok:
                 continue
-            if tok.isdigit() and 1 <= int(tok) <= len(options):
+            if tok.isdecimal() and 1 <= int(tok) <= len(options):
                 picked.append(options[int(tok) - 1])
             elif tok in options:
                 picked.append(tok)
@@ -373,16 +375,28 @@ def build_source():
 
 
 def _byoc_suite():
+    """The byoc suite. A stem with a folder part and a tag that is the cluster
+    column are asked again: every run refuses them. No seed: byoc reads a file."""
     input_dir = ask_from("byoc_suite.input_dir")
-    datasets = ask_from("byoc_suite.datasets")
+    while True:
+        datasets = ask_from("byoc_suite.datasets")
+        shaped = [d for d in datasets
+                  if "/" in d or "\\" in d or ":" in d or d in (".", "..")]
+        if not shaped:
+            break
+        print(f"    ({', '.join(shaped)}: give the file stem only, without a folder)")
     cluster_column = ask_from("byoc_suite.cluster_column")
-    tags = (ask_from("byoc_suite.tag_columns")
-            if ask_from("byoc_suite.tag_columns._enabled") else [])
+    tags = []
+    if ask_from("byoc_suite.tag_columns._enabled"):
+        while True:
+            tags = ask_from("byoc_suite.tag_columns")
+            if cluster_column not in tags:
+                break
+            print(f"    ('{cluster_column}' is the cluster column, and cannot be carried "
+                  "as a tag too)")
     standardize = ask_from("byoc_suite.standardize")
-    seed = ask_from("byoc_suite.seed")
     suite = {"batteries": ["local"], "input_dir": input_dir, "datasets": datasets,
-             "cluster_column": cluster_column, "standardize": standardize,
-             "seed": seed}
+             "cluster_column": cluster_column, "standardize": standardize}
     if tags:
         suite["tag_columns"] = tags
     return suite
@@ -400,15 +414,18 @@ def _registry_suite(source):
         print(f"    {i}) {b}{heavy}")
         if desc:
             print(f"         {desc}")
+    def seed() -> dict[str, int]:
+        # Asked only of a source whose data depend on it.
+        return {"seed": ask_from("registry_suite.seed")} if SOURCES[source].seeded else {}
+
     while True:
         raw = _read("Pick a group by number/name, or 'all'", "1")
         if raw == "all":
-            return {"batteries": "all", "datasets": "all",
-                    "seed": ask_from("registry_suite.seed")}
+            return {"batteries": "all", "datasets": "all", **seed()}
         if raw in batteries:
             battery = raw
             break
-        if raw.isdigit() and 1 <= int(raw) <= len(batteries):
+        if raw.isdecimal() and 1 <= int(raw) <= len(batteries):
             battery = batteries[int(raw) - 1]
             break
         print(f"    (choose 1-{len(batteries)}, a name, or 'all')")
@@ -420,8 +437,7 @@ def _registry_suite(source):
     if len(ds) > 40:
         print(f"    ... and {len(ds) - 40} more")
     datasets = ask_from("registry_suite.datasets", options=ds)
-    seed = ask_from("registry_suite.seed")
-    return {"batteries": [battery], "datasets": datasets, "seed": seed}
+    return {"batteries": [battery], "datasets": datasets, **seed()}
 
 
 # --------------------------------------------------------------------------- #
@@ -561,6 +577,11 @@ def build_clm(known_k=None) -> dict[str, Any]:
             cd["steepness"] = ask_from("clm_label.centroid_dependence.steepness")
         clm["centroid_dependence"] = cd
 
+    # Not beside center/edge placement: every run would refuse the two ([CLM-141]).
+    if (mode in ("single", "custom") and "centroid_dependence" not in clm
+            and ask_from("clm_label.feature_dependence._enabled")):
+        clm["feature_dependence"] = _build_follows(M)
+
     _final_check(clm)
     return clm
 
@@ -635,6 +656,33 @@ def _named_twice(label, clusters: list, named: dict[tuple[Any, Any], int]) -> st
     return None
 
 
+def _build_follows(M: int) -> list[dict[str, Any]]:
+    """The feature_dependence entries. A label is re-asked while an earlier entry
+    has it, which every run would refuse ([CLM-141]); with one entry per label, the
+    loop ends at M entries."""
+    entries: list[dict[str, Any]] = []
+    while True:
+        print(f"\n  Feature entry {len(entries) + 1}:")
+        while True:
+            label = ask_from("clm_label.feature_dependence.label", maxv=M - 1)
+            taken = [j for j, e in enumerate(entries) if e["label"] == label]
+            if not taken:
+                break
+            print(f"    (entry {taken[0] + 1} already has label {label}, and a label follows "
+                  "one feature; choose another label)")
+        entry: dict[str, Any] = {
+            "label": label,
+            "feature": ask_from("clm_label.feature_dependence.feature"),
+            "favors": ask_from("clm_label.feature_dependence.favors"),
+        }
+        if entry["favors"] == "value":
+            entry["value"] = ask_from("clm_label.feature_dependence.value")
+        entry["profile"] = ask_from("clm_label.feature_dependence.profile")
+        entries.append(entry)
+        if len(entries) == M or not ask_from("clm_label.feature_dependence._add_another"):
+            return entries
+
+
 def _ask_noise_pair(clm: dict[str, Any], entries: list[dict[str, Any]],
                     M: int) -> tuple[Any, int]:
     """The cluster and label of a competing_noise entry, re-asked while every run
@@ -671,7 +719,7 @@ def _ask_noise_pair(clm: dict[str, Any], entries: list[dict[str, Any]],
 # --------------------------------------------------------------------------- #
 
 def _run() -> None:
-    """Runs the wizard: all sections, save the config, optionally run main.py."""
+    """Runs the wizard: all sections, save the config, optionally run it."""
     print("=" * 62)
     print("  CLMSynth, User-Friendly Configuration Generator")
     print("=" * 62)
@@ -695,22 +743,27 @@ def _run() -> None:
         out = str(Path(out).with_name("config_" + Path(out).name))
     _save_config(config, out)
     print(f"\n  Wrote '{out}'.")
-    print(f"  Run it any time with:  python -m clmsynth.main {out}")
+    print(f"  Run it any time with:  clmsynth {out}")
     if ask_from("run.now"):
         flags = [] if not is_installed("matplotlib") or ask_from("run.plots") else ["--no-viz"]
         # check=False, deliberately: the pipeline reports its own failures with a
         # coded message, and a CalledProcessError traceback on top of that would
         # bury it.
-        result = subprocess.run([sys.executable, "-m", "clmsynth.main", out, *flags],
+        result = subprocess.run([sys.executable, "-m", "clmsynth", out, *flags],
                                 check=False)
         if result.returncode != 0:
             print(f"\n  The run exited with code {result.returncode}; see the messages above. "
                   f"Your configuration is saved, so you can edit '{out}' and retry with:"
-                  f"\n      python -m clmsynth.main {out}")
+                  f"\n      clmsynth {out}")
 
 
 def main() -> None:
     """Entry point; Ctrl-C cancels cleanly."""
+    # The wizard takes no arguments: --help prints the usage, anything else is a usage error.
+    argparse.ArgumentParser(
+        prog="clmsynth-wizard",
+        description="Ask for a configuration step by step, save it, and offer to run it. "
+                    "Takes no arguments.").parse_args(sys.argv[1:])
     # Before the first question, not after the last one.
     try:
         import_optional_dependency("yaml", "clmsynth-wizard")

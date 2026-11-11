@@ -30,9 +30,9 @@ from typing import Any
 import numpy as np
 import pytest
 
-import clmsynth.main
+import clmsynth.__main__
+from clmsynth import run_pipeline
 from clmsynth.clm_label_engine import generate_clm_labels
-from clmsynth.main import run_pipeline
 from clmsynth.resolved_config import RESOLVED_CONFIG_NAME, TARGET_METRIC, resolve_config
 
 
@@ -360,7 +360,7 @@ def test_the_run_folder_holds_the_resolved_config_not_a_copy(tmp_path, monkeypat
                                encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["clmsynth", str(config_path), "--no-viz"])
 
-    clmsynth.main.main()
+    clmsynth.__main__.main()
 
     (run_dir,) = (tmp_path / "out").iterdir()
     name = f"{run_dir.name}{suffix}"
@@ -376,3 +376,32 @@ def test_the_run_folder_holds_the_resolved_config_not_a_copy(tmp_path, monkeypat
         resolved = request.getfixturevalue("yaml").safe_load(text)
     assert "noise" not in resolved["label_generation"]
     assert resolved["fabricated_data_suite"]["datasets"] == ["baseline_4class"]
+
+
+def test_a_path_in_a_dict_run_does_not_cost_the_saved_config(tmp_path):
+    """A library caller may pass a folder as a pathlib path, which neither writer
+    takes: the run went on with no saved config."""
+    config = pipeline_config({"num_classes": 4, "matching_mode": "perfect"})
+    config["global_settings"]["output_dir"] = tmp_path / "OUT"
+    n_ok, _, resolved = run_once(config, tmp_path / "run")
+    assert n_ok == 1
+    assert resolved["global_settings"]["output_dir"] == str(tmp_path / "OUT")
+
+
+def test_a_run_names_the_numpy_it_ran_on_in_its_log_only(tmp_path, monkeypatch, caplog):
+    """The seeds reproduce on a numpy whose generators draw the same stream, so the
+    run's log names the one it ran on. Not on the console, whose lines do not
+    change with the numpy installed."""
+    config = pipeline_config({"num_classes": 4, "matching_mode": "perfect"})
+    config["global_settings"]["output_dir"] = str(tmp_path / "out")
+    config_path = tmp_path / "my_config.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["clmsynth", str(config_path), "--no-viz"])
+
+    with caplog.at_level(logging.INFO):
+        clmsynth.__main__.main()
+
+    (run_dir,) = (tmp_path / "out").iterdir()
+    log = (run_dir / "info" / f"{run_dir.name}.log").read_text(encoding="utf-8")
+    assert f"numpy {np.__version__}" in log
+    assert f"numpy {np.__version__}" not in caplog.text

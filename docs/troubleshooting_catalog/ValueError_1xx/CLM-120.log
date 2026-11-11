@@ -1,4 +1,4 @@
-$ python -m clmsynth.main ValueError_1xx/CLM-120.yaml --no-viz
+$ python -m clmsynth ValueError_1xx/CLM-120.yaml --no-viz
 # exit code: 3
 
 INFO - Starting Test Data Orchestrator...

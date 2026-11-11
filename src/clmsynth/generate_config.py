@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # generate_config.py
-"""Deprecated import path, removed in 0.8.0. The clmsynth-config command stays."""
+"""Deprecated import path, removed in 0.7.8. The clmsynth-config command stays."""
 
 import warnings
 
@@ -22,10 +22,10 @@ __all__ = [
     "write_text_atomic",
 ]
 
-warnings.warn("clmsynth.generate_config is deprecated and is removed in 0.8.0; "
+warnings.warn("clmsynth.generate_config is deprecated and is removed in 0.7.8; "
               "use the clmsynth-config command", DeprecationWarning, stacklevel=2)
 
 if __name__ == "__main__":
-    warnings.warn("python -m clmsynth.generate_config is removed in 0.8.0; "
+    warnings.warn("python -m clmsynth.generate_config is removed in 0.7.8; "
                   "run clmsynth-config instead", FutureWarning, stacklevel=1)
     main()

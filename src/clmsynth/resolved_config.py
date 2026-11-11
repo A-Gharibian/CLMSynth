@@ -7,6 +7,7 @@ Only well-formed blocks are resolved. A missing required key stays missing and a
 malformed value stays as written.
 """
 
+import os
 from collections.abc import Mapping
 from typing import Any, Final
 
@@ -56,6 +57,8 @@ NOISE_ENTRY: Final[Mapping[str, Any]] = {
     key: default(f"clm_label.competing_noise.{key}") for key in ("share", "favors")}
 TARGET_METRIC: Final[Mapping[str, Any]] = {
     key: default(f"clm_label.target_metric.{key}") for key in ("scope", "tolerance", "max_iter")}
+_FOLLOW_ENTRY: Final[Mapping[str, Any]] = {
+    key: default(f"clm_label.feature_dependence.{key}") for key in ("favors", "profile")}
 
 _MATCHING_MODES = choices("clm_label.matching_mode")
 _BALANCE_VALUES = choices("clm_label.balance")
@@ -148,6 +151,11 @@ def _resolve_clm(clm: Any) -> Any:
     noise_placed = any(e.get("favors", NOISE_ENTRY["favors"]) in ("core", "boundary")
                        for e in noise_entries or [])
     out["centroid_dependence"] = _resolve_centroid(clm.get("centroid_dependence"), noise_placed)
+    follows = clm.get("feature_dependence")
+    if follows:
+        entries = _mappings(follows)
+        out["feature_dependence"] = (
+            [_resolve_follow(e) for e in entries] if entries is not None else follows)
     return out
 
 
@@ -227,6 +235,16 @@ def _resolve_centroid(cd: Any, noise_placed: bool) -> Any:
     return out
 
 
+def _resolve_follow(entry: Mapping[str, Any]) -> dict[str, Any]:
+    """A feature_dependence entry: value under favors 'value' only, where it is read."""
+    favors = entry.get("favors", _FOLLOW_ENTRY["favors"])
+    out = {**_present(entry, "label", "feature"), "favors": favors}
+    if favors == "value":
+        out.update(_present(entry, "value"))
+    out["profile"] = entry.get("profile", _FOLLOW_ENTRY["profile"])
+    return out
+
+
 def _present(block: Mapping[str, Any], *keys: str) -> dict[str, Any]:
     """The given keys that `block` has, in that order."""
     return {k: block[k] for k in keys if k in block}
@@ -244,8 +262,10 @@ def _is_int(value: Any) -> bool:
 
 
 def plain(value: Any) -> Any:
-    """`value` with numpy scalars and arrays, tuples and mappings turned into the
-    Python types a YAML or JSON writer accepts. A dict run may pass any of them."""
+    """`value` with numpy scalars and arrays, tuples, mappings and paths turned into
+    the Python types a YAML or JSON writer accepts. A dict run may pass any of them."""
+    if isinstance(value, os.PathLike):
+        return os.fspath(value)
     if isinstance(value, Mapping):
         return {k: plain(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):

@@ -28,6 +28,7 @@ from clmsynth.clm_label_engine import (
     build_rules,
     generate_clm_labels,
     resolve_label_counts,
+    validate_matching_ids,
 )
 from clmsynth.metrics import (
     MetricCeilings,
@@ -402,6 +403,7 @@ def test_balance_typo_without_proportions_is_not_blamed_on_skew_rule():
 
 
 _NAN, _INF = float("nan"), float("inf")
+_ARRAY = np.array([0.5, 0.5])
 _TM = {"type": "mcc", "value": 0.5}
 _ROW0 = {"label": 0, "clusters": [0], "recall_target": 0.9}
 
@@ -485,6 +487,17 @@ def _rows(**row0):
         ({"matching_mode": "single", "single_match": {"cluster": _NAN, "label": 0}}, 141),
         ({"assignment_matrix": _rows(clusters=[None])}, 141),
         ({"competing_noise": [{"cluster": None, "label": 1, "favors": "random"}]}, 141),
+        ({"assignment_matrix": _rows(clusters=[])}, 141),
+        ({"assignment_matrix": _rows(clusters=[], recall_target=0.0)}, 141),
+        ({"proportions": _ARRAY}, 141),
+        ({"competing_noise": _ARRAY}, 141),
+        ({"target_metric": _ARRAY}, 141),
+        ({"centroid_dependence": _ARRAY}, 141),
+        ({"matching_mode": _ARRAY}, 101),
+        ({"balance": _ARRAY}, 132),
+        ({"spillover_rule": _ARRAY}, 109),
+        ({"split_rule": _ARRAY}, 108),
+        ({"spillover_rule": "concentrated", "concentrated_labels": [np.True_]}, 128),
     ],
     ids=[
         "enabled-quoted-false",
@@ -545,6 +558,17 @@ def _rows(**row0):
         "single-cluster-nan",
         "clusters-null-id",
         "noise-cluster-null",
+        "clusters-empty",
+        "clusters-empty-asks-none",
+        "array-proportions",
+        "array-competing-noise",
+        "array-target",
+        "array-centroid",
+        "array-mode",
+        "array-balance",
+        "array-spillover",
+        "array-split",
+        "concentrated-numpy-true",
     ],
 )
 def test_a_value_of_the_wrong_type_is_refused(overrides, code):
@@ -554,7 +578,9 @@ def test_a_value_of_the_wrong_type_is_refused(overrides, code):
     true passed as 1 (and matched cluster 1), a quoted "false" switched placement
     on, NaN passed every range check, and a negative max_iter skipped the search
     refinement. Any other probe_seed that is not an integer >= 0 crashed uncoded
-    in numpy at the first search probe. Other negatives were refused with an
+    in numpy at the first search probe. An array has no single truth value, and
+    stopped at numpy's "ambiguous" ValueError; np.True_ was written as label 1
+    where True is refused. Other negatives were refused with an
     uncoded ValueError, a per-dataset "unexpected error", even in keys the run
     never read. A block of the wrong shape crashed on its first read, or, as a
     mapping without its YAML dash, was reported as a missing key ([CLM-207],
@@ -575,6 +601,26 @@ def test_a_clm_label_that_is_not_a_mapping_is_refused(cfg):
     with pytest.raises(ValueError) as excinfo:
         generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
     assert getattr(excinfo.value, "code", None) == 141
+
+
+def test_proportions_in_an_array_are_ignored_under_balanced(caplog):
+    """balanced ignores proportions with [CLM-301], an array as it does a list."""
+    cfg = base_custom_cfg(
+        balance="balanced", proportions=_ARRAY,
+        assignment_matrix=[{"label": i, "clusters": [i], "recall_target": 0.3} for i in range(4)])
+    with caplog.at_level(logging.WARNING):
+        assert_contingency_invariant(generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1), 4)
+    assert "[CLM-301]" in caplog.text
+
+
+def test_the_id_precheck_reads_a_numpy_num_classes():
+    """generate_clm_labels takes np.int64(2), and the precheck of the ids returned
+    at once for it, so an id the dataset lacks passed."""
+    cfg = {"num_classes": np.int64(2), "matching_mode": "single",
+           "single_match": {"cluster": 9, "label": 0}}
+    with pytest.raises(ValueError) as excinfo:
+        validate_matching_ids(cfg, [0, 1])
+    assert getattr(excinfo.value, "code", None) == 105
 
 
 def test_a_read_only_mapping_is_accepted_as_a_block():
@@ -995,7 +1041,7 @@ def reported_by_306(caplog) -> float:
         ),
         (
             {"proportions": [0.275, 0.45, 0.15, 0.125]},
-            [(152, 9, "0.000", "0.558"), (150, 9, "0.559", "1.000")],
+            [(152, 10, "0.000", "0.558"), (150, 9, "0.559", "1.000")],
         ),
     ],
     ids=["one-code", "two-codes"],
@@ -1012,9 +1058,10 @@ def test_a_target_with_no_feasible_level_names_what_blocked_the_levels(
     unclaimed points at every level. two-codes: the entries over-claim what
     label 0's rule leaves of cluster 0 until it fills the cluster at alpha 0.91,
     but from 0.559 up label 1's rule needs more than cluster 1's 200 points. The
-    search probes between 0.5 and 0.6, where the code changes, finds no level
-    that fits, and the lines count those probes too. Nothing is delivered, and no
-    [CLM-306] is logged: there is no closest level to report.
+    search probes between 0.5 and 0.6, where the code changes, down to half a point
+    of the dataset, finds no level that fits, and the lines count those probes too.
+    Nothing is delivered, and no [CLM-306] is logged: there is no closest level to
+    report.
     """
     cfg = equal_cfg(
         competing_noise=over_claiming_noise(),
@@ -1071,6 +1118,26 @@ def test_over_claiming_noise_without_a_target_still_raises_152():
         generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, seed=42)
     assert getattr(excinfo.value, "code", None) == 152, str(excinfo.value)
     assert "jointly claim 28 points but only 20" in str(excinfo.value), str(excinfo.value)
+
+
+def test_the_gap_search_reaches_a_band_on_labels_of_five_points():
+    """Five labels of 5 points, three rows and two competing_noise entries on a
+    cluster of 8: 0.5 is [CLM-152], 0.6 is [CLM-151], and 0.51 to 0.58 fit. The gap
+    search stops at half a point of the largest label, here 0.1, the grid step
+    itself, so it made no probe and the run ended in [CLM-120]. When no level fits
+    it now goes on to half a point of the dataset."""
+    truth = np.repeat([0, 1], [8, 17])
+    coords = np.random.default_rng(0).normal(size=(25, 2))
+    cfg = {"num_classes": 5, "matching_mode": "custom", "balance": "balanced",
+           "assignment_matrix": [{"clusters": [0], "label": j, "recall_target": 0.55}
+                                 for j in range(3)],
+           "competing_noise": [{"cluster": 0, "label": j, "share": 0.7, "favors": "random"}
+                               for j in (3, 4)],
+           "target_metric": {"type": "mcc", "value": 0.2}}
+    report: dict[str, Any] = {}
+    out = generate_clm_labels(truth, coords, cfg, seed=1, report=report)
+    assert 0.5 < report["alpha"] < 0.6
+    assert abs(clustering_mcc(truth, out.to_numpy()) - 0.2) <= 0.01
 
 
 def test_a_missed_target_delivers_the_closest_label_and_names_the_blocked_levels(caplog):
@@ -1247,6 +1314,16 @@ def test_rk_ceiling_is_the_highest_mcc_any_labeling_with_the_counts_scores(sizes
         assert best_ari[counts] <= MetricCeilings.ari_bound(sizes, counts) + 1e-12, counts
 
 
+@pytest.mark.parametrize("ceiling", [MetricCeilings.rk_ceiling, MetricCeilings.ari_bound],
+                         ids=["rk_ceiling", "ari_bound"])
+@pytest.mark.parametrize("sizes", [[1.5, 2.5], ["1", "2"]], ids=["fractions", "text"])
+def test_a_ceiling_takes_counts_only(ceiling, sizes):
+    """1.5 was truncated to 1 and "1" parsed, and the ceiling of other sizes came
+    back."""
+    with pytest.raises(ValueError, match="lists of counts"):
+        ceiling(sizes, [1, 2])
+
+
 def test_the_size_ceiling_follows_the_label_counts_not_m_and_k():
     """sqrt(M(M-1)/(K(K-1))) is the ceiling of a balanced merge of equal clusters
     only. Four clusters of 100 merged 3+1 into two labels score 0.4714, above its
@@ -1405,6 +1482,24 @@ def test_the_target_keys_are_filled_only_under_a_target():
     no_target: dict[str, Any] = {}
     generate_clm_labels(EQUAL, EQUAL_COORDS, equal_cfg(), seed=42, report=no_target)
     assert list(no_target) == ["assignment_matrix"]
+
+
+def test_a_seedless_call_runs_on_one_drawn_seed(monkeypatch):
+    """seed=None draws one seed for the call. Passed on as None, every probe of the
+    target search and the delivery drew a stream of their own, so the search scored
+    labelings it never delivered ([CLM-309])."""
+    seeds = []
+    real = np.random.default_rng
+
+    def spy(seed=None):
+        seeds.append(seed)
+        return real(seed)
+
+    monkeypatch.setattr(np.random, "default_rng", spy)
+    tm = {"type": "mcc", "value": 0.5}
+    generate_clm_labels(EQUAL, EQUAL_COORDS, three_label_cfg(target_metric=tm), seed=None)
+    assert seeds.count(None) == 1
+    assert len({s for s in seeds if s is not None}) == 1
 
 
 def test_strict_refuses_a_delivered_value_outside_the_tolerance():

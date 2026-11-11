@@ -42,7 +42,7 @@ from pathlib import Path
 import pytest
 
 from clmsynth._utils.cli_logging import SingleLineFilter
-from clmsynth.main import resolved_for_report
+from clmsynth._utils.write_files import resolved_for_report
 
 # ---------------------------------------------------------------------------
 # Log forgery: one log call is one line

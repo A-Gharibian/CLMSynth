@@ -104,9 +104,6 @@ _QUESTIONS: Final[Sequence[Question]] = [
                 "single one dominates the geometry. It rescales the saved CSV too,\n"
                 "and never touches a carried column.",
         default=False),
-    Question(
-        "byoc_suite.seed", "int", "Random seed",
-        explain="Same seed -> same result every run.", default=42),
 
     # -- 1c. registry suite (the battery picker stays procedural in the wizard) -
     Question(
@@ -118,7 +115,7 @@ _QUESTIONS: Final[Sequence[Question]] = [
         default="all"),
     Question(
         "registry_suite.seed", "int", "Random seed",
-        explain="Used by mdcgen/fabricated_data; ignored by clustbench.", default=42),
+        explain="The data are generated from it: same seed -> same data.", default=42),
 
     # -- 2. Label generation ------------------------------------------------
     Question(
@@ -301,6 +298,49 @@ _QUESTIONS: Final[Sequence[Question]] = [
     Question(
         "clm_label.centroid_dependence.steepness", "float",
         "Steepness (higher = more extreme; typical 2-8)", default=3.0, lo=0.0),
+
+    # feature dependence
+    Question(
+        "clm_label.feature_dependence._enabled", "bool",
+        "Make a label follow one feature inside its clusters?",
+        explain="Optional, spatial only: pick a label and a feature, and that label's points\n"
+                "sit at the high or low end of the feature, or close to a value you name.\n"
+                "This does NOT change the score, only which points carry the label.\n"
+                "Consequences to be aware of:\n"
+                "  - only the points your rules place follow the feature; leftover points\n"
+                "    stay random, so the effect fades as agreement falls;\n"
+                "  - it cannot be combined with center/edge placement.",
+        default=False),
+    Question(
+        "clm_label.feature_dependence.label", "int",
+        "    which label value (0..M-1) follows the feature", default=0, lo=0),
+    Question(
+        "clm_label.feature_dependence.feature", "str",
+        "    which feature it follows (the exact column name)",
+        explain="The column name as the output CSV shows it: Feature_1, Feature_2, ... for\n"
+                "the built-in sources, your own header for byoc. A dataset without this\n"
+                "column is skipped."),
+    Question(
+        "clm_label.feature_dependence.favors", "choice", "    where that label's points sit",
+        explain="high  : the highest values of the feature in each cluster.\n"
+                "low   : the lowest values of the feature in each cluster.\n"
+                "value : the values closest to a number you give next.",
+        default="high", choices=("high", "low", "value")),
+    Question(
+        "clm_label.feature_dependence.value", "float", "    the value to sit close to",
+        explain="In the units of the feature as the output CSV shows it, so after the\n"
+                "0..1 rescale if you chose it. One value serves every cluster: where it\n"
+                "lies outside a cluster's range, the label sits at that cluster's\n"
+                "nearest end."),
+    Question(
+        "clm_label.feature_dependence.profile", "choice", "    how strongly to prefer them",
+        explain="linear : gentle; on a single feature the effect is small, above all for\n"
+                "         'value', and one far-off point can erase it.\n"
+                "step   : a hard cut, take the N best points, nothing in between.",
+        default="linear", choices=("linear", "step")),
+    Question(
+        "clm_label.feature_dependence._add_another", "bool",
+        "  Add another label that follows a feature?", default=False),
 
     # balance / skew
     Question(

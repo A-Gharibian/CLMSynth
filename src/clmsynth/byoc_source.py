@@ -56,12 +56,19 @@ def _raw_header(path: Path) -> list[str]:
     `read_csv` mangles a repeated `f1` into `f1.1`, so by the time a frame
     exists the collision is invisible. Read via csv.reader rather than splitting
     on commas so a quoted field containing one does not read as two columns.
+    A BOM and blank lines before the header are skipped, as `read_csv` skips them.
     """
     try:
-        with open(path, newline="", encoding="utf-8") as fh:
-            return next(csv.reader(fh), [])
+        with open(path, newline="", encoding="utf-8-sig") as fh:
+            return next((row for row in csv.reader(fh) if row), [])
     except OSError:
         return []
+
+
+def _tags_as_written(path: Path, tags: list[str]) -> pd.DataFrame:
+    """The declared tag columns as the text the file holds. Type inference would
+    carry 007 as 7 and the text NA as a missing value."""
+    return pd.read_csv(path, usecols=tags, dtype=str, keep_default_na=False)
 
 
 def as_tag_columns(value: str | Iterable[object] | None) -> list[str]:
@@ -92,9 +99,17 @@ def validate_import(df: pd.DataFrame, header: list[str], cluster_column: str,
             "'name.1', so the column you meant is ambiguous. Give each column a "
             "distinct name")
 
-    reserved = sorted(c for c in df.columns
-                      if c in RESERVED_EXACT or str(c).startswith(RESERVED_PREFIXES)
-                      or RESERVED_PATTERN.match(str(c)))
+    unnamed = [i + 1 for i, h in enumerate(header) if not str(h).strip()]
+    if unnamed:
+        problems.append(
+            f"header cell(s) {unnamed} have no name: pandas calls such a column "
+            "'Unnamed: 0', and it would run as a feature. A table saved with its row "
+            "index starts with one. Name the column, remove it, or save without the index")
+
+    # The cluster column's own name is free: it never reaches the output.
+    reserved = sorted(c for c in df.columns if c != cluster_column
+                      and (c in RESERVED_EXACT or str(c).startswith(RESERVED_PREFIXES)
+                           or RESERVED_PATTERN.match(str(c))))
     if reserved:
         problems.append(
             f"column name(s) {reserved} are reserved by the pipeline: 'Cohort_Class' "
@@ -102,7 +117,10 @@ def validate_import(df: pd.DataFrame, header: list[str], cluster_column: str,
             "declared tags, and 'Cluster_n'/'Label_n' are written into the output. "
             "Rename them")
 
-    if cluster_column in df.columns:
+    if cluster_column not in df.columns:
+        problems.append(f"the cluster column '{cluster_column}' is not among the columns "
+                        f"{list(df.columns)}")
+    else:
         clusters = df[cluster_column]
         unusable = clusters.isna() | clusters.isin([np.inf, -np.inf])
         if unusable.any():
@@ -158,11 +176,15 @@ def validate_import(df: pd.DataFrame, header: list[str], cluster_column: str,
                 "it, and features define the geometry the clustering was computed in, "
                 "so they must be numeric. List them under tag_columns to carry them "
                 "through untouched instead")
-        elif features.isna().to_numpy().any():
-            bad = [c for c in features.columns if features[c].isna().any()]
-            problems.append(
-                f"missing value(s) in feature column(s) {bad}: the clustering cannot have "
-                "been computed from them, and centroid distances would come out NaN")
+        else:
+            for what, hit in (("missing", features.isna()),
+                              ("infinite", features.isin([np.inf, -np.inf]))):
+                bad = [c for c in features.columns if hit[c].any()]
+                if bad:
+                    problems.append(
+                        f"{what} value(s) in feature column(s) {bad}: the clustering cannot "
+                        "have been computed from them, and centroid distances would come "
+                        "out NaN")
 
     return problems
 
@@ -180,8 +202,18 @@ def fetch_byoc_data(
     """Loads a user CSV as a dataset: numeric feature columns plus exactly
     one cluster-id column (`cluster_column`), optionally min-max standardized.
     Columns named in `tag_columns` ride along untouched, out of the geometry.
-    Returns the standard fetcher frame, or None on any rejected input."""
-    if not dataset_name:
+    Returns the standard fetcher frame, or None on any rejected input; a
+    `standardize` or `tag_columns` of the wrong type is [CLM-141], as no file
+    can be read under it."""
+    # A quoted "false" is truthy, and would rescale.
+    if not isinstance(standardize, (bool, np.bool_)):
+        raise clm_error(141, key="byoc_suite.standardize", expected="true or false",
+                        value=standardize)
+    if tag_columns is not None and not isinstance(tag_columns, (str, Iterable)):
+        raise clm_error(141, key="byoc_suite.tag_columns",
+                        expected="a column name or a list of column names", value=tag_columns)
+    # The stem 0, for 0.csv, is a dataset.
+    if dataset_name is None or str(dataset_name) == "":
         log.error("byoc: no CSV given, list your file stem(s) under byoc_suite.datasets.")
         return None
     name = str(dataset_name)
@@ -241,8 +273,10 @@ def fetch_byoc_data(
         log.info(f"byoc: standardized {len(numeric)} feature(s) to [0, 1].")
 
     out = features
-    for tag in dict.fromkeys(tags):
-        out[f"{TAG_PREFIX}{tag}"] = df[tag].to_numpy()
+    if tags:
+        written = _tags_as_written(path, list(dict.fromkeys(tags)))
+        for tag in written.columns:
+            out[f"{TAG_PREFIX}{tag}"] = written[tag].to_numpy()
     # One cluster labeling -> GroundTruth_labels0 (surfaces as Cluster_0 downstream).
     out["GroundTruth_labels0"] = df[cluster_column].to_numpy()
     out["Cohort_Class"] = df[cluster_column].to_numpy()
@@ -256,6 +290,11 @@ def fetch_byoc_data(
 
 def _describe(input_dir: str | None = None, **kwargs: Any) -> str:
     return f"BYOC input directory: '{resolved_for_report(input_dir or DEFAULT_INPUT_DIR)}'."
+
+
+def _has_dataset(battery: str, dataset: str, input_dir: str | None = None,
+                 **kwargs: Any) -> bool:
+    return (Path(input_dir or DEFAULT_INPUT_DIR) / f"{dataset}.csv").is_file()
 
 
 def _cluster_ids(battery: str, dataset: str, input_dir: str | None = None,
@@ -298,4 +337,5 @@ SOURCE: Final[Source] = Source(
     licence=None,   # the user's own data
     describe=_describe,
     cluster_ids=_cluster_ids,
+    has_dataset=_has_dataset,
 )

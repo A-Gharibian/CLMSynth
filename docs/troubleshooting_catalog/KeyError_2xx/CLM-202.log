@@ -1,4 +1,4 @@
-$ python -m clmsynth.main KeyError_2xx/CLM-202.yaml --no-viz
+$ python -m clmsynth KeyError_2xx/CLM-202.yaml --no-viz
 # exit code: 2
 
 INFO - Starting Test Data Orchestrator...

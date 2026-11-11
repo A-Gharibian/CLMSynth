@@ -17,7 +17,7 @@ are YAML, so running one, or this script, needs the yaml extra
 (pip install "clmsynth[yaml]"):
 
     cd docs/troubleshooting_catalog
-    python -m clmsynth.main InfeasibleAllocation_15x/CLM-150.yaml --no-viz
+    python -m clmsynth InfeasibleAllocation_15x/CLM-150.yaml --no-viz
 
 Cases run with --no-viz: no diagnostic depends on a plot. Captured logs carry no
 timestamps, so they regenerate byte-identical whenever the behavior is unchanged,
@@ -473,17 +473,17 @@ def run_case(table, code, desc, builder, expect):
               f"# Regenerated against the shipped engine by tools/CLM_catalog_gen.py\n"
               f"# in the CLMSynth source repository.\n"
               f"# Reproduce: cd to this catalog's root, then\n"
-              f"#     python -m clmsynth.main {rel_cfg} --no-viz\n")
+              f"#     python -m clmsynth {rel_cfg} --no-viz\n")
     cfg_path.write_text(header + yaml.dump(cfg, sort_keys=False, default_flow_style=False),
                         encoding="utf-8")
 
     proc = subprocess.run(
-        [sys.executable, "-m", "clmsynth.main", rel_cfg, "--no-viz"],
+        [sys.executable, "-m", "clmsynth", rel_cfg, "--no-viz"],
         cwd=OUT, capture_output=True, text=True, check=False,
     )
     log = normalise((proc.stdout or "") + (proc.stderr or ""))
     (folder / f"CLM-{code}.log").write_text(
-        f"$ python -m clmsynth.main {rel_cfg} --no-viz\n"
+        f"$ python -m clmsynth {rel_cfg} --no-viz\n"
         f"# exit code: {proc.returncode}\n\n{log}", encoding="utf-8")
 
     # The expectation is the BRACKETED form the engine emits. A bare

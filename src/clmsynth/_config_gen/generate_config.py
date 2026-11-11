@@ -4,6 +4,7 @@
 The input is a flat "upstream payload" mapping (see docs/examples/hepta_payload.yaml).
 """
 
+import argparse
 import json
 import logging
 import os
@@ -65,9 +66,19 @@ def _yaml_scalar(value) -> str:
     if value is None:
         return "null"
     if isinstance(value, str):
-        # JSON strings are valid YAML double-quoted scalars.
-        return json.dumps(value)
-    return str(value)
+        # JSON strings are valid YAML double-quoted scalars. Not as ASCII: JSON writes
+        # a character past U+FFFF as two escapes, which YAML reads as two characters.
+        return json.dumps(value, ensure_ascii=False)
+    text = str(value)
+    if isinstance(value, float) and "e" in text and "." not in text:
+        return _dotted_exponent(text)
+    return text
+
+
+def _dotted_exponent(text: str) -> str:
+    """`1e-05` as `1.0e-05`: PyYAML reads a float without a dot as text."""
+    mantissa, exponent = text.split("e")
+    return f"{mantissa}.0e{exponent}"
 
 
 def _yaml_list(value) -> str:
@@ -104,7 +115,7 @@ def generate_base_config(upstream_data: dict[str, Any],
     data_source = pick("data_source", setting_default("global_settings.data_source"))
     if data_source not in VALID_SOURCES:
         log.warning(f"data_source '{data_source}' is not one of {VALID_SOURCES}; "
-                    "main.py's FETCHERS dict will reject this at runtime.")
+                    "the run will reject this.")
 
     mode = pick("matching_mode", "custom")
     if mode == "perfect":
@@ -168,6 +179,22 @@ def generate_base_config(upstream_data: dict[str, Any],
         if steepness is not None and pick("centroid_profile", "linear") == "exponential" else []
     )
 
+    follow_lines: list[str] = []
+    feature_dependence = pick("feature_dependence", [])
+    if feature_dependence:
+        follow_lines = [
+            "",
+            "    # 6. LABELS THAT FOLLOW A FEATURE (single/custom only). Each entry places the",
+            "    # points the matching gives one label by one feature column: favors 'high',",
+            "    # 'low', or 'value' with a value; profile 'linear' or 'step'. Not together",
+            "    # with centroid_dependence enabled.",
+            "    feature_dependence:",
+        ]
+        for entry in feature_dependence:
+            inner = ", ".join(f"{k}: {_yaml_scalar(v)}" for k, v in entry.items())
+            follow_lines.append(f"      - {{{inner}}}")
+    follow_block = _optional_block(follow_lines)
+
     single_match_yaml = format_yaml_snippet(pick("single_match", {}))
     assignment_matrix_yaml = format_yaml_snippet(pick("assignment_matrix", []))
 
@@ -181,7 +208,8 @@ def generate_base_config(upstream_data: dict[str, Any],
             f"\n  input_dir: {_yaml_scalar(pick('input_dir', 'INPUT'))}"
             f"\n  cluster_column: {_yaml_scalar(pick('cluster_column', 'cluster'))}"
             + tag_line +
-            f"\n  standardize: {'true' if pick('standardize', False) else 'false'}"
+            # As written: a quoted "false" is refused by the run, not read as true here.
+            f"\n  standardize: {_yaml_scalar(pick('standardize', False))}"
         )
     else:
         byoc_extra = ""
@@ -196,7 +224,7 @@ def generate_base_config(upstream_data: dict[str, Any],
         source_seed=pick("source_seed", 42),
 
         n_labels=pick("n_labels", 1),
-        source_labeling=pick("source_labeling", "labels0"),
+        source_labeling=_yaml_scalar(str(pick("source_labeling", "labels0"))),
         label_seed=pick("label_seed", 42),
 
         num_classes=_yaml_scalar(pick("num_classes", 4)),
@@ -215,13 +243,15 @@ def generate_base_config(upstream_data: dict[str, Any],
         competing_noise=competing_block,
         target_metric=target_block,
         steepness=steepness_block,
+        feature_dependence=follow_block,
     )
 
     try:
         config = yaml.safe_load(rendered_yaml)
     except yaml.YAMLError as e:
+        # A payload value the template cannot hold: a bad payload, as any other.
         log.critical(f"Rendered configuration is not valid YAML: {e}")
-        sys.exit(1)
+        sys.exit(2)
     _check_config(config["label_generation"]["clm_label"])
 
     # The suffix picks the format, as clmsynth reads it. JSON has no comments, so
@@ -229,12 +259,29 @@ def generate_base_config(upstream_data: dict[str, Any],
     text = (json.dumps(config, indent=2, ensure_ascii=False) + "\n"
             if Path(output_path).suffix.lower() == ".json" else rendered_yaml)
     try:
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         write_text_atomic(output_path, text)
         log.info(f"Test data configuration successfully written to '{output_path}'")
     except OSError as e:
         log.critical(f"Failed to write configuration file: {e}. "
                      f"'{output_path}' was left unchanged.")
         sys.exit(1)
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    """The payload path and the optional output path."""
+    parser = argparse.ArgumentParser(
+        prog="clmsynth-config",
+        usage="%(prog)s [-h] payload [output]",
+        description="Render a pipeline configuration from a payload file.")
+    # Optional here: a missing payload is reported by main(), after the PyYAML check.
+    parser.add_argument("payload", nargs="?",
+                        help="Payload file, a YAML mapping. The repository has an example, "
+                             "docs/examples/hepta_payload.yaml.")
+    parser.add_argument("output", nargs="?", default="test_data_config.yaml",
+                        help="Where the configuration is written; JSON when the path ends "
+                             "in .json (default: test_data_config.yaml).")
+    return parser.parse_args(argv)
 
 
 def main() -> None:
@@ -244,19 +291,21 @@ def main() -> None:
     config (default ``test_data_config.yaml``; JSON when the output path ends in
     ``.json``).
     """
+    # Parsed first: --help and a mistyped option print before any log line.
+    args = _parse_args(sys.argv[1:])
     configure_cli_logging()
     try:
         yaml = import_optional_dependency("yaml", "clmsynth-config")
     except ImportError as e:
         log.critical(f"{e}.")
         sys.exit(1)
-    if len(sys.argv) < 2:
+    if args.payload is None:
         log.critical("Usage: clmsynth-config <payload.yaml> [output]. The repository has an "
                      "example payload, docs/examples/hepta_payload.yaml; clmsynth-wizard "
                      "needs no payload.")
         sys.exit(2)
-    payload_path = sys.argv[1]
-    output_path = sys.argv[2] if len(sys.argv) > 2 else "test_data_config.yaml"
+    payload_path = args.payload
+    output_path = args.output
 
     try:
         with open(payload_path, encoding="utf-8") as file:
@@ -267,6 +316,10 @@ def main() -> None:
         sys.exit(2)
     except yaml.YAMLError as e:
         log.critical(f"Payload file '{payload_path}' is not valid YAML: {e}")
+        sys.exit(2)
+    except (OSError, UnicodeDecodeError) as e:
+        # A folder, a file that cannot be opened, or text that is not UTF-8.
+        log.critical(f"Payload file '{payload_path}' cannot be read as UTF-8 text: {e}")
         sys.exit(2)
 
     if not isinstance(payload, dict):
@@ -287,7 +340,8 @@ def main() -> None:
         # Raised while rendering, before anything is written.
         log.critical(f"Payload file '{payload_path}': a value has the wrong shape "
                      f"({type(e).__name__}: {e}). target_metric and skew_params take a "
-                     "mapping, competing_noise a list of mappings. Nothing was written.")
+                     "mapping, competing_noise and feature_dependence a list of mappings. "
+                     "Nothing was written.")
         sys.exit(2)
     except (ValueError, MissingConfigKey) as e:
         if getattr(e, "code", None) is None:

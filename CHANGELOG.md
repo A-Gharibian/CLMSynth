@@ -5,6 +5,41 @@ label generator behavior are additionally explained in the user manual.
 
 ---
 
+## [0.7.7] — 2026-11-11
+
+### Added
+
+- **Labels that follow a feature.** `feature_dependence`, a list in `clm_label`: each entry 
+  places the points allocated by one feature column, with `favors: high`,  `low` or `value` and 
+  `profile: linear` or `step`. The label counts, MCC and ARI are unchanged. *[feature]*
+
+- **Noise dimensions from `mdcgen`.** A new battery, `noise_dims`: `noise_5d_2n` 
+  has two noise features in every cluster and `noise_5d_per_cluster`. *[feature]*
+
+- **More of mdcgenpy through `mdcgen`.** A new battery, `varied`: cluster sizes
+  (`sizes_2d_4c`, `min_size_3d_6c`, `ki_coeff_3d_6c`), a distribution per cluster
+  (`mixed_dist_2d_3c`), correlation (`correlated_3d_4c`) and no rotation
+  (`axis_aligned_2d_4c`). *[feature]*
+
+- **`--help` for `clmsynth-config` and `clmsynth-wizard`.**
+  *[improvement]*
+
+### Changed
+
+- **`mdcgen` presets pass the parameters mdcgenpy reads** (`n_samples`, `n_feats`,
+  `compactness_factor`, `outliers`), so each has the size and dimension it names: every
+  preset was 2000 points in 2 features before. The `mdcgen` datasets.
+- An `mdcgen` dataset has outliers, which mdcgenpy labels -1 and a run reads as one more
+  cluster, only where its preset or `mdcgen_suite.outliers`.
+- The old `mdcgen_suite` keys `m`, `n`, `cp` and `out` are passed on under mdcgenpy's
+  names, with a warning each; mdcgenpy ignored them.
+- `[CLM-125]` is reworded to cover `feature_dependence`. `[CLM-305]` and `[CLM-311]` name the
+  block they are about; Messages only.
+
+### Fixed
+
+- Stricter input and config checks.
+
 ## [0.7.6] — 2026-11-04
 
 ### Added
@@ -47,6 +82,14 @@ label generator behavior are additionally explained in the user manual.
   format. A folder holding run folders, both JSON and YAML configs, or no config exits 2.
 - The wizard asks whether its run draws the plots, when matplotlib is installed.
 -  private `_extras/` folder, and the `_utils/`.
+- `main.py` is split: `__main__.py` reads the command line and hands the configs to a single
+  run or a batch, and the private `_single_run.py` is the run. The `clmsynth` command, its
+  options, output and exit statuses are unchanged.
+- Importing `clmsynth.main` warns, and so does `python -m clmsynth.main`; removed in 0.7.8. Use
+  `clmsynth` or `python -m clmsynth`.
+- `run_pipeline` and `load_config` are public from `clmsynth`. From there `load_config` raises
+  a `ValueError` for a config file it cannot read, or `ImportError` for a YAML config without
+  PyYAML, instead of exiting.
 
 ## [0.7.5] — 2026-10-29 (PyPI)
 

@@ -45,11 +45,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import clmsynth.__main__
 import clmsynth._extras.visualization
-import clmsynth.main
+from clmsynth import run_pipeline
 from clmsynth._input_sources import fabricated_generator
 from clmsynth._utils.cli_logging import SingleLineFilter, configure_cli_logging
-from clmsynth.main import build_run_dir, run_pipeline
+from clmsynth._utils.write_files import build_run_dir
 
 # The folder this session imported clmsynth from. -I also ignores PYTHONPATH, which
 # is how an uninstalled checkout (src/ as an IDE source root) reaches the package,
@@ -209,8 +210,7 @@ def test_module_level_registries_survive_a_run_unchanged(tmp_path):
     """
     import copy as _copy
 
-    from clmsynth import clm_errors, clm_label_engine, dataset_sources
-    from clmsynth import main as main_mod
+    from clmsynth import _single_run, clm_errors, clm_label_engine, dataset_sources
 
     watched = {
         "clm_errors.CODES": clm_errors.CODES,
@@ -220,8 +220,8 @@ def test_module_level_registries_survive_a_run_unchanged(tmp_path):
         "dataset_sources.CLUSTBENCH_DATASETS": dataset_sources.CLUSTBENCH_DATASETS,
         "dataset_sources.FABRICATED_CONFIGS": dataset_sources.FABRICATED_CONFIGS,
         "dataset_sources.HEAVY_BATTERIES": dataset_sources.HEAVY_BATTERIES,
-        "main.FETCHERS": main_mod.FETCHERS,
-        "main.SOURCE_DISPLAY": main_mod.SOURCE_DISPLAY,
+        "_single_run.FETCHERS": _single_run.FETCHERS,
+        "_single_run.SOURCE_DISPLAY": _single_run.SOURCE_DISPLAY,
     }
     before = {name: _copy.deepcopy(obj) for name, obj in watched.items()}
 
@@ -308,13 +308,13 @@ def test_importing_main_loads_no_plotting_stack():
     # Subprocess: conftest imports matplotlib session-wide. -I (isolated) ignores
     # PYTHONPATH: an IDE's plot support puts a sitecustomize.py on it that imports
     # matplotlib at interpreter start (PyCharm's "Show plots in tool window"), which
-    # the child would otherwise inherit and blame on clmsynth.main.
+    # the child would otherwise inherit and blame on clmsynth.__main__.
     probe = (
         "import json, sys\n"
         "def plotting():\n"
         "    return sorted(m for m in sys.modules if m.split('.')[0] == 'matplotlib')\n"
         "before = plotting()\n"
-        "import clmsynth.main\n"
+        "import clmsynth.__main__\n"
         "print(json.dumps([before, [m for m in plotting() if m not in before]]))\n"
     )
     result = run_isolated(probe)
@@ -322,12 +322,12 @@ def test_importing_main_loads_no_plotting_stack():
     assert result.returncode == 0, result.stderr
     before, loaded = json.loads(result.stdout)
     # Otherwise the import below proves nothing: modules already present cannot be
-    # loaded again, so the check would pass whatever clmsynth.main imports.
+    # loaded again, so the check would pass whatever clmsynth.__main__ imports.
     assert not before, (
         f"the interpreter loaded the plotting stack before clmsynth was imported: {before}. "
         "A sitecustomize.py or .pth file in the environment imports it."
     )
-    assert not loaded, f"importing clmsynth.main loaded the plotting stack: {loaded}"
+    assert not loaded, f"importing clmsynth.__main__ loaded the plotting stack: {loaded}"
 
 
 def test_a_no_viz_run_never_reaches_the_plotter(tmp_path, monkeypatch):
@@ -374,7 +374,7 @@ def test_the_no_viz_flag_reaches_the_pipeline(tmp_path, monkeypatch, flags, rend
     config_path.write_text(json.dumps(pipeline_config(tmp_path / "out")), encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["clmsynth", str(config_path), *flags])
 
-    clmsynth.main.main()
+    clmsynth.__main__.main()
 
     assert bool(calls) is renders, (
         f"flags {flags}: expected rendering={renders}, plotter called {len(calls)} time(s)"
@@ -397,15 +397,15 @@ def without_yaml(code: str) -> subprocess.CompletedProcess:
 
 def run_cli_without_yaml(config_path) -> subprocess.CompletedProcess:
     return without_yaml(f"sys.argv = ['clmsynth', {str(config_path)!r}, '--no-viz']\n"
-                        "from clmsynth.main import main\nmain()\n")
+                        "from clmsynth.__main__ import main\nmain()\n")
 
 
 def test_importing_main_loads_no_yaml():
-    probe = "import clmsynth.main\nprint('yaml' in sys.modules)\n"
+    probe = "import clmsynth.__main__\nprint('yaml' in sys.modules)\n"
     result = run_isolated(probe)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "False", "importing clmsynth.main loaded yaml"
+    assert result.stdout.strip() == "False", "importing clmsynth.__main__ loaded yaml"
 
 
 def test_a_json_config_runs_without_pyyaml(tmp_path):
@@ -464,7 +464,7 @@ def test_a_batch_runs_each_config_in_its_own_process(tmp_path, monkeypatch, capl
     caplog.set_level(logging.INFO)
 
     with pytest.raises(SystemExit) as exit_signal:
-        clmsynth.main.main()
+        clmsynth.__main__.main()
 
     assert exit_signal.value.code == 3
     logs = {run.name: (run / "info" / f"{run.name}.log").read_text(encoding="utf-8")
@@ -475,3 +475,18 @@ def test_a_batch_runs_each_config_in_its_own_process(tmp_path, monkeypatch, capl
     assert "[CLM-101]" in logs[bad_run] and "[CLM-101]" not in logs[good_run]
     assert f"good.json: exit 0, run {good_run}" in caplog.text
     assert f"bad.json: exit 2, run {bad_run}" in caplog.text
+
+
+def test_an_empty_config_path_is_a_usage_error(tmp_path, monkeypatch):
+    """`clmsynth "$CONFIG"` with the variable unset: an empty path reads as the
+    working folder, where every config would run as a batch."""
+    (tmp_path / "a.json").write_text(json.dumps(pipeline_config(tmp_path / "out")),
+                                     encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["clmsynth", ""])
+
+    with pytest.raises(SystemExit) as exit_signal:
+        clmsynth.__main__.main()
+
+    assert exit_signal.value.code == 2
+    assert not (tmp_path / "out").exists()

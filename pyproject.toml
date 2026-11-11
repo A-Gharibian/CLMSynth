@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clmsynth"
-version = "0.7.6"
+version = "0.7.7"
 description = "Synthetic label generator with configurable cluster-label matching (CLM) against ground-truth clusters"
 readme = "README.md"
 requires-python = ">=3.12,<3.16"
@@ -53,7 +53,7 @@ Issues = "https://github.com/A-Gharibian/CLMSynth/issues"
 Paper = "https://doi.org/10.1016/j.softx.2026.103077"
 
 [project.scripts]
-clmsynth = "clmsynth.main:main"
+clmsynth = "clmsynth.__main__:main"
 clmsynth-config = "clmsynth._config_gen.generate_config:main"
 clmsynth-wizard = "clmsynth._config_gen.config_wizard:main"
 
@@ -118,14 +118,12 @@ banned-module-level-imports = ["matplotlib", "clmsynth._extras", "yaml"]
 "src/clmsynth/_extras/visualization.py" = ["TID253"]
 # Tests import the wizard and the plotter directly, on purpose.
 "tests/**" = ["TID251", "TID253"]
-# The guides import each other; the two old import paths re-export them until 0.8.0.
+# The guides import each other; the two old import paths re-export them until 0.7.8.
 "src/clmsynth/_config_gen/**" = ["TID251"]
 "src/clmsynth/generate_config.py" = ["TID251"]
 "src/clmsynth/config_template.py" = ["TID251"]
 # Repository tools, not shipped: they read YAML at the top.
 "tools/**" = ["TID253"]
-# Puts this tree's src on the path before importing it; the figure's text uses Greek letters.
-"tools/CLMSynth_engine_decision_map.py" = ["E402", "RUF001"]
 
 [tool.mypy]
 ignore_missing_imports = true

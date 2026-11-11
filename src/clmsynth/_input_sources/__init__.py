@@ -9,7 +9,11 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-__all__ = ["Source"]
+__all__ = ["FEATURE_RECORD", "Source"]
+
+# The key in a fetched frame's `attrs` under which a source records which features
+# carry cluster structure, as lines for the dataset's summary txt.
+FEATURE_RECORD = "feature_record"
 
 
 @dataclass(frozen=True)
@@ -33,3 +37,6 @@ class Source:
     # (battery, dataset, **suite keys) -> the dataset's cluster ids, read before any fetch
     # so the run refuses a [CLM-105] mismatch early; None from it: not read, judged later
     cluster_ids: Callable[..., list[int] | None] | None = None
+    # (battery, dataset, **suite keys) -> whether a dataset is there, asked before any
+    # fetch; for a source that reads what the config names. None: `datasets` lists all
+    has_dataset: Callable[..., bool] | None = None

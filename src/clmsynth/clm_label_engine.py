@@ -59,6 +59,12 @@ MAX_CARDINALITY = int(cast(float, SETTINGS["clm_label.num_classes"].hi))
 MATCHING_MODES = choices("clm_label.matching_mode")
 BALANCE_VALUES = choices("clm_label.balance")
 
+# The private clm_label key under which LabelGenerator.apply hands over the names of
+# the coords columns: the engine takes an array, and a feature_dependence entry names
+# its feature.
+_FEATURE_COLUMNS = "_feature_columns"
+_FEATURE_ENTRY_EXAMPLE = "{label: 0, feature: Feature_1, favors: high}"
+
 
 # ---------------------------------------------------------------------------
 # Label totals: proportions / balance / skew_rule -> exact m_c per label
@@ -75,7 +81,10 @@ def _exact(x: _Number) -> Fraction:
         return x
     if isinstance(x, (int, np.integer)):
         return Fraction(int(x))
-    return Fraction(str(float(x)))
+    # A numpy float prints the shortest decimal of its own precision: float() would
+    # widen np.float32(0.6) to 0.6000000238418579.
+    written: Any = x
+    return Fraction(str(written if isinstance(written, np.floating) else float(written)))
 
 
 def _shown(v: Fraction) -> int | float:
@@ -164,22 +173,21 @@ def _label_shares(cfg: dict[str, Any], rng: np.random.Generator | None = None,
     balance = cfg.get("balance", default("clm_label.balance"))
 
     if balance == "balanced":
-        if warn and cfg.get("proportions"):
+        given = cfg.get("proportions")
+        # An array has no single truth value.
+        if warn and (given.size if isinstance(given, np.ndarray) else given):
             clm_warn(log, 301)
         proportions = [Fraction(1, M)] * M
     elif cfg.get("proportions"):
         proportions = cfg["proportions"]
-        # [CLM-141] A mapping ({0: 0.8, 1: 0.2}) is iterated by its KEYS: 0 + 1
-        # passed [CLM-106] and every point got label 1. A NaN entry passed it too,
-        # and a negative one sums to 1 beside a share above it (0.5, 0.6, -0.1, 0.0)
-        # and gives its label a negative count.
+        # [CLM-141] [CLM-106] reads only the sum, which a mapping's integer keys can
+        # pass, as can a NaN entry or a negative one beside a share above it.
         if (not isinstance(proportions, (list, tuple))
                 or not all(_is_finite_real(p) and p >= 0 for p in proportions)):
             raise clm_error(141, key="proportions",
                             expected="a list of finite numbers >= 0, one per label",
                             value=proportions)
-        # [CLM-121] Length must match M exactly. A longer list used to enlarge the
-        # label space silently
+        # [CLM-121] Length must match M exactly.
         if len(proportions) != M:
             detail = (
                 f"The surplus entries become labels {list(range(M, len(proportions)))}, "
@@ -215,23 +223,30 @@ class Rule:
     recall_target: float
 
 
-def _check_pair(label: int, clusters: list, M: int, cluster_ids: list | None,
-                where: str) -> None:
-    """Fail fast on out-of-range label / unknown cluster ids in a matching
-    rule, before allocate() would otherwise surface them as an uncoded numpy
-    IndexError (label >= M), a KeyError (unknown cluster). Without a dataset
-    (`cluster_ids` None) the ids are not looked up ([CLM-105])."""
+def _check_label(label: Any, M: int, where: str) -> None:
+    """[CLM-104] A label is an integer in 0..M-1."""
     is_int = isinstance(label, (int, np.integer)) and not isinstance(label, bool)
     if not is_int:
         raise clm_error(104, where=where, label=label, hi=M - 1,
                         problem="is not an integer; labels are indices in")
     if not (0 <= label < M):
         raise clm_error(104, where=where, label=label, hi=M - 1, problem="out of range")
-    # [CLM-141] Configuration errors, so not [CLM-105], which skips one dataset. A
-    # string was iterated by character.
+
+
+def _check_pair(label: int, clusters: list, M: int, cluster_ids: list | None,
+                where: str) -> None:
+    """Fail fast on out-of-range label / unknown cluster ids in a matching
+    rule, before allocate() would otherwise surface them as an uncoded numpy
+    IndexError (label >= M), a KeyError (unknown cluster). Without a dataset
+    (`cluster_ids` None) the ids are not looked up ([CLM-105])."""
+    _check_label(label, M, where)
+    # [CLM-141] Configuration errors, so not [CLM-105], which skips one dataset.
     if not isinstance(clusters, (list, tuple)):
         raise clm_error(141, key=f"{where}: clusters", expected="a list of cluster ids",
                         value=clusters)
+    if not clusters:
+        raise clm_error(141, key=f"{where}: clusters",
+                        expected="a non-empty list of cluster ids", value=clusters)
     for k in clusters:
         _check_cluster_id(k, f"{where}: cluster")
     if cluster_ids is None:
@@ -243,9 +258,7 @@ def _check_pair(label: int, clusters: list, M: int, cluster_ids: list | None,
 
 
 def _check_named_once(named: dict[tuple[Any, Any], int], label, clusters: list, i: int) -> None:
-    """[CLM-142] A cluster is named once per label across assignment_matrix. Two
-    rows naming it added their points, so no entry stated the value; one row
-    listing it twice lost points, since the split gave it two parts and kept one.
+    """[CLM-142] A cluster is named once per label across assignment_matrix.
     `named` maps (label, cluster) to the row that named it, across calls."""
     in_row = set()
     for k in clusters:
@@ -347,11 +360,12 @@ def validate_matching_ids(cfg: dict[str, Any], cluster_ids: list[int]) -> None:
 
     Deliberately tolerant of a malformed config. [CLM-105] is a statement about a
     *dataset*, unlike every other [CLM-1xx] code. [CLM-104] bounds labels by
-    num_classes, so it is configuration-scoped; main.py evaluates it once.
+    num_classes, so it is configuration-scoped; _single_run.py evaluates it once.
     """
     M = cfg.get("num_classes")
-    if not isinstance(M, int) or isinstance(M, bool):
+    if not isinstance(M, (int, np.integer)) or isinstance(M, bool):
         return
+    M = int(M)
 
     mode = cfg.get("matching_mode")
     if mode == "single":
@@ -372,6 +386,8 @@ def _validate_dataset_input(cluster_labels: np.ndarray | pd.Series | Sequence[in
     per point.
     """
     ids = np.asarray(cluster_labels)
+    if ids.ndim != 1:
+        raise clm_error(133, problem=f"cluster_labels must be 1-D, got shape {ids.shape}")
     missing = int(np.sum(pd.isna(ids) | pd.Series(ids).isin([np.inf, -np.inf]).to_numpy()))
     if missing:
         raise clm_error(133, problem=f"{missing} of the {N} cluster ids are missing or "
@@ -385,13 +401,17 @@ def _validate_dataset_input(cluster_labels: np.ndarray | pd.Series | Sequence[in
             first = bad[0].item() if isinstance(bad[0], np.generic) else bad[0]
             raise clm_error(133, problem=f"{len(bad)} of the {N} cluster ids are not "
                                          f"integers, such as {first!r}")
-    if coords is not None and np.size(coords) > 0 and len(coords) != N:
-        raise clm_error(133, problem=f"coords has {len(coords)} rows for {N} cluster ids")
+    if coords is not None and np.size(coords) > 0:
+        c = np.asarray(coords)
+        if c.ndim == 0 or len(c) != N:
+            raise clm_error(133, problem="coords has no rows" if c.ndim == 0
+                                         else f"coords has {len(c)} rows for {N} cluster ids")
 
 
 def _ensure_coords(cfg: dict, coords: np.ndarray | None, N: int) -> np.ndarray:
     """[CLM-125] guard: spatial placement needs per-point geometry with at least
-    two features; one feature is out of scope."""
+    two features; one feature is out of scope. [CLM-133] when a coordinate it
+    would read is NaN or infinite."""
     placement = _placement(cfg)
     if coords is None or np.size(coords) == 0:
         if placement:
@@ -401,21 +421,33 @@ def _ensure_coords(cfg: dict, coords: np.ndarray | None, N: int) -> np.ndarray:
     coords = np.asarray(coords)
     if placement and (coords.ndim != 2 or coords.shape[1] < 2):
         raise clm_error(125, placement=placement, got=f"of shape {coords.shape}")
+    if placement and coords.dtype.kind not in "fiub":
+        raise clm_error(133, problem=f"coords holds {coords.dtype} values, not numbers, and "
+                                     f"{placement} places points by them")
+    bad = _count_non_finite(coords) if placement else 0
+    if bad:
+        raise clm_error(133, problem=f"{bad} value(s) in coords are NaN or infinite, and "
+                                     f"{placement} places points by them")
     return coords
 
 
+def _count_non_finite(coords: np.ndarray) -> int:
+    """How many values of a float array are NaN or infinite; 0 for any other dtype."""
+    return int((~np.isfinite(coords)).sum()) if coords.dtype.kind == "f" else 0
+
+
 def _placement(cfg: dict) -> str | None:
-    """What requests spatial placement, or None: `centroid_dependence.enabled` or
+    """What requests spatial placement, or None: `centroid_dependence.enabled`,
     any competing_noise entry whose favors is 'core'/'boundary' (the default is
-    'boundary'); under 'random' neither, as random places nothing ([CLM-311],
-    [CLM-115]). Both blocks are first read here, so their shape ([CLM-141]) is
-    checked here too, centroid_dependence's in every mode but 'random'.
+    'boundary'), or a feature_dependence entry; under 'random' none, as random
+    places nothing ([CLM-311], [CLM-115]). The blocks are first read here, so their
+    shape ([CLM-141]) is checked here too, centroid_dependence's and
+    feature_dependence's in every mode but 'random'.
     """
     random_mode = cfg["matching_mode"] == "random"
     cd = {} if random_mode else cfg.get("centroid_dependence") or {}
     _check_mapping(cd, "centroid_dependence", "{enabled: true, favors: core}")
-    # [CLM-141] Checked here, where it is first read. A quoted "false" or "no" is a
-    # non-empty string, so it used to switch placement on.
+    # [CLM-141] Checked here, where it is first read: a quoted "false" is truthy.
     if "enabled" in cd and not isinstance(cd["enabled"], (bool, np.bool_)):
         raise clm_error(141, key="centroid_dependence.enabled", expected="true or false",
                         value=cd["enabled"])
@@ -424,10 +456,14 @@ def _placement(cfg: dict) -> str | None:
                             "{cluster: 1, label: 2, share: 0.5}")
     spatial_noise = [] if random_mode else [
         e for e in noise if e.get("favors", default("clm_label.competing_noise.favors")) != "random"]
+    follows = [] if random_mode else cfg.get("feature_dependence") or []
+    _check_list_of_mappings(follows, "feature_dependence", "entry", _FEATURE_ENTRY_EXAMPLE)
     if cd.get("enabled"):
         return "centroid_dependence.enabled"
     if spatial_noise:
         return "competing_noise with favors 'core'/'boundary'"
+    if follows:
+        return "feature_dependence"
     return None
 
 
@@ -456,14 +492,12 @@ def _validate_target_metric_cfg(cfg: dict, cluster_ids: list | None) -> None:
     if "value" not in tm:
         raise clm_missing(209)
     value = tm["value"]
-    # True passed as 1; a bare `value:` (None) or a string crashed the comparison.
     if not _is_real(value) or not in_bounds("clm_label.target_metric.value", value):
         raise clm_error(113, value=value if _is_real(value) else repr(value))
     if "strict" in tm and not isinstance(tm["strict"], (bool, np.bool_)):
         raise clm_error(141, key="target_metric.strict", expected="true or false",
                         value=tm["strict"])
-    # [CLM-141] A NaN, infinite or boolean tolerance meant [CLM-309]/[CLM-310]
-    # could never fire.
+    # [CLM-141] Under a NaN or infinite tolerance [CLM-309]/[CLM-310] could not fire.
     tol = _tolerance(tm)
     if not _is_finite_real(tol) or not in_bounds("clm_label.target_metric.tolerance", tol):
         raise clm_error(141, key="target_metric.tolerance", expected="a finite number >= 0",
@@ -471,8 +505,7 @@ def _validate_target_metric_cfg(cfg: dict, cluster_ids: list | None) -> None:
     scope = tm.get("scope", default("clm_label.target_metric.scope"))
     if scope not in choices("clm_label.target_metric.scope"):
         raise clm_error(122, scope=scope)
-    # max_iter is read only by the global search. True ran a single iteration; a
-    # negative value skipped the refinement without a word.
+    # max_iter is read only by the global search.
     max_iter = tm.get("max_iter", default("clm_label.target_metric.max_iter"))
     if scope == "global" and (isinstance(max_iter, (bool, np.bool_))
                               or not isinstance(max_iter, (int, np.integer))
@@ -480,8 +513,7 @@ def _validate_target_metric_cfg(cfg: dict, cluster_ids: list | None) -> None:
         raise clm_error(141, key="target_metric.max_iter", expected="an integer >= 0",
                         value=max_iter)
     # probe_seed too is read only by the global search; empty is the run seed, as
-    # absent. True seeded the probes as 1, and a negative, a float or a string
-    # crashed uncoded in numpy at the first probe.
+    # absent.
     probe_seed = tm.get("probe_seed")
     if scope == "global" and probe_seed is not None and (
             isinstance(probe_seed, (bool, np.bool_))
@@ -553,7 +585,7 @@ def _validate_spillover_cfg(cfg: dict) -> None:
     if valid:
         for v in given:
             try:                    # accept 2 and 2.0, reject 1.5, True, "2", None, inf
-                is_int = not isinstance(v, bool) and v == int(v)
+                is_int = not isinstance(v, (bool, np.bool_)) and v == int(v)
             except (TypeError, ValueError, OverflowError):
                 is_int = False
             if not is_int or not (0 <= v < M):
@@ -582,16 +614,13 @@ def _is_finite_real(value) -> bool:
 
 
 def _check_mapping(value, key: str, example: str) -> None:
-    """[CLM-141] A block read key by key must be a mapping. Anything else crashed
-    uncoded on its first .get(), or passed `in` as a list or a string and was then
-    reported as a missing key."""
+    """[CLM-141] A block read key by key must be a mapping."""
     if not isinstance(value, Mapping):
         raise clm_error(141, key=key, expected=f"a mapping such as {example}", value=value)
 
 
 def _check_list_of_mappings(value, key: str, item: str, example: str) -> None:
-    """[CLM-141] A list block whose entries are mappings. A single mapping written
-    without the YAML dash was iterated by its keys, and a string by its characters."""
+    """[CLM-141] A list block whose entries are mappings."""
     if not isinstance(value, (list, tuple)):
         raise clm_error(141, key=key, expected=f"a list of mappings such as [{example}]",
                         value=value)
@@ -718,7 +747,6 @@ def _noise_entry(i: int, entry: Mapping[str, Any],
                  M: int) -> tuple[Any, int | np.integer, Any, str]:
     """One competing_noise entry as (cluster, label, share, favors), defaults filled
     in, after the checks that hold for every dataset."""
-    # A bare KeyError used to log only 'cluster'.
     for key in ("cluster", "label"):
         if key not in entry:
             raise clm_missing(207, where=f"competing_noise entry {i}", key=key)
@@ -734,7 +762,6 @@ def _noise_entry(i: int, entry: Mapping[str, Any],
                         problem="is not an integer; labels are indices in")
     if not (0 <= label < M):
         raise clm_error(118, label=label, hi=M - 1, problem="out of range")
-    # True passed as 1.0; a string crashed the comparison.
     if not _is_real(share) or not in_bounds("clm_label.competing_noise.share", share):
         raise clm_error(117, share=share if _is_real(share) else repr(share))
     if favors not in choices("clm_label.competing_noise.favors"):
@@ -799,6 +826,167 @@ def _validate_competing_noise_cfg(cfg: dict) -> None:
         placed[(label, k)] = (i, favors, share)
 
 
+def _feature_entry(i: int, entry: Mapping[str, Any],
+                   M: int) -> tuple[int, str, str, float | None, str]:
+    """One feature_dependence entry as (label, feature, favors, value, profile),
+    defaults filled in, after the checks that hold for every dataset. `value` is
+    None unless favors is 'value', the only place it is read."""
+    where = f"feature_dependence entry {i}"
+    for key in ("label", "feature"):
+        if key not in entry:
+            raise clm_missing(207, where=where, key=key)
+    label, feature = entry["label"], entry["feature"]
+    _check_label(label, M, where)
+    if not isinstance(feature, str) or not feature:
+        raise clm_error(141, key=f"{where}: feature",
+                        expected="the name of one feature column", value=feature)
+    favors = entry.get("favors", default("clm_label.feature_dependence.favors"))
+    if (not isinstance(favors, str)
+            or favors not in choices("clm_label.feature_dependence.favors")):
+        raise clm_error(141, key=f"{where}: favors", expected="'high', 'low' or 'value'",
+                        value=favors)
+    value = None
+    if favors == "value":
+        value = entry.get("value")
+        if not _is_finite_real(value):
+            raise clm_error(141, key=f"{where}: value",
+                            expected="a finite number, which favors 'value' requires",
+                            value=value)
+    profile = entry.get("profile", default("clm_label.feature_dependence.profile"))
+    if (not isinstance(profile, str)
+            or profile not in choices("clm_label.feature_dependence.profile")):
+        raise clm_error(141, key=f"{where}: profile", expected="'linear' or 'step'",
+                        value=profile)
+    return label, feature, favors, value, profile
+
+
+def _validate_feature_dependence_cfg(cfg: dict) -> None:
+    """Each feature_dependence entry, checked once before allocation and the
+    target_metric search: [CLM-207], [CLM-104] and [CLM-141], then [CLM-141] for a
+    second entry on a label and for centroid_dependence enabled beside entries. All
+    of them hold for every dataset. [CLM-125] is about a dataset's columns
+    (_followed_features).
+    """
+    entries = cfg.get("feature_dependence") or []
+    _check_list_of_mappings(entries, "feature_dependence", "entry", _FEATURE_ENTRY_EXAMPLE)
+    first: dict[int, int] = {}
+    for i, entry in enumerate(entries):
+        label = _feature_entry(i, entry, cfg["num_classes"])[0]
+        if label in first:
+            # Two features give a label no single score.
+            raise clm_error(141, key=f"feature_dependence entry {i}: label",
+                            expected=f"a label no earlier entry names (entry {first[label]} "
+                                     f"has label {label}, and a label follows one feature)",
+                            value=label)
+        first[label] = i
+    cd = cfg.get("centroid_dependence") or {}
+    if entries and cd.get("enabled"):
+        raise clm_error(141, key="centroid_dependence.enabled",
+                        expected="false while feature_dependence has entries (points are "
+                                 "placed by their distance to the centroid or by a feature, "
+                                 "not both)",
+                        value=cd["enabled"])
+
+
+@dataclass
+class _Follow:
+    """One feature_dependence entry against a dataset: each point's score, higher
+    is favored."""
+    entry: Mapping[str, Any]
+    label: int
+    score: np.ndarray
+    profile: str
+
+
+def _followed_features(cfg: dict, coords: np.ndarray) -> list[_Follow]:
+    """The feature_dependence entries against this dataset's columns, in the order
+    written. [CLM-125] when the dataset lacks an entry's feature, or the call has
+    no column names; [CLM-133] when a point's distance to `value` is not finite."""
+    entries = cfg.get("feature_dependence") or []
+    if not entries:
+        return []
+    names = cfg.get(_FEATURE_COLUMNS)
+    if names is None:
+        raise clm_error(125, placement="feature_dependence",
+                        got="an array without column names, and an entry names its feature "
+                            "by column: label through a DatasetContext "
+                            "(generate_additional_labels, or a run)")
+    names = list(names)
+    follows = []
+    for i, entry in enumerate(entries):
+        label, feature, favors, value, profile = _feature_entry(i, entry, cfg["num_classes"])
+        if feature not in names:
+            shown = ", ".join(str(n) for n in names[:12]) + (", ..." if len(names) > 12 else "")
+            raise clm_error(125, placement=f"feature_dependence entry {i}",
+                            got=f"without its feature {feature!r} (the dataset's features: "
+                                f"{shown})")
+        column = coords[:, names.index(feature)].astype(float)
+        if favors == "high":
+            score = column
+        elif favors == "low":
+            score = -column
+        else:
+            # An overflow is judged on the result, not announced by numpy first.
+            with np.errstate(over="ignore", invalid="ignore"):
+                score = -np.abs(column - value)
+            if not np.isfinite(score).all():
+                bad = int((~np.isfinite(score)).sum())
+                raise clm_error(133, problem=f"the distance of {bad} point(s) to the value "
+                                             f"{value!r} of feature_dependence entry {i} is "
+                                             f"not finite, feature {feature!r} is too large "
+                                             "for a distance to be computed. Standardize or "
+                                             "rescale the features (for byoc, "
+                                             "byoc_suite.standardize: true)")
+        follows.append(_Follow(entry, label, score, profile))
+    return follows
+
+
+def _clusters_shown(clusters: Sequence[Any]) -> str:
+    """'cluster 1', or 'clusters 70, 72'."""
+    if len(clusters) == 1:
+        return f"cluster {clusters[0]}"
+    return "clusters " + ", ".join(str(k) for k in clusters)
+
+
+def _warn_entries_ignored(follows: Sequence[_Follow],
+                          rule_demand: Mapping[Any, Mapping[int, int]],
+                          noise_labels: Mapping[Any, Mapping[Any, str]],
+                          cluster_sizes: Mapping[Any, int]) -> None:
+    """[CLM-305] for each feature_dependence entry that moves nothing, or nothing in
+    some clusters: a `value` its favors does not read, a label the matching places
+    nowhere, a cluster where the label is competing noise, and a cluster the label
+    fills. `rule_demand` is the matching's demand, before competing_noise adds its
+    own."""
+    for follow in follows:
+        entry, label = follow.entry, follow.label
+
+        def warn(effect: str, cause: str, entry: Mapping[str, Any] = entry) -> None:
+            clm_warn(log, 305, where="feature_dependence", entry=entry, effect=effect,
+                     cause=cause)
+
+        favors = entry.get("favors", default("clm_label.feature_dependence.favors"))
+        if favors != "value" and entry.get("value") is not None:
+            warn("reads no value",
+                 f"'value' is read only under favors 'value', and its favors is {favors!r}")
+        placed_in = [k for k, per_label in rule_demand.items() if per_label.get(label, 0) > 0]
+        if not placed_in:
+            warn("has no effect",
+                 f"label {label} has no placed points: only an assignment_matrix row or "
+                 "single_match places a label, and its other points are spillover or "
+                 "competing noise, which an entry does not move")
+            continue
+        noise_in = [k for k in rule_demand if label in noise_labels.get(k, {})]
+        if noise_in:
+            warn(f"has no effect in {_clusters_shown(noise_in)}",
+                 f"label {label} is a competing_noise label there, and those points stay "
+                 "where competing_noise put them")
+        filled = [k for k in placed_in if rule_demand[k][label] >= cluster_sizes[k]]
+        if filled:
+            warn(f"has no effect in {_clusters_shown(filled)}",
+                 f"label {label} takes every point there, so there is nothing to choose "
+                 "between")
+
+
 def _pair_ari_curve(N: int, n_k: int) -> np.ndarray:
     """The pair ARI the single-dominant construction delivers at m_c = 1..n_k.
 
@@ -844,7 +1032,7 @@ def pair_reachable_range(N: int, n_k: int, kind: str = "mcc") -> tuple[float, fl
     """The pair MCC that scope 'pair' can deliver for a cluster of n_k of N points.
     """
     if kind == "ari":
-        return float(_pair_ari_curve(N, n_k).min()), 1.0
+        return (float(_pair_ari_curve(N, n_k).min()) if n_k >= 1 else 0.0), 1.0
     phi_min = float(np.sqrt((N - n_k) / (n_k * (N - 1)))) if (n_k >= 1 and N > 1) else 0.0
     return phi_min, 1.0
 
@@ -1154,6 +1342,8 @@ def _weighted_pick(idx_avail: np.ndarray, count: int, coreness_avail: np.ndarray
                     profile: str, steepness: float, rng: np.random.Generator) -> np.ndarray:
     """Selects `count` of the available point indices by the configured
     profile, given each candidate's coreness score."""
+    if _off_scale(coreness_avail):
+        coreness_avail = _unit_span(coreness_avail)
     if profile == "step":
         jitter = rng.random(len(idx_avail)) * 1e-9
         order = np.argsort(-(coreness_avail + jitter))
@@ -1167,6 +1357,39 @@ def _weighted_pick(idx_avail: np.ndarray, count: int, coreness_avail: np.ndarray
     raise clm_error(110, profile=profile)
 
 
+def _off_scale(score: np.ndarray) -> bool:
+    """Whether the 1e-9 and 1e-12 of `_weighted_pick`, which are absolute, cannot
+    serve this score: a span below 1e-6 or above 1e150, or one to which the score's
+    dtype cannot add 1e-12. A span of 0 is not off scale: every point then ties."""
+    if score.size == 0:
+        return False
+    span = score.max() - score.min()
+    width = float(span)
+    return bool(0 < width < 1e-6 or width > 1e150 or span + 1e-12 == 0)
+
+
+def _unit_span(score: np.ndarray) -> np.ndarray:
+    """`score` rescaled to 0..1 over its own span, so that the 1e-9 jitter of a
+    'step' pick, which only breaks ties, stays below the differences of a feature
+    measured in small units. Halved first: the span of two finite values can
+    overflow."""
+    if score.size == 0:
+        return score
+    half = score / 2
+    span = half.max() - half.min()
+    return (half - half.min()) / span if span > 0 else np.zeros(len(score))
+
+
+def _distances_overflowed(distances: np.ndarray) -> ValueError:
+    """[CLM-133] for finite coordinates too large to square: above 1e154, or 1e19
+    in float32 and 255 in float16."""
+    bad = int((~np.isfinite(distances)).sum())
+    return clm_error(133, problem=f"the distance of {bad} point(s) to their cluster's centroid "
+                                  "is not finite, the coordinates are too large for a distance "
+                                  "to be computed. Standardize or rescale the features (for "
+                                  "byoc, byoc_suite.standardize: true)")
+
+
 def assign_points_in_cluster(
         coords: np.ndarray,
         label_targets: dict[int, int],
@@ -1174,8 +1397,12 @@ def assign_points_in_cluster(
         centroid_cfg: dict[str, Any],
         rng: np.random.Generator,
         favors_overrides: dict[int, str] | None = None,
+        feature_scores: Mapping[int, tuple[np.ndarray, str]] | None = None,
 ) -> np.ndarray:
     """Picks the concrete rows of ONE cluster for each demanded label.
+    `feature_scores` maps a label to each row's score (higher is favored) and a
+    profile, 'linear' or 'step': those labels are placed first, in its order, each
+    by its own score.
     """
     n = len(coords)
     out = np.full(n, -1, dtype=int)
@@ -1190,8 +1417,12 @@ def assign_points_in_cluster(
     # boundary competing_noise override, which places its label even when the
     # global setting is off.
     if enabled or any(v in ("core", "boundary") for v in (favors_overrides or {}).values()):
-        centroid = coords.mean(axis=0)
-        distances = np.linalg.norm(coords - centroid, axis=1)
+        # An overflow is judged on the result, not announced by numpy first.
+        with np.errstate(over="ignore", invalid="ignore"):
+            centroid = coords.mean(axis=0)
+            distances = np.linalg.norm(coords - centroid, axis=1)
+        if not np.isfinite(distances).all():
+            raise _distances_overflowed(distances)
     else:
         distances = None
 
@@ -1205,8 +1436,12 @@ def assign_points_in_cluster(
     # The target is set by the matching and comes first; noise takes its core,
     # boundary or random points from what the targets leave. The counts, and so
     # MCC and ARI, are the same in either order: only which points carry a label.
-    ordered = sorted(label_targets.items(),
-                     key=lambda kv: (((favors_overrides or {}).get(kv[0]) is not None), -kv[1]))
+    # A label that follows a feature goes before the other targets, or a bigger
+    # label placed at random would take the points it favors.
+    follows = feature_scores or {}
+    ordered = [(label, label_targets[label]) for label in follows if label in label_targets]
+    ordered += sorted((kv for kv in label_targets.items() if kv[0] not in follows),
+                      key=lambda kv: (((favors_overrides or {}).get(kv[0]) is not None), -kv[1]))
     for label, count in ordered:
         if count == 0:
             continue
@@ -1214,7 +1449,11 @@ def assign_points_in_cluster(
         count = min(count, len(idx_avail))
 
         override = (favors_overrides or {}).get(label)
-        if override in ("core", "boundary"):
+        if label in follows:
+            score, follow_profile = follows[label]
+            chosen = _weighted_pick(idx_avail, count, _unit_span(score[idx_avail]),
+                                    follow_profile, steepness, rng)
+        elif override in ("core", "boundary"):
             # competing_noise placement: per-label coreness sign, same profile
             # machinery as the global setting (defaults to 'linear' when the
             # global centroid_dependence is off).
@@ -1325,7 +1564,8 @@ def _competing_demand(cfg: dict, remaining_capacity: dict[int, int], m_counts: n
             else:
                 cause = (f"its share of the {remaining_capacity[k]} unclaimed point(s) of "
                          f"cluster {k} rounds to 0")
-            clm_warn(log, 305, entry=entry, effect=effect, cause=cause)
+            clm_warn(log, 305, where="competing_noise", entry=entry, effect=effect,
+                     cause=cause)
         if count == 0:
             continue
         extra.setdefault(k, {})
@@ -1341,10 +1581,13 @@ def _competing_demand(cfg: dict, remaining_capacity: dict[int, int], m_counts: n
 
 def _run_allocation_pipeline(cluster_labels, coords, cfg, rules, cluster_ids,
                               cluster_sizes, m_counts, rng, warn: bool = True,
-                              placed: dict[str, list[dict[str, Any]]] | None = None) -> np.ndarray:
+                              placed: dict[str, list[dict[str, Any]]] | None = None,
+                              follows: Sequence[_Follow] = ()) -> np.ndarray:
     # `warn` is False for target_metric probes: a probe's labeling is not the one
     # delivered, so its [CLM-305] could report an entry that the delivered alpha
     # does apply. `placed` is filled for the delivered one only, for the report.
+    # `follows` too is given for the delivered one only: a probe is scored on its
+    # counts, which placement does not move.
     noise = cfg.get("competing_noise")
     # [CLM-119] before the rules claim a point, as [CLM-105] for a rule's cluster:
     # the dataset is skipped whether or not the rules fit.
@@ -1366,6 +1609,9 @@ def _run_allocation_pipeline(cluster_labels, coords, cfg, rules, cluster_ids,
     for k in demand:
         for label, count in demand[k].items():
             used_per_label[label] += count
+    # An entry moves the points the matching places, so its clusters are read
+    # before competing_noise adds its demand.
+    rule_demand = {k: dict(per_label) for k, per_label in demand.items()} if follows else {}
 
     # Optional structured competing-label noise (see _competing_demand).
     # With no 'competing_noise' key this block is skipped and the pipeline
@@ -1381,6 +1627,9 @@ def _run_allocation_pipeline(cluster_labels, coords, cfg, rules, cluster_ids,
                 demand[k][label] = demand[k].get(label, 0) + count
                 remaining_capacity[k] -= count
                 used_per_label[label] += count
+
+    if follows and warn:
+        _warn_entries_ignored(follows, rule_demand, favors_overrides, cluster_sizes)
 
     n_spillover_total = sum(remaining_capacity.values())
     spillover_pool = _spillover_draws(cfg, m_counts, used_per_label, n_spillover_total, rng)
@@ -1399,6 +1648,10 @@ def _run_allocation_pipeline(cluster_labels, coords, cfg, rules, cluster_ids,
             cfg.get("centroid_dependence")
             or {"enabled": default("clm_label.centroid_dependence.enabled")}, rng,
             favors_overrides=favors_overrides.get(k),
+            # Where the matching places the label: in a cluster where it is competing
+            # noise, its points stay where competing_noise puts them.
+            feature_scores={f.label: (f.score[idx], f.profile) for f in follows
+                            if rule_demand[k].get(f.label, 0) > 0} or None,
         )
     return out
 
@@ -1533,6 +1786,16 @@ def _search_grid_gaps(achieved: Callable[[float], float | None],
                     hi = mid
 
 
+def _search_gaps_of_small_labels(achieved: Callable[[float], float | None],
+                                 blocked: Mapping[float, InfeasibleAllocationError],
+                                 bands: list[tuple[float, float]], n_points: int,
+                                 budget: int) -> None:
+    """The gap search again, down to half a point of the dataset, for bands in which
+    no level fit. Half a point of the largest label, its usual stop, is as wide as
+    a grid step for a label of 5 points, so that search makes no probe there."""
+    _search_grid_gaps(achieved, blocked, bands, 1 / (2 * n_points), budget)
+
+
 def solve_alpha_for_target_metric(cluster_labels: np.ndarray | pd.Series, coords: np.ndarray,
                                    cfg: dict[str, Any], cluster_ids: list[int],
                                    cluster_sizes: dict[int, int],
@@ -1637,6 +1900,8 @@ def solve_alpha_for_target_metric(cluster_labels: np.ndarray | pd.Series, coords
                 raise _ProbeStop(float(alpha), m)
             return float(m - target)
 
+        # scipy takes the budget as a C int.
+        iters = min(iters, 2**31 - 1)
         try:
             if bracket is not None:
                 brentq(residual, bracket[0], bracket[1], xtol=1e-12, maxiter=iters)
@@ -1665,6 +1930,9 @@ def solve_alpha_for_target_metric(cluster_labels: np.ndarray | pd.Series, coords
                  if code(a1) == 152 and code(a2) != 152]
         if bands:
             _search_grid_gaps(achieved, blocked, bands, finest, max_iter)
+            if not fitting():
+                _search_gaps_of_small_labels(achieved, blocked, bands, len(cluster_labels),
+                                             max_iter - used())
         if not fitting():
             _log_blocked_levels(blocked)
             raise clm_error(120)
@@ -1695,8 +1963,40 @@ def solve_alpha_for_target_metric(cluster_labels: np.ndarray | pd.Series, coords
 # Top-level entry point
 # ---------------------------------------------------------------------------
 
+def _refuse_arrays(cfg: dict) -> None:
+    """An array in a setting that takes text, a list or a mapping, refused where the
+    setting is read, with the code its own check gives a value of the wrong type:
+    `cfg.get(key) or ...` and `value in choices` ask it for one truth value, which
+    an array of several values does not have."""
+    mode = cfg["matching_mode"]
+
+    def array(key: str) -> bool:
+        return isinstance(cfg.get(key), np.ndarray)
+
+    if mode != "perfect":
+        if array("balance"):
+            raise clm_error(132, balance=cfg["balance"])
+        if array("proportions") and cfg.get("balance", default("clm_label.balance")) != "balanced":
+            raise clm_error(141, key="proportions",
+                            expected="a list of finite numbers >= 0, one per label",
+                            value=cfg["proportions"])
+    if mode != "random" and array("spillover_rule"):
+        raise clm_error(109, rule_name=cfg["spillover_rule"])
+    if mode == "custom" and array("split_rule"):
+        raise clm_error(108, split_rule=cfg["split_rule"])
+    if array("centroid_dependence"):
+        _check_mapping(cfg["centroid_dependence"], "centroid_dependence",
+                       "{enabled: true, favors: core}")
+    if array("competing_noise"):
+        _check_list_of_mappings(cfg["competing_noise"], "competing_noise", "entry",
+                                "{cluster: 1, label: 2, share: 0.5}")
+    if array("target_metric"):
+        _check_mapping(cfg["target_metric"], "target_metric", "{type: mcc, value: 0.5}")
+
+
 def _check_classes_and_mode(cfg: dict) -> None:
-    """[CLM-201]/[CLM-126] num_classes, then [CLM-202]/[CLM-101] matching_mode."""
+    """[CLM-201]/[CLM-126] num_classes, then [CLM-202]/[CLM-101] matching_mode, then
+    an array where a setting is read (`_refuse_arrays`)."""
     if "num_classes" not in cfg:
         raise clm_missing(201)
     M = cfg["num_classes"]
@@ -1712,13 +2012,15 @@ def _check_classes_and_mode(cfg: dict) -> None:
     # Written with no value (`matching_mode:`) is left out too, not an unknown mode.
     if cfg.get("matching_mode") is None:
         raise clm_missing(202)
-    if cfg["matching_mode"] not in MATCHING_MODES:
-        raise clm_error(101, mode=cfg["matching_mode"])
+    mode = cfg["matching_mode"]
+    if isinstance(mode, np.ndarray) or mode not in MATCHING_MODES:
+        raise clm_error(101, mode=mode)
+    _refuse_arrays(cfg)
 
 
 def _check_random_cfg(cfg: dict, warn: bool = True) -> None:
     """Under 'random': [CLM-114], [CLM-115], and [CLM-311] for an enabled
-    centroid_dependence."""
+    centroid_dependence and for a feature_dependence of any shape."""
     # Validity (not membership): a null/empty target_metric is "not set"
     if cfg.get("target_metric"):
         raise clm_error(114)
@@ -1726,7 +2028,9 @@ def _check_random_cfg(cfg: dict, warn: bool = True) -> None:
         raise clm_error(115)
     cd = cfg.get("centroid_dependence")
     if warn and cd and (not isinstance(cd, Mapping) or cd.get("enabled")):
-        clm_warn(log, 311)
+        clm_warn(log, 311, block="centroid_dependence", by="its distance to a centroid")
+    if warn and cfg.get("feature_dependence"):
+        clm_warn(log, 311, block="feature_dependence", by="the value of a feature")
 
 
 def _warn_recall_targets_ignored(cfg: dict) -> None:
@@ -1743,10 +2047,10 @@ def _warn_recall_targets_ignored(cfg: dict) -> None:
 def _check_config(cfg: Any, warn: bool = True) -> None:
     """The checks generate_clm_labels runs on a clm_label block, in its order, and
     its warnings, without a dataset; `warn=False` leaves the warnings to the
-    labelling that follows. Left out: what needs the cluster ids, their count or
-    the coordinates ([CLM-102], [CLM-105], [CLM-125], [CLM-127], [CLM-133], K in
-    [CLM-103] and [CLM-111], the 15x codes) and the warnings about the delivered
-    labels."""
+    labelling that follows. Left out: what needs the cluster ids, their count,
+    their sizes or the coordinates ([CLM-102], [CLM-105], [CLM-119], [CLM-120],
+    [CLM-125], [CLM-127], [CLM-133], K in [CLM-103] and [CLM-111], the 15x codes)
+    and the warnings about the delivered labels."""
     _check_mapping(cfg, "clm_label", "{num_classes: 4, matching_mode: perfect}")
     _check_classes_and_mode(cfg)
     _placement(cfg)
@@ -1762,6 +2066,7 @@ def _check_config(cfg: Any, warn: bool = True) -> None:
     _validate_target_metric_cfg(cfg, None)
     _validate_split_cfg(cfg)
     _validate_competing_noise_cfg(cfg)
+    _validate_feature_dependence_cfg(cfg)
     tm = cfg.get("target_metric")
     if tm and warn:
         _warn_recall_targets_ignored(cfg)
@@ -1770,18 +2075,28 @@ def _check_config(cfg: Any, warn: bool = True) -> None:
     _rules(cfg, None, recall_target_override=1.0 if tm else None, warn=warn)
 
 
+def _drawn_seed() -> int:
+    """One seed for a call given none: the counts, the target search and the
+    placement then share it, as under a seed."""
+    return int(np.random.default_rng().integers(2**31))
+
+
 def generate_clm_labels(cluster_labels: np.ndarray | pd.Series | Sequence[int],
                         coords: np.ndarray | None,
-                        cfg: dict[str, Any], seed: int = 42,
+                        cfg: dict[str, Any], seed: int | None = 42,
                         report: dict[str, Any] | None = None) -> pd.Series:
     """Generates one synthetic label column for an existing clustering.
     """
-    # None, a number or a bool crashed on `in`; a list or a string passed it and
-    # was reported as missing num_classes ([CLM-201]).
     _check_mapping(cfg, "clm_label", "{num_classes: 4, matching_mode: perfect}")
+    if seed is None:
+        seed = _drawn_seed()
     rng = np.random.default_rng(seed)
     N = len(cluster_labels)
+    original_index = cluster_labels.index if isinstance(cluster_labels, pd.Series) else None
     _check_classes_and_mode(cfg)
+    if not isinstance(cfg["num_classes"], int):
+        # A numpy integer keeps its width in the counts, where an int8 overflows.
+        cfg = {**cfg, "num_classes": int(cfg["num_classes"])}
     M = cfg["num_classes"]
 
     _validate_dataset_input(cluster_labels, coords, N)   # [CLM-133]
@@ -1814,7 +2129,7 @@ def generate_clm_labels(cluster_labels: np.ndarray | pd.Series | Sequence[int],
         _check_random_cfg(cfg)
         draws = np.repeat(np.arange(cfg["num_classes"]), m_counts)
         rng.shuffle(draws)
-        return pd.Series(draws, name="clm_label")
+        return pd.Series(draws, index=original_index, name="clm_label")
 
     # These run before the target-metric solver: a config error must surface as
     # itself, not as a solved score computed over an invalid labeling.
@@ -1823,6 +2138,8 @@ def generate_clm_labels(cluster_labels: np.ndarray | pd.Series | Sequence[int],
     _validate_target_metric_cfg(cfg, cluster_ids)
     _validate_split_cfg(cfg)
     _validate_competing_noise_cfg(cfg)
+    _validate_feature_dependence_cfg(cfg)
+    follows = _followed_features(cfg, coords)   # [CLM-125] a feature this dataset lacks
     mover = _count_mover(cfg)
 
     # Resolve once and gate every branch on validity. `"target_metric" in cfg`
@@ -1853,14 +2170,14 @@ def generate_clm_labels(cluster_labels: np.ndarray | pd.Series | Sequence[int],
         rules = build_rules(cfg, cluster_ids)
 
     # Allocation and placement draw from their OWN stream, started fresh from the
-    # same seed rather than continuing the one above. Two reasons, one of them a
-    # defect: resolve_label_counts consumes draws for a dirichlet skew and not
-    # for any other rule, so a shared stream reaches allocation in a state that
-    # depends on which skew rule was chosen.
+    # same seed rather than continuing the one above: resolve_label_counts consumes
+    # draws for a dirichlet skew and not for any other rule, so a shared stream
+    # would reach allocation in a state that depends on which skew rule was chosen.
     alloc_rng = np.random.default_rng(seed)
     placed: dict[str, list[dict[str, Any]]] = {}
     out = _run_allocation_pipeline(cluster_labels, coords, cfg, rules, cluster_ids,
-                                    cluster_sizes, m_counts, alloc_rng, placed=placed)
+                                    cluster_sizes, m_counts, alloc_rng, placed=placed,
+                                    follows=follows)
     if report is not None:
         report.update(placed)
 
@@ -1951,4 +2268,4 @@ def generate_clm_labels(cluster_labels: np.ndarray | pd.Series | Sequence[int],
                                      off=abs(final_metric - tm["value"]), target=tm["value"],
                                      tol=tol, detail=detail)
 
-    return pd.Series(out, name="clm_label")
+    return pd.Series(out, index=original_index, name="clm_label")

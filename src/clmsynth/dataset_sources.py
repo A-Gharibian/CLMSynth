@@ -16,6 +16,7 @@ import logging
 import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
+from numbers import Integral
 from typing import Any, Final, Literal
 
 import pandas as pd
@@ -93,15 +94,28 @@ def _fetch_fabricated_data(
         log.error(f"No fabricated_data preset '{dataset_name}'. Available: {list(FABRICATED_CONFIGS.keys())}")
         return None
 
-    n_samples = int(kwargs.get("n_samples", preset["n_samples"]))
+    # Written with no value, as absent: the preset's size.
+    n_samples = kwargs.get("n_samples")
+    if n_samples is None:
+        n_samples = preset["n_samples"]
+    if isinstance(n_samples, bool) or not isinstance(n_samples, Integral) or n_samples < 1:
+        log.error(f"fabricated_data_suite.n_samples must be a whole number of points, 1 or "
+                  f"more, got {n_samples!r}.")
+        return None
+    n_samples = int(n_samples)
     log.info(f"Generating offline fabricated_data dataset '{dataset_name}' (n={n_samples}, seed={seed})...")
 
-    df = fabricated_generator.generate_synthetic_data(
-        n_samples=n_samples,
-        output_file=None,
-        seed=seed,
-        config_dict=preset["config_dict"],
-    )
+    try:
+        df = fabricated_generator.generate_synthetic_data(
+            n_samples=n_samples,
+            output_file=None,
+            seed=seed,
+            config_dict=preset["config_dict"],
+        )
+    except ValueError as e:
+        log.error(f"fabricated_data_suite.n_samples = {n_samples} is too few points for the "
+                  f"preset '{dataset_name}': {e}")
+        return None
 
     if "Cohort_Class" not in df.columns:
         log.error(f"fabricated_data preset '{dataset_name}' produced no ground truth (categorical_features.enable "
@@ -212,9 +226,16 @@ def fetch(source: str, battery: str, dataset: str, *, seed: int = 42,
 
     ``seed`` reaches only the sources whose data depend on it (mdcgen,
     fabricated_data). ``kwargs`` are the source's own ``<source>_suite`` keys,
-    such as ``base_url`` or ``input_dir``."""
+    such as ``base_url`` or ``input_dir``; a key the source does not take is
+    logged and gives None."""
     if source not in SOURCES:
         raise ValueError(f"Unknown data_source '{source}'. Valid options: {list(SOURCES)}")
+    takes = SOURCES[source].suite_keys
+    unknown = [] if takes is None else [repr(key) for key in kwargs if key not in takes]
+    if unknown:
+        log.error(f"'{source}' does not take {', '.join(unknown)}. It takes: "
+                  f"{', '.join(takes or ()) or 'no key of its own'}.")
+        return None
     return SOURCES[source].fetch(battery, dataset, seed, **kwargs)
 
 

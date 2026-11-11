@@ -1,8 +1,7 @@
 % !CLMSynth-doc = manual
-% !CLMSynth-version = 0.7.6
-% These two lines are a machine-readable marker, so the
-% file can be renamed freely, and checks the version above against the
-% package version so documentation cannot silently fall behind a release.
+% !CLMSynth-version = 0.7.7
+% These two lines are a machine-readable marker, and checks the version above against the
+% package version so documentation cannot fall behind a release.
 
 \documentclass[a4paper,12pt]{article}
 \usepackage{graphicx}
@@ -48,9 +47,7 @@
     tabsize=2
 }
 \lstset{style=mystyle}
-
-% Names the release documented, not the candidate. Banner above tracks the build.
-\title{CLMSynth v0.7.6}
+\title{CLMSynth v0.7.7}
 \author{Arootin Gharibian}
 \date{\today}
 
@@ -59,7 +56,7 @@
 \maketitle
 
 \begin{abstract}
-CLMSynth generates a label $L(x)$ and attaches it to an existing set of cluster IDs $c(x)$ (ground truth or algorithm output), with the relationship between $L$ and $c$ specified by a configuration file and then measured afterwards. A synthetic dataset generated with this program can be used to benchmark and evaluate cluster and label matching under user-definable parameters: clusters with random class assignments and balanced or imbalanced clusters with varying degrees of cluster-label matching. Unlike existing clustering benchmarks that implicitly equate clusters with classes, the generator treats cluster formation and class assignment as independent processes with configurable matching outcomes. Each dataset instance includes ground-truth cluster membership, class labels, and metrics to create reproducible comparative benchmarking of cluster-label matching. A flexible target-metric solver can iterate over possible configurations, respecting user-defined criteria for label assignment, and solve for a CLM function within tolerance of a specific target.
+CLMSynth generates a set of labels and attaches it to an existing set of clusters (ground truths or algorithm output), with the relationship between labels and clusters specified by a configuration file and then measured afterwards. A synthetic dataset generated with this program can be used to benchmark and evaluate cluster and label matching under user-definable parameters: clusters with random class assignments and balanced or imbalanced clusters with varying degrees of cluster-label matching. Unlike existing clustering benchmarks that implicitly equate clusters with classes, the generator treats cluster formation and class assignment as independent processes with configurable matching outcomes. Each dataset instance includes ground-truth cluster membership, class labels, and metrics to create reproducible comparative benchmarking of cluster-label matching. A flexible target-metric solver can iterate over possible configurations, respecting user-defined criteria for label assignment, and solve for a CLM function within tolerance of a specific target.
 
 \end{abstract}
 
@@ -99,7 +96,8 @@ Currently, three CLM measures are available: \texttt{clustering\_mcc\_pair} is t
 
 \texttt{clustering\_ari} is solved for the adjusted Rand index (ARI): The ARI measures the agreement over \emph{pairs} of points rather than through any correspondence between the label and cluster identifiers, and is chance-corrected so that independent partitions score $0$. Because it is a function of the cell of the contingency table and the marginal pair counts alone, it does not need an alignment step: permuting the values of the generated label leaves it unchanged, it is symmetric in its two arguments, and it is defined for any $M$ and $K$.
     
-    \item \textbf{Spatial placement} Configures optionally, within each cluster, \emph{which} points receive each label is chosen by weighted sampling without replacement, with weights derived from normalized distance to the cluster centroid, with\texttt{profile}: \texttt{linear}/\texttt{step}/\texttt{exponential}; and \texttt{favors}: \texttt{steepness} for exponential or \texttt{core}/\texttt{boundary} for other profiles. The target CLM outcome is fixed by stages 2--5, so spatial structure can be varied at a constant metric value.
+    \item \textbf{Spatial placement} Configures optionally, within each cluster, \emph{which} points receive each label is chosen by weighted sampling without replacement, with weights derived from normalized distance to the cluster centroid, with\texttt{profile}: \texttt{linear}/\texttt{step}/\texttt{exponential}; and \texttt{favors}: \texttt{steepness} for exponential or \texttt{core}/\texttt{boundary} for other profiles. The target CLM outcome is fixed by stages 2--5, so spatial structure can be varied at a constant metric value.\\
+    Spatial placement also includes feature-dependent placement, so a not only the labels can follow the coordinates of the features, but they can also follow the values of a specific single feature. For example, a label can be assigned to points where the specific feature has the highest values, or assigned to only tails of a distribution. Although spatial placements are independent of label allocations (number of labels inside a cluster stay the same), the spatial placement rules can collide and contradict if not properly configured.
     
 \end{enumerate}
 
@@ -113,7 +111,7 @@ Currently, three CLM measures are available: \texttt{clustering\_mcc\_pair} is t
 \noindent The \texttt{clm\_label\_engine} is the core module for label synthesis. The configuration parameters for the core module are defined as follows:
 \begin{lstlisting}[language=yaml]
 clm_label:
-  num_classes: M                   # 1 <= M <= 64; the data's own K is capped
+  num_classes: M                   # 1 <= M <= 64
   balance: balanced | unbalanced   # balanced: uniform 1/M, proportions ignored.
   proportions: [...]               # unbalanced: used directly when given.
   skew_rule: geometric | dominant_minority | dirichlet
@@ -127,7 +125,7 @@ clm_label:
   single_match: {cluster: k*, label: l*}    
   assignment_matrix:                         
     - {label: l, clusters: [k1, ...], recall_target: r}
-                                   # each cluster named once per label (CLM-142)
+                                   # each cluster named once per label
   split_rule: proportional_to_size | equal   # how a rule's mass splits over its clusters
   spillover_rule: proportional_to_marginal | uniform | concentrated
   concentrated_labels: [l, ...]    # spillover_rule: concentrated only.
@@ -139,25 +137,28 @@ clm_label:
                                    #   pair; mcc only.
     tolerance: 0.01                # both scopes: how far the DELIVERED
                                    #   labeling may sit from the target.
-    max_iter: 40                   # global only, bisection budget; the pair
-                                   #   scope inverts exactly and never iterates
-    probe_seed: 42                 # optional; defaults to the run seed
+    max_iter: 40                   # global only, probes after the grid scan
+    probe_seed: 42                 # optional; defaults to the label's seed
     strict: true | false           # optional (false): true refuses a label
-                                   #   outside tolerance (CLM-154); tolerance
-                                   #   then defaults to 0, the exact value
   competing_noise:                 # optional (single/custom): structured noise.
     - cluster: k
       label: l_comp
-      share: 1.0                   # fraction of that cluster's leftover points,
-                                   #   at most what l_comp has left (CLM-305)
+      share: 1.0                   # fraction of that cluster's leftover points
       favors: boundary | core | random
   centroid_dependence:
     enabled: true | false
     profile: linear | exponential | step
     favors: core | boundary
     steepness: 3.0                 # exponential only
+  feature_dependence:              # optional (single/custom); not with
+                                   #   centroid_dependence enabled
+    - label: l                     # one entry per label; moves only the
+                                   #   points the matching places
+      feature: Feature_7           # a feature column
+      favors: high | low | value
+      value: 0.75                  # favors: value only
+      profile: linear | step
 \end{lstlisting}
-
 
 
 \newpage
@@ -235,6 +236,7 @@ Changes from after the published article, behavior, diagnostics and label alloca
   \vhEntry{0.7.5rc1}{2026-10-29}{AG}{Better testing, deterministic exits and configs.}
   \vhEntry{0.7.5}{2026-10-29}{AG}{Cumulative release in PyPI with pipeline support, parallel runs, structural ceiling and rounding limitations addressed.}
   \vhEntry{0.7.6}{2026-11-04}{AG}{Data sources, optional matplotlib, folders of configs as batches.}
+  \vhEntry{0.7.7}{2026-11-11}{AG}{Labels that follow a feature (\texttt{feature\_dependence}), \texttt{mdcgen} presets with noise dimensions, \texttt{-{}-help} for config tools, stricter input and config checks.}
 \end{versionhistory}
 \newpage
 \begin{versionhistory}
@@ -294,5 +296,5 @@ Python is distributed under the Python Software Foundation License V.2. This pro
 
 
 \includepdf[pages=-]{CLMSynth_configuration_troubleshooting.pdf}
-\includepdf[pages=-]{engine_decision_map_v075.pdf}
+\includepdf[pages=-]{engine_decision_map_v077.pdf}
 \end{document}
