@@ -107,6 +107,7 @@ cython_debug/
 
 # Editors and IDEs
 .idea
+.ferrite
 .idea/
 .spyderproject
 .spyproject
