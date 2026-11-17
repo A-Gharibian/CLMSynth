@@ -16,9 +16,9 @@ A major release uploads validation tests to the Zenodo repository.
 
 ## 0.7.9
 
-- **A MyST Sphinx site.** *[feature]*
+- **A site.** *[feature]*
 
-- Fable 5.2 and GPT-6 Sol/Astra code review improvements. *[improvement]*
+- Fable 5.2, Gemini 4 Carbon and GPT-6 Sol/Astra code review improvements. *[improvement]*
 
 - SPEC0
 ---
@@ -29,16 +29,9 @@ Will be submitted to the conda-forge review queue on 22 November 2026.
 
 ### Distribution
 
-**conda release**
-
 - **conda-forge** `noarch: python` build. *[feature]*
 
-- **Signed tags, from the 0.8.0 tag onward.** *[improvement]*
-
-
-### Changed
-
-- **Stability commitment.** The `[CLM-###]` registry and `__all__` follow semantic
+- **Signed tags, and stability commitment.** The `[CLM-###]` registry and `__all__` follow semantic
   versioning.
 
 ---
@@ -66,28 +59,18 @@ A CLMSynth-GUI is planned, which will use compiled C binaries for near real-time
 - **Fewer repeated tries in the `target_metric` search.** Each recall level gives every
   label a whole number of points, so nearby levels give the same labeling, and once
   the search has narrowed to a few of them it scores them again; on small clusters
-  most of its tries are repeats. scipy's step tolerance, `xtol` for `brentq` and
-  `xatol` for `minimize_scalar`, set to one point of the largest label stops it there.
-  The labels stay the same when every label has the same count. When counts differ,
-  two labeling can lie closer than one step, and the larger step changes which
-  levels scipy tries, so some configs can get different labels. *[improvement]*
+  most of its tries are repeats.
 
-- **Python 3.15 features, once 3.15 is the minimum.** `frozendict` for the read-only
+- **Python 3.15 and Pandas 3.x features, once the minimum.** `frozendict` for the read-only
   registries, closed `TypedDict` so a type checker flags a misspelled key in a config
-  written in Python, and sampling profiler (PEP 799) for the target-metric search and large runs.
-  *[improvement]*
+  written in Python, and sampling profiler (PEP 799) for the target-metric search and large runs. str type for Pandas. *[improvement]*
 
 - **`clmsynth-config` in a pipeline.** Rendered configs piped straight into runs,
   e.g. calibration datasets at MCC 0 to 1 in steps of 0.1. *[feature]*
 
-- **Integer network flow.** Since 0.7.5 every count is rounded exactly from the
+- **Integer network flow.** Since 0.7.5 every count is rounded from the
   written values, and the rules' counts are rounded together with their clusters as
   one integral flow, so `[CLM-150]` and `[CLM-151]` refuse only when no rounding of
-  the rules' counts fits. The label counts are still rounded first, alone:
-  `proportions: [0.5025, 0.4975]` of 200 points gives 101 + 99, and `single_match`
-  refuses label 0 in a 100-point cluster (`[CLM-150]`), though 100 + 100 rounds the
-  same proportions and fits. A transportation formulation over the label counts, the
+  the rules' counts fits. The label counts are still rounded first. A transportation formulation over the label counts, the
   rules and the clusters gives integer counts in one exact solve. `competing_noise`
   and spillover stay outside it: they take what the matching leaves. *[improvement]*
-
-- pandas 3+ str types.

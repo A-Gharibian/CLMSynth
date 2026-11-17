@@ -29,8 +29,7 @@ This installs the console
 scripts `clmsynth`, `clmsynth-config`, and `clmsynth-wizard`. The `yaml` extra adds
 PyYAML, which reads and writes config files other than `.json`; the wizard and
 `clmsynth-config` need it. The `viz` extra adds matplotlib, which draws the plots in
-`png/`; without it a run writes everything else and says so. `pip install clmsynth`
-alone runs the engine, `run_pipeline`, and `.json` configs.
+`png/`; `pip install clmsynth` alone runs the engine, `run_pipeline`, and `.json` configs.
 
 **Start with the wizard.** `clmsynth-wizard` asks a question per setting and
 writes a runnable config, which is the entry point that needs no files from the

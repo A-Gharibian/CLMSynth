@@ -5,7 +5,7 @@ label generator behavior are additionally explained in the user manual.
 
 ---
 
-## [0.7.8] — 2026-11-16 (TestPyPI)
+## [0.7.8] — 2026-11-17 (TestPyPI, private anaconda)
 
 ### Added
 
@@ -16,19 +16,18 @@ label generator behavior are additionally explained in the user manual.
 
 ### Changed
 
-- The pandas minimum is 2.3 (was 3.0).
-- An empty optional setting takes its default, where it was refused or crashed.
+- The pandas minimum is 2.3 (was 3.0, changed to match SPEC0).
+
 - An empty `num_classes`, `skew_rule` or `target_metric.value` reports `[CLM-201]`,
   `[CLM-203]` or `[CLM-209]`.
-- A setting of the wrong type, `n_labels` above 10 000, or a
-  `fabricated_data_suite.n_samples` below 1 exits 2 before the run folder is made
+
   (`n_samples: 0` exited 1). A direct `run_pipeline` call refuses the same settings
   before any dataset is fetched and returns 0, a `global_settings` value among them.
+
 - `[CLM-311]` also covers `concentrated_labels` under `random`.
+
 - `[CLM-150]` advises the highest recall that runs.
-- clmsynth-config: `num_classes` falls back to 3 (was 4); a payload key it does not read
-  exits 2.
-- The wizard asks the profile of a `competing_noise` entry at the core or boundary.
+
 - The engine is three modules. The checks on a `clm_label` block are in
   `clmsynth.config_validation`, and choosing the points of each cluster, with the checks
   on the coordinates, in `clmsynth.spatial_placement`. Every public name stays importable
@@ -38,14 +37,10 @@ label generator behavior are additionally explained in the user manual.
 
 ### Fixed
 
-- A matplotlib that is installed but cannot be imported: the run skips the plots with
-  one error; `--viz` exits 1.
 - Dict configs: a read-only mapping in a nested block is accepted, and NumPy-array
   `proportions` the run ignores no longer mark the dataset skipped.
 - The wizard asks again for a seed below 0, for `n_labels` above 10 000, and for
   several ids where one cluster is asked, where it kept the first.
-- A clustbench download the server answers with an error closes its response, which
-  was left open.
 
 ### Removed
 

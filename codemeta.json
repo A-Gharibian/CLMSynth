@@ -66,7 +66,7 @@
     },
     "copyrightYear": 2026,
     "dateCreated": "2026-07-15",
-    "dateModified": "2026-11-16",
+    "dateModified": "2026-11-17",
     "datePublished": "2026-07-31",
     "description": "A synthetic dataset generator that decouples cluster formation from class labels to evaluate cluster-label matching algorithms and measures.",
     "developmentStatus": "https://www.repostatus.org/#active",

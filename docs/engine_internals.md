@@ -41,7 +41,7 @@ else:               rules = build_rules(cfg, cluster_ids) # Stage 2
 out = run_allocation_pipeline(...)                        # Stages 3-6
 ```
 
-## Cardinality guard (`MAX_CARDINALITY`, [CLM-126]/[CLM-127])
+### Cardinality guard (`MAX_CARDINALITY`, [CLM-126]/[CLM-127])
 
 Before any other work, `num_classes` (M) and the dataset's own cluster count (K,
 derived from `c(x)`, not configured) are each checked against a fixed cap of 64.
