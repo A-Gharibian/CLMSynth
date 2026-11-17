@@ -4,7 +4,7 @@
 cancels the job."""
 
 import signal
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 
 __all__ = ["Terminated", "sigterm_raises"]
@@ -20,7 +20,7 @@ def _raise_terminated(signum: int, frame: object) -> None:
 
 
 @contextmanager
-def sigterm_raises() -> Iterator[None]:
+def sigterm_raises() -> Generator[None, None, None]:
     """A SIGTERM inside the block raises Terminated; the handler before it returns after."""
     previous = signal.signal(signal.SIGTERM, _raise_terminated)
     try:

@@ -124,8 +124,9 @@ def test_every_module_imports():
     import clmsynth
 
     failures = []
-    for mod in pkgutil.iter_modules(clmsynth.__path__):
-        name = f"clmsynth.{mod.name}"
+    # onerror: a subpackage that cannot be imported is already in `failures`.
+    for mod in pkgutil.walk_packages(clmsynth.__path__, "clmsynth.", onerror=lambda _: None):
+        name = mod.name
         try:
             importlib.import_module(name)
         except Exception as exc:  # broad by design: reporting

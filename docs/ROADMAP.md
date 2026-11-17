@@ -1,8 +1,8 @@
   # CLMSynth Roadmap
 
-[![Version](https://img.shields.io/badge/version-0.7.7-blue)](https://github.com/A-Gharibian/CLMSynth/releases)
+[![Version](https://img.shields.io/badge/version-0.7.8-blue)](https://github.com/A-Gharibian/CLMSynth/releases)
 
-Planned work from 0.7.7 to 0.9.0. Current behavior is in **`../README.md`**.
+Planned work from 0.7.8 to 0.9.0. Current behavior is in **`../README.md`**.
 Past changes are in **`../CHANGELOG.md`**.
 
 ## Conventions
@@ -14,21 +14,13 @@ A major release uploads validation tests to the Zenodo repository.
 
 ---
 
-## 0.7.8 and 0.7.9
+## 0.7.9
 
-- **A Sphinx site.** *[feature]*
+- **A MyST Sphinx site.** *[feature]*
 
-- **clustbench local cache.** Every run downloads its datasets from GitHub as of 0.7.6
+- Fable 5.2 and GPT-6 Sol/Astra code review improvements. *[improvement]*
 
-- **Reading the diagnostic codes from Python.** A way to collect the `[CLM-###]` codes
-  of the warnings a call logged, so that a script can check them after
-  `generate_clm_labels`.
-
-- **One source of truth for settings** Every setting's default, the
-  condition it applies under and its allowed values come from one table that the
-  engine, the saved run config and the wizard all read. *[improvement]*
-
-
+- SPEC0
 ---
 
 # 0.8.0
@@ -47,13 +39,13 @@ Will be submitted to the conda-forge review queue on 22 November 2026.
 ### Changed
 
 - **Stability commitment.** The `[CLM-###]` registry and `__all__` follow semantic
-  versioning. Existing codes never change behavior, so runs stay reproducible.
+  versioning.
 
 ---
 
 # 0.9.0 series
 
-Community feedback, issues and cross-platform compatibility. 
+Community feedback, issues and cross-platform compatibility.
 A CLMSynth-GUI is planned, which will use compiled C binaries for near real-time rendering.
 
 ## Unplanned
@@ -97,3 +89,5 @@ A CLMSynth-GUI is planned, which will use compiled C binaries for near real-time
   same proportions and fits. A transportation formulation over the label counts, the
   rules and the clusters gives integer counts in one exact solve. `competing_noise`
   and spillover stay outside it: they take what the matching leaves. *[improvement]*
+
+- pandas 3+ str types.

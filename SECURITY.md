@@ -39,6 +39,12 @@ A secondary trajectory of shareable data is through the downloaded or provided f
 source of clustering data, guards here apply to the values of the data since an infected 
 file can execute by other means as well.
 
+The dataset cache is the one state kept between runs. It is in the user's own cache folder,
+created `0700` on POSIX, or in the folder `CLMSYNTH_CACHE_DIR` names. Its files are read with
+`allow_pickle=False`, so an entry cannot run code, and a link under an entry's name is replaced,
+never read or written through. Whoever can write the folder can still change the data a run
+reads, so a shared folder is trusted like a shared input file.
+
 ## Standing findings and why they are accepted
 
 ### `py/path-injection`: paths from argv and interactive prompts

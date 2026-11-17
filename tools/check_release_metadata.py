@@ -32,7 +32,8 @@ def _capture(pattern: str, text: str, flags: int = 0) -> str:
 def read_yaml(text: str) -> Any:
     """A YAML file with every scalar as text, as written: a date or a version
     stays the string the file holds."""
-    return yaml.load(text, Loader=yaml.BaseLoader)
+    # BaseLoader builds only text, lists and mappings: no object can be constructed.
+    return yaml.load(text, Loader=yaml.BaseLoader)  # nosec B506
 
 
 def read_recipe(text: str) -> dict[str, list[str]]:
@@ -127,7 +128,7 @@ def recipe_faults(text: str) -> tuple[str, list[str]]:
     return pinned, faults
 
 
-def collect() -> tuple:
+def collect() -> tuple[Any, ...]:
     """version, version declarations, dates, changelog date, faults, doi."""
     project = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     version = project["version"]

@@ -1,3 +1,4 @@
+<!--suppress SpellCheckingInspection -->
 # Cluster–label matched dataset synthesizer
 
 
@@ -9,9 +10,8 @@
 [![Project status: active](https://img.shields.io/badge/repo%20status-active-brightgreen)](https://www.repostatus.org/#active)
 [![Cite](https://img.shields.io/badge/cite-CITATION.cff-blueviolet)](https://github.com/A-Gharibian/CLMSynth/blob/main/CITATION.cff)
 
-CLMSynth generates synthetic label columns on top of existing or generated clusters, 
-with mathematically controlled agreement
-(recall, class balance, spatial placement, or a solved target metric) 
+CLMSynth generates synthetic label columns on top of existing or generated clusters,
+with mathematically controlled agreement (recall, class balance, spatial placement, or a solved target metric)
 against the ground-truth clusters.
 
 A generated dataset carries the original features, the ground-truth cluster IDs, and one or more synthetic
@@ -154,6 +154,7 @@ CLMSynth is fully functional from a config file; the wizard helps to *create* on
    clmsynth my_config.yaml --keep-failed   # keep a failed run's config and log
    clmsynth a.json b.json c.yaml --jobs 2  # a batch: each config in its own process
    clmsynth sweep/ --jobs 2 --viz          # a folder's configs as a batch, with plots
+   clmsynth my_config.yaml --cache         # keep its datasets for the next run (a batch does)
    ```
    `python -m clmsynth` runs the same command. A tool that can only run a script *file*, not
    `-m`, cannot use the installed `__main__.py`;
@@ -165,14 +166,12 @@ CLMSynth is fully functional from a config file; the wizard helps to *create* on
    ```
    then run `run_clmsynth.py` with the usual `clmsynth` arguments.
    A single run draws the plots whenever matplotlib is installed; a batch draws them only with
-   `--viz`, which exits 1 when matplotlib is not installed. A folder adds the configs directly inside
+   `--viz`, which exits 1 when matplotlib is not installed or cannot be imported. A folder adds the configs directly inside
    it, sorted by name, and must hold one format only (`.json`, or `.yaml`/`.yml`); a folder holding
    run folders is refused. A config named twice, however its path is written, runs once.
    In a batch every config is a run of its own:
    `--jobs` (default 1) sets how many run at once. Above 1, each run gets `OMP_NUM_THREADS`,
-   `OPENBLAS_NUM_THREADS` and `MKL_NUM_THREADS` of 1 unless you set them, so the runs do not each start a thread
-   per core. A SIGTERM to the batch process alone starts no further config and lets the running ones finish;
-   a scheduler, Ctrl-C or `timeout` signals the whole process group and stops them too.
+   `OPENBLAS_NUM_THREADS` and `MKL_NUM_THREADS` of 1 unless you set them, so the runs do not each start a thread per core. A SIGTERM to the batch process alone starts no further config and lets the running ones finish.
 
 ## Output
 
@@ -201,29 +200,18 @@ OUTPUT/{YYYYMMDD}_{HHMMSS}_{Source}/
   keeps it, with the config and the log of why it failed.
 - **Exit status:**
   - 0: every dataset written with all its labels.
-  - 1: nothing written, for a reason beyond the config: a dataset its source
-    could not deliver (a failed download; a data CSV that is unreadable
-    or refused by byoc's import checks, `[CLM-133]` among them), an output folder
+  - 1: nothing written, for a reason beyond the config: a dataset with missing source (a failed download; a data CSV that is unreadable
+    or refused by byoc's import checks, an output folder
     that cannot be created, PyYAML missing for a `.yaml` config, matplotlib
-    missing for `--viz`, a crash.
+    missing for `--viz` or a system crash.
   - 2: the command line or the config is wrong: a usage error, a missing or
     malformed config, a folder of configs that is refused, `batteries` or `datasets` unset or naming what the
-    source does not have (a misspelt name, a data CSV that is not there), a missing required key (`[CLM-2xx]`), a `[CLM-1xx]` refusal
-    from the labeling. Nothing is written.
-    `clmsynth-config` exits 2 for a payload that is missing, malformed or of the
-    wrong shape, or whose `clm_label` block the engine refuses (`[CLM-1xx]`,
-    `[CLM-2xx]`).
+    source does not understand, a missing required key (`[CLM-2xx]`) or a `[CLM-1xx]` refusal. `clmsynth-config` exits 2 for a payload that is missing, malformed or of the wrong shape.
   - 3: incomplete: some datasets written, others skipped or without all their
-    labels; the run's last warning counts them. A failed download may succeed
-    when the job is resubmitted; anything else repeats until the config or the
-    data change.
+    labels.
   - 130 interrupted (Ctrl-C or SIGINT), 143 terminated (SIGTERM).
 
-  Any other status comes from the shell, the scheduler or a wrapper such as
-  `timeout` or `xargs`; a `[CLM-nnn]` code with the same number is unrelated. A
-  batch reads its configs as a run reads its datasets: 0 when every config
-  exited 0, 3 when some wrote their datasets and others did not, otherwise 1, or
-  2 when every config exited 2. A signal's status comes first.
+  Any other status (as far as checked) comes from the shell, the scheduler or a wrapper such as `timeout` or `xargs`; a `[CLM-nnn]` code with the same number is unrelated. A batch reads its configs as a run reads its datasets: 0 when every config exited 0, 3 when some wrote their datasets and others did not, otherwise 1, or 2 when every config exited 2.
 - **Column naming:** ground-truth class labeling such as `Cluster_0`, `Cluster_1`, …
   (by position, `source_labeling: labels0` surfaces as `Cluster_0`); generated
   labels become `Label_0`, `Label_1`, … (0-indexed, one per `n_labels`).
@@ -242,12 +230,12 @@ OUTPUT/{YYYYMMDD}_{HHMMSS}_{Source}/
   Use when specific properties (dimensionality, overlap, outliers) are needed that the clustering-benchmarks datasets
   may not cover. Its presets, by battery:
 
-  | Battery       | Datasets                                                                                       |
-  |---------------|------------------------------------------------------------------------------------------------|
-  | `basic`       | `blobs_2d_5c`, `blobs_3d_10c`                                                                  |
-  | `high_dim`    | `hd_50d_5c`, `hd_100d_10c`                                                                     |
-  | `challenging` | `overlapping_2d`, `noisy_3d` (75 outliers)                                                     |
-  | `noise_dims`  | `noise_5d_2n` (two noise features in every cluster), `noise_5d_per_cluster` (noise features chosen per cluster) |
+  | Battery       | Datasets                                                                                                                                                                   |
+  |---------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+  | `basic`       | `blobs_2d_5c`, `blobs_3d_10c`                                                                                                                                              |
+  | `high_dim`    | `hd_50d_5c`, `hd_100d_10c`                                                                                                                                                 |
+  | `challenging` | `overlapping_2d`, `noisy_3d` (75 outliers)                                                                                                                                 |
+  | `noise_dims`  | `noise_5d_2n` (two noise features in every cluster), `noise_5d_per_cluster` (noise features chosen per cluster)                                                            |
   | `varied`      | `sizes_2d_4c`, `min_size_3d_6c`, `ki_coeff_3d_6c` (cluster sizes), `mixed_dist_2d_3c` (a distribution per cluster), `correlated_3d_4c`, `axis_aligned_2d_4c` (no rotation) |
 
   A preset is the arguments of mdcgenpy's `ClusterGenerator`, and any other key of `mdcgen_suite` goes on to it
@@ -260,6 +248,22 @@ OUTPUT/{YYYYMMDD}_{HHMMSS}_{Source}/
   **cluster IDs with no feature columns at all**, a valid CLM run, since recall, balance, allocation, and spillover
   do not need feature values.
 - **`byoc`**, bring-your-own-clusters: your own CSV with feature columns and one cluster-id column (see below).
+
+### Dataset cache
+
+A batch keeps each `clustbench` and `mdcgen` dataset it fetches and reads it back the next
+time, so a sweep downloads or generates each dataset once, apart from runs that start
+together and fetch the same one; `--no-cache` turns this off. A single run uses the cache
+only with `--cache`. A fetch that warned, such as a download short of a labeling, is not kept. The run's log says which datasets were read
+from the cache. An entry belongs to its source, battery, dataset, `<source>_suite` keys (a
+clustbench `base_url`, an mdcgen key) and, for `mdcgen`, the seed; one kept by another
+version of clmsynth, numpy, pandas or mdcgenpy is fetched again. `byoc` and
+`fabricated_data` are never cached.
+
+The cache is in `CLMSYNTH_CACHE_DIR` when it is set, otherwise in `~/.cache/clmsynth` on Linux
+(`$XDG_CACHE_HOME/clmsynth` when set), `~/Library/Caches/clmsynth` on macOS and
+`%LOCALAPPDATA%\clmsynth\Cache` on Windows. Nothing is removed on its own, and the folder is
+safe to delete at any time.
 
 ### Bring-your-own-clusters (`byoc`)
 

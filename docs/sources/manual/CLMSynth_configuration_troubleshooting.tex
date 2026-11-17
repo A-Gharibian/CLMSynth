@@ -1,5 +1,5 @@
 % !CLMSynth-doc = configuration-troubleshooting
-% !CLMSynth-version = 0.7.7
+% !CLMSynth-version = 0.7.8
 
 \documentclass[a4paper,11pt]{article}
 \usepackage[T1]{fontenc}
@@ -46,7 +46,7 @@
 
 \title{\textbf{Configuration Troubleshooting Reference}}
 % Names the release documented, not the candidate. Banner above tracks the build.
-\author{CLMSynth v0.7.7}
+\author{CLMSynth v0.7.8}
 \date{\today}
 
 \begin{document}
@@ -319,7 +319,8 @@ per-row \texttt{recall\_target} & \texttt{target\_metric} is set & Overridden by
 % probe/run stream divergence, now reachable only through an explicit probe_seed.
 \wcode{309} & the delivered \texttt{target\_metric} is outside tolerance and differs from what the search scored at the same $\alpha$ & An explicit \texttt{target\_metric.probe\_seed} differs from the run seed, so the search scored a labeling other than the one written. Omit \texttt{probe\_seed}; it defaults to the run seed. With \texttt{strict: true}, \vcode{154} then refuses the label. \\
 \wcode{310} & \texttt{scope: pair}: the delivered pair MCC is outside the request & The counterpart of \wcode{306} for the closed form. The message names the cause: the label holds a whole number of points, so the reachable values step past the target, or the target lies outside the reachable range (\wcode{307}). The combinations that would move the label out of its cluster are rejected up front (\vcode{130}). With \texttt{strict: true}, \vcode{154} refuses the label instead. \\
-\wcode{311} & \texttt{random} with \texttt{centroid\_dependence} switched on, or with \texttt{feature\_dependence} set & Random draws labels with no regard to the clusters, so no point is placed by a feature. Remove it or set \texttt{enabled: false}; to place labels by centroid or by a feature, use \texttt{single}/\texttt{custom}. \\
+\wcode{311} & \texttt{random} with enabled \texttt{centroid\_dependence}, or with \texttt{feature\_dependence}/\texttt{concentrated\_labels} set & Ignored; labels are unchanged. Remove the setting or change \texttt{matching\_mode}. \\
+\wcode{312} & \texttt{concentrated\_labels} outside \texttt{concentrated}; \texttt{centroid\_dependence.steepness} outside \texttt{exponential}; \texttt{target\_metric.max\_iter}/\texttt{probe\_seed} under \texttt{scope: pair} & Ignored; labels are unchanged. Remove the setting or change the rule/profile/scope. \\
 \bottomrule
 \caption{Warning codes, which indicate scenarios of successfully executed configuration, but with a different outcome than the user would expect.}
 \label{warnings}

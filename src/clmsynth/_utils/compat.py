@@ -23,6 +23,18 @@ def is_installed(name: str) -> bool:
     return importlib.util.find_spec(name) is not None
 
 
+def import_failure(name: str) -> Exception | None:
+    """What stops the installed module `name` from importing, such as a broken
+    dependency of its own; None when it imports or is not installed at all."""
+    if not is_installed(name.split(".")[0]):
+        return None
+    try:
+        importlib.import_module(name)
+    except Exception as e:
+        return e
+    return None
+
+
 def not_installed_message(name: str, purpose: str) -> str:
     """That `purpose` needs the package `name`, and how to install it."""
     package, install = INSTALL[name]

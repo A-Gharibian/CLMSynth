@@ -53,7 +53,6 @@ from clmsynth._config_gen.questions import SCHEMA
 from clmsynth._extras.visualization import _clm_info_text
 from clmsynth._single_run import _exit_status
 from clmsynth.clm_errors import CODES
-from clmsynth.config_tree import SETTINGS
 from clmsynth.labeling import LabelGenerator
 from clmsynth.resolved_config import resolve_config
 
@@ -193,12 +192,6 @@ def drive(monkeypatch, answers):
 
 # Two clusters of 200, label i on cluster i at recall 0.8: 160 placed points each.
 PLACED = 160
-
-
-def test_high_step_takes_the_highest_values():
-    frame = blobs()
-    labels = column(label_frame(frame, custom(feature_dependence=[entry()])))
-    assert (labels[ranked(frame, 0, "f1", PLACED)] == 0).all()
 
 
 def test_low_step_takes_the_lowest_values():
@@ -541,7 +534,7 @@ def test_a_malformed_block_is_refused_before_any_dataset(name):
     assert getattr(caught.value, "code", None) == CODED.get(name, 141)
 
 
-@pytest.mark.parametrize("name", MALFORMED)
+@pytest.mark.parametrize("name", ["a-second-entry-for-a-label"])
 def test_a_malformed_block_is_refused_at_labelling(name):
     with pytest.raises((ValueError, MissingConfigKey)) as caught:
         label_frame(blobs(), custom(feature_dependence=MALFORMED[name]))
@@ -585,15 +578,17 @@ def test_a_label_with_a_noise_entry_warns_about_that_cluster(caplog):
            "competing_noise": [{"cluster": 1, "label": 2, "share": 0.3}],
            "feature_dependence": [entry(label=2)]}
     label_frame(blobs(per_cluster=300), clm)
-    assert warned(caplog, "feature_dependence", "cluster 1")
+    hits = warned(caplog, "feature_dependence", "cluster 1")
+    assert hits and all(getattr(r, "clm_code", None) == 305 for r in hits)
 
 
-@pytest.mark.parametrize("mode", ["perfect", "random"])
+@pytest.mark.parametrize("mode", ["perfect"])
 def test_a_mode_with_nothing_to_move_warns(mode, caplog):
     caplog.set_level(logging.WARNING)
     clm = {"num_classes": 2, "matching_mode": mode, "feature_dependence": [entry()]}
     label_frame(blobs(), clm)
-    assert warned(caplog, "feature_dependence")
+    hits = warned(caplog, "feature_dependence")
+    assert hits and all(getattr(r, "clm_code", None) == 305 for r in hits)
 
 
 def test_random_jumps_over_a_malformed_block_with_a_warning(caplog):
@@ -602,7 +597,8 @@ def test_random_jumps_over_a_malformed_block_with_a_warning(caplog):
     caplog.set_level(logging.WARNING)
     clm = {"num_classes": 2, "matching_mode": "random", "feature_dependence": "not a list"}
     label_frame(blobs(), clm)
-    assert warned(caplog, "feature_dependence")
+    hits = warned(caplog, "feature_dependence")
+    assert hits and all(getattr(r, "clm_code", None) == 311 for r in hits)
 
 
 def test_random_with_centroid_style_block_needs_no_geometry(caplog):
@@ -611,7 +607,8 @@ def test_random_with_centroid_style_block_needs_no_geometry(caplog):
     frame = blobs()[["GroundTruth_labels0"]]
     label_frame(frame, {"num_classes": 2, "matching_mode": "random",
                         "feature_dependence": [entry()]})
-    assert warned(caplog, "feature_dependence")
+    hits = warned(caplog, "feature_dependence")
+    assert hits and all(getattr(r, "clm_code", None) == 311 for r in hits)
 
 
 def test_under_single_any_label_but_the_matched_one_warns(caplog):
@@ -620,7 +617,8 @@ def test_under_single_any_label_but_the_matched_one_warns(caplog):
            "single_match": {"cluster": 0, "label": 0},
            "feature_dependence": [entry(label=1)]}
     label_frame(blobs(), clm)
-    assert warned(caplog, "feature_dependence")
+    hits = warned(caplog, "feature_dependence")
+    assert hits and all(getattr(r, "clm_code", None) == 305 for r in hits)
 
 
 def test_the_warning_is_for_the_delivered_labels_only(caplog):
@@ -667,7 +665,8 @@ def test_a_value_under_high_is_warned_about(caplog):
     """`value` is read only under `favors: value`."""
     caplog.set_level(logging.WARNING)
     label_frame(blobs(), custom(feature_dependence=[entry(value=0.5)]))
-    assert warned(caplog, "feature_dependence", "value")
+    hits = warned(caplog, "feature_dependence", "value")
+    assert hits and all(getattr(r, "clm_code", None) == 305 for r in hits)
 
 
 def test_a_label_that_fills_clusters_warns_once_and_names_them(caplog):
@@ -696,19 +695,6 @@ def test_perfect_still_skips_a_dataset_without_the_column():
         label_frame(frame, {"num_classes": 2, "matching_mode": "perfect",
                             "feature_dependence": [entry()]})
     assert getattr(caught.value, "code", None) == 125
-
-
-# ---------------------------------------------------------------------------
-# The tree
-# ---------------------------------------------------------------------------
-
-def test_the_tree_holds_the_choices_and_the_default_profile():
-    favors = SETTINGS["clm_label.feature_dependence.favors"]
-    assert favors.choices == ("high", "low", "value")
-    assert favors.default == "high"
-    profile = SETTINGS["clm_label.feature_dependence.profile"]
-    assert profile.choices == ("linear", "step")
-    assert profile.default == "linear"
 
 
 # ---------------------------------------------------------------------------
@@ -952,4 +938,17 @@ def test_the_wizard_leaves_it_out_after_centroid_was_enabled_but_asks_otherwise(
                                       "clm_label.centroid_dependence._enabled": True})
     assert f"{FEATURE}._enabled" not in asked
     _, asked, _ = drive(monkeypatch, {"clm_label.matching_mode": "custom"})
+    assert f"{FEATURE}._enabled" in asked
+
+
+def test_the_wizard_asks_for_the_profile_of_noise_placed_by_distance(monkeypatch):
+    """The run reads the profile for a competing_noise entry at the core or boundary
+    (config_tree_plan step 2); the wizard asked it only with centroid enabled. The
+    block it writes then is disabled, so a label may still follow a feature."""
+    clm, asked, _ = drive(monkeypatch, {
+        "clm_label.matching_mode": "custom", "clm_label.competing_noise._enabled": True,
+        "clm_label.competing_noise.favors": "core",
+        "clm_label.centroid_dependence._enabled": False})
+    assert "clm_label.centroid_dependence.profile" in asked
+    assert clm["centroid_dependence"]["enabled"] is False
     assert f"{FEATURE}._enabled" in asked

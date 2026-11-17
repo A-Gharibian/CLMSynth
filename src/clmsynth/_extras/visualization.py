@@ -19,6 +19,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 
+from .._utils.write_files import write_then_replace
 from ..config_tree import default
 from ..metrics import clustering_ari, clustering_mcc
 
@@ -53,7 +54,7 @@ def _max_path_hint(output_path: str | None) -> str:
 
 
 def plot_feature_scatter(
-        df: pd.DataFrame,
+        df: pd.DataFrame | None,
         x_col: str,
         y_col: str,
         hue_col: str | None = None,
@@ -152,7 +153,11 @@ def plot_feature_scatter(
         if output_path:
             path = Path(output_path)
             path.parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(path, dpi=300)  # fixed figsize (no tight bbox) -> constant panel
+            # The format is named: the temporary file's name does not end in it.
+            image_format = path.suffix[1:] or plt.rcParams["savefig.format"]
+            # fixed figsize (no tight bbox) -> constant panel
+            write_then_replace(
+                path, lambda tmp: fig.savefig(tmp, dpi=300, format=image_format))
             log.info(f"Plot saved successfully to: '{path}'")
         else:
             plt.show()
@@ -173,7 +178,7 @@ def plot_feature_scatter(
             _RENDER_LOCK.release()
 
 
-def _clm_info_text(clm_config: dict) -> str:
+def _clm_info_text(clm_config: dict[str, Any]) -> str:
     """Right-margin annotation: the CLM knobs that shaped this generated label.
 
     Only what the engine read for it, so every value shown has passed its checks:
@@ -182,16 +187,15 @@ def _clm_info_text(clm_config: dict) -> str:
     for a label the engine generated.
     """
     mode = clm_config.get("matching_mode", "-")
-    props = clm_config.get("proportions") or []
     cd = clm_config.get("centroid_dependence", {}) or {}
     tm = clm_config.get("target_metric")
 
     lines = ["CLM config"]
     if mode == "perfect":
         lines.append("sizes: from clusters")
-    elif clm_config.get("balance") == "unbalanced" and props:
+    elif clm_config.get("balance") == "unbalanced" and clm_config.get("proportions"):
         lines.append("proportions:")
-        vals = [f"{float(p):.3g}" for p in props]
+        vals = [f"{float(p):.3g}" for p in clm_config["proportions"]]
         for i in range(0, len(vals), 2):          # two values per line
             lines.append("  " + ", ".join(vals[i:i + 2]))
     else:
@@ -216,7 +220,7 @@ def render_dataset_plots(final_df: pd.DataFrame, feature_cols: list[str],
                          png_dir: Path, stem: str, gt_col: str | None,
                          source_labeling: str, plot_title: str,
                          label_results: list[dict[str, Any]],
-                         clm_config: dict | None) -> bool:
+                         clm_config: dict[str, Any] | None) -> bool:
     """Best-effort PNGs for one dataset, during the run or afterwards from its
     folder (plot_run_folder). Returns whether a plot was drawn."""
     if len(feature_cols) < 2:

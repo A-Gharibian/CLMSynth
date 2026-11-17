@@ -11,9 +11,13 @@ Bands:
     3xx  Warning:                   non-fatal; logged, execution continues
 """
 
+import contextlib
+import contextvars
 import logging
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
 from typing import Final
+
+from .config_tree import choices
 
 __all__ = [
     "CODES",
@@ -23,6 +27,7 @@ __all__ = [
     "clm_infeasible",
     "clm_missing",
     "clm_warn",
+    "collect_codes",
 ]
 
 
@@ -38,7 +43,7 @@ class InfeasibleAllocationError(ValueError):
 
 class MissingConfigKey(KeyError):
     """A required config key is absent: a key with no default, so no dataset can
-    be labelled and _single_run.py stops the run. A KeyError subclass; the message
+    be labeled and _single_run.py stops the run. A KeyError subclass; the message
     carries the code.
     """
 
@@ -47,19 +52,24 @@ class MissingConfigKey(KeyError):
         return self.args[0] if self.args else ""
 
 
+def _listed(setting: str) -> str:
+    """A clm_label setting's choices as a "Supported: ..." list prints them."""
+    return ", ".join(choices(f"clm_label.{setting}"))
+
+
 CODES: Final[Mapping[int, str]] = {
     # --- 1xx : ValueError (invalid configuration) ---------------------------
-    101: "Unknown matching_mode {mode!r}. Supported: perfect, single, random, custom.",
+    101: f"Unknown matching_mode {{mode!r}}. Supported: {_listed('matching_mode')}.",
     102: "matching_mode 'perfect' requires M == K (got M={M}, K={K}).",
     103: "matching_mode 'single' requires M >= 2 and K >= 2 (got M={M}, K={K}).",
     104: "{where}: label {label!r} {problem} 0..{hi}.",
     105: "{where}: cluster id(s) {unknown} not found (available: {available}).",
     106: "proportions must sum to 1, got {total}.",
-    107: "Unknown skew_rule {skew_rule!r}. Supported: geometric, dominant_minority, dirichlet.",
-    108: "Unknown split_rule {split_rule!r}. Supported: proportional_to_size, equal.",
-    109: "Unknown spillover_rule {rule_name!r}. Supported: "
-         "proportional_to_marginal, uniform, concentrated.",
-    110: "Unknown profile {profile!r}. Supported: linear, exponential, step.",
+    107: f"Unknown skew_rule {{skew_rule!r}}. Supported: {_listed('skew_rule')}.",
+    108: f"Unknown split_rule {{split_rule!r}}. Supported: {_listed('split_rule')}.",
+    109: f"Unknown spillover_rule {{rule_name!r}}. Supported: {_listed('spillover_rule')}.",
+    110: f"Unknown profile {{profile!r}}. Supported: "
+         f"{_listed('centroid_dependence.profile')}.",
     111: "target_metric requires matching_mode in {{'single', 'custom'}} and M >= 2, K >= 2 "
          "(got {mode!r}, M={M}, K={K}): 'perfect' has no free recall_target to search over, "
          "'random' has no cluster-label structure to dial at all, and one class or one "
@@ -130,7 +140,7 @@ CODES: Final[Mapping[int, str]] = {
     133: "the dataset cannot be labelled: {problem}. Every point needs one cluster id, "
          "the ids must be integers, and coords, when given, needs one row per point.",
 
-    141:"{key} must be {expected}, got {value!r}. Values are not converted: YAML reads "
+    141: "{key} must be {expected}, got {value!r}. Values are not converted: YAML reads "
          "true/yes/no as booleans and .nan/.inf as numbers, and each was accepted as "
          "something else (true as 1, a quoted \"false\" as on, NaN past every range "
          "check, a mapping's keys as its values).",
@@ -213,6 +223,8 @@ CODES: Final[Mapping[int, str]] = {
     # One code, two blocks; {block} names which.
     311: "matching_mode='random': {block} ignored and not validated, labels "
          "are drawn with no regard to the clusters, so no point is placed by {by}.",
+    312: "{setting} is set but ignored: it is read only {when}. The labels are the same "
+         "as without it. Remove it to silence this warning.",
 }
 
 
@@ -244,6 +256,44 @@ def clm_missing(code: int, **kw: object) -> MissingConfigKey:
     return exc
 
 
+class _Block:
+    """One collect_codes block: its list, and whether the block is still open."""
+
+    def __init__(self) -> None:
+        self.codes: list[int] = []
+        self.open = True
+
+
+_COLLECTING: Final[contextvars.ContextVar[tuple[_Block, ...]]] = contextvars.ContextVar(
+    "clm_collecting", default=())
+
+
 def clm_warn(log: logging.Logger, code: int, **kw: object) -> None:
     """Emit a coded warning (3xx) through the caller's logger."""
     log.warning(_format(code, **kw), extra={"clm_code": code})
+    for block in _COLLECTING.get():
+        # A context copied while the block was open still names it after it closed.
+        if block.open:
+            block.codes.append(code)
+
+
+@contextlib.contextmanager
+def collect_codes() -> Generator[list[int], None, None]:
+    """Collects the code of every 3xx warning issued inside the block, in order,
+    regardless of the logging configuration visibility. Blocks nest. Errors are not collected:
+    they carry their code on the exception (``exc.code``). A warning issued in a worker
+    thread is collected only if the thread runs in the block's context: start its work
+    with ``contextvars.copy_context().run``.
+
+        with collect_codes() as codes:
+            generate_clm_labels(cluster_ids, coords, clm_config, seed=1)
+        if 306 in codes: ...
+    """
+    block = _Block()
+    _COLLECTING.set((*_COLLECTING.get(), block))
+    try:
+        yield block.codes
+    finally:
+        # Only this block leaves, so blocks may close in any order.
+        block.open = False
+        _COLLECTING.set(tuple(b for b in _COLLECTING.get() if b is not block))

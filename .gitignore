@@ -20,11 +20,10 @@ Py*Inspection.xml
 
 # ---------------------------------------------------------------------------
 # Adapted from GitHub's Python template.
-#
 # *** `*.log` IS DELIBERATELY OMITTED. DO NOT RE-ADD IT FROM THE TEMPLATE. ***
 # ---------------------------------------------------------------------------
 
-# Byte-compiled / optimized / DLL files
+# Compiled / optimized files
 __pycache__/
 *.py[codz]
 *$py.class
@@ -106,13 +105,18 @@ dmypy.json
 cython_debug/
 
 # Editors and IDEs
+.claude
+.ferrite/
 .idea
-.ferrite
 .idea/
 .spyderproject
 .spyproject
 .ropeproject
 tempCodeRunnerFile.py
-/ignore/Error_Warning_Codes.md
+.vscode
+.vscode/
+
+
 # PyPI configuration file
 .pypirc
+

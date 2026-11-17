@@ -33,11 +33,14 @@ What is checked, in order:
                        folder, log and exit status; a batch where some
                        configs wrote their datasets and others did not
                        exits 3.
+  cache folder         The dataset cache sits in the platform's cache folder,
+                       or the one CLMSYNTH_CACHE_DIR names, which keeps its mode.
 
 """
 
 import json
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -47,8 +50,8 @@ import pytest
 
 import clmsynth.__main__
 import clmsynth._extras.visualization
-from clmsynth import run_pipeline
-from clmsynth._input_sources import fabricated_generator
+from clmsynth import dataset_sources, run_pipeline
+from clmsynth._input_sources import dataset_cache, fabricated_generator
 from clmsynth._utils.cli_logging import SingleLineFilter, configure_cli_logging
 from clmsynth._utils.write_files import build_run_dir
 
@@ -490,3 +493,39 @@ def test_an_empty_config_path_is_a_usage_error(tmp_path, monkeypatch):
 
     assert exit_signal.value.code == 2
     assert not (tmp_path / "out").exists()
+
+
+# ---------------------------------------------------------------------------
+# Where the dataset cache is
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(("platform", "env", "expected"), [
+    ("win32", {"LOCALAPPDATA": "{tmp}/local"}, "{tmp}/local/clmsynth/Cache"),
+    ("win32", {}, "{home}/AppData/Local/clmsynth/Cache"),
+    ("darwin", {}, "{home}/Library/Caches/clmsynth"),
+    ("linux", {"XDG_CACHE_HOME": "{tmp}/xdg"}, "{tmp}/xdg/clmsynth"),
+    ("linux", {}, "{home}/.cache/clmsynth"),
+    ("linux", {"XDG_CACHE_HOME": "relative/xdg"}, "{home}/.cache/clmsynth"),
+    ("linux", {"CLMSYNTH_CACHE_DIR": "{tmp}/mine", "XDG_CACHE_HOME": "{tmp}/xdg"}, "{tmp}/mine"),
+    ("win32", {"CLMSYNTH_CACHE_DIR": "{tmp}/mine", "LOCALAPPDATA": "{tmp}/local"}, "{tmp}/mine"),
+    ("darwin", {"CLMSYNTH_CACHE_DIR": "~/mine"}, "{home}/mine"),
+], ids=["windows", "windows-no-localappdata", "macos", "linux-xdg", "linux", "linux-relative-xdg",
+        "variable-linux", "variable-windows", "variable-tilde"])
+def test_the_cache_folder_follows_the_platform(tmp_path, monkeypatch, platform, env, expected):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    fill = {"tmp": str(tmp_path), "home": str(home)}
+    environ = {key: value.format(**fill) for key, value in env.items()}
+    assert dataset_cache.cache_folder(environ, platform) == Path(expected.format(**fill))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file modes")
+def test_a_folder_named_by_the_variable_keeps_its_mode(tmp_path, network, monkeypatch):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o775)
+    monkeypatch.setenv(dataset_cache.ENV_VAR, str(shared))
+    assert dataset_sources.fetch("clustbench", "wut", "x1", cache=True) is not None
+    assert shared.stat().st_mode & 0o777 == 0o775
+    assert len(list(shared.iterdir())) == 1

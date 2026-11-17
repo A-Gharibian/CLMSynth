@@ -12,9 +12,11 @@ for several configs is `_extras/batch_run.py`, which starts the clmsynth command
 once per config.
 """
 
+import contextlib
 import difflib
 import json
 import logging
+import os
 import re
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -24,9 +26,14 @@ import numpy as np
 import pandas as pd
 
 from . import __version__
-from ._input_sources import FEATURE_RECORD, Source
+from ._input_sources import FEATURE_RECORD, SUITE_SEED_MIN, Source, dataset_cache
 from ._utils.cli_logging import LOG_FORMAT, SingleLineFilter, run_line
-from ._utils.compat import import_optional_dependency, is_installed, not_installed_message
+from ._utils.compat import (
+    import_failure,
+    import_optional_dependency,
+    is_installed,
+    not_installed_message,
+)
 from ._utils.signals import Terminated, sigterm_raises
 from ._utils.write_files import (
     build_run_dir,
@@ -37,8 +44,9 @@ from ._utils.write_files import (
     write_then_replace,
 )
 from .clm_errors import InfeasibleAllocationError, MissingConfigKey
-from .clm_label_engine import pair_reachable_range, validate_matching_ids
-from .config_tree import default
+from .clm_label_engine import pair_reachable_range
+from .config_tree import SETTINGS, Kind, default
+from .config_validation import _is_int, validate_matching_ids
 from .dataset_sources import (
     SOURCES,
     get_datasets_for_battery,
@@ -47,20 +55,9 @@ from .dataset_sources import (
     resolve_selection,
 )
 from .labeling import DatasetContext, LabelGenerator, build_context
-from .resolved_config import _is_int, plain, resolve_config
+from .resolved_config import plain, resolve_config
 
-__all__ = [
-    "FETCHERS",
-    "FETCHER_SUITE_KEYS",
-    "PER_DATASET_CODES",
-    "SEEDED_SOURCES",
-    "SOURCE_DISPLAY",
-    "SUITE_KEYS",
-    "load_config",
-    "precheck_byoc_matching_ids",
-    "run_pipeline",
-    "run_single",
-]
+__all__ = ["load_config", "run_pipeline", "run_single"]
 
 log: logging.Logger = logging.getLogger(__name__)
 
@@ -77,8 +74,20 @@ SEEDED_SOURCES = tuple(key for key, source in SOURCES.items() if source.seeded)
 # mdcgenpy.
 SUITE_KEYS = ("batteries", "datasets", "seed")
 FETCHER_SUITE_KEYS: Final[Mapping[str, tuple[str, ...]]] = {
-    key: source.suite_keys for key, source in SOURCES.items()
+    key: tuple(source.suite_keys) for key, source in SOURCES.items()
     if source.suite_keys is not None}
+
+# What each kind of setting accepts, as the command checks it after loading.
+_KINDS: Final[Mapping[Kind, tuple[str, Callable[[Any], bool]]]] = {
+    "text": ("text", lambda v: isinstance(v, str)),
+    "path": ("a folder path", lambda v: isinstance(v, (str, os.PathLike))),
+    "flag": ("true or false", lambda v: isinstance(v, (bool, np.bool_))),
+    "whole": ("a whole number", _is_int),
+    "count": ("a whole number of 1 or more", lambda v: _is_int(v) and v >= 1),
+    "names": ("a column name or a list of column names",
+              lambda v: isinstance(v, str) or (isinstance(v, (list, tuple))
+                                               and all(isinstance(x, str) for x in v))),
+}
 
 # Codes judged against one dataset's K, ids or features: that dataset is
 # skipped and the run goes on.
@@ -164,7 +173,7 @@ def _is_plain_name(name) -> bool:
     return not ("/" in text or "\\" in text or ":" in text)
 
 
-def _drop_path_shaped_names(jobs: list) -> list:
+def _drop_path_shaped_names(jobs: list[tuple[Any, Any]]) -> list[tuple[Any, Any]]:
     """Filter out jobs whose battery or dataset name is not a plain name."""
     kept = []
     for battery, dataset in jobs:
@@ -182,7 +191,7 @@ def _drop_path_shaped_names(jobs: list) -> list:
     return kept
 
 
-def _configured_cluster_ids(clm_config: dict) -> list:
+def _configured_cluster_ids(clm_config: dict[str, Any]) -> list[Any]:
     """Cluster ids the configuration itself names."""
     mode = clm_config.get("matching_mode")
     # A block of the wrong shape names no ids here; the engine refuses it ([CLM-141]).
@@ -226,7 +235,9 @@ def _precheck_matching_ids(source: Source, jobs: list[tuple[str, str]],
     try:
         validate_matching_ids(clm_config, _configured_cluster_ids(clm_config))
     except (ValueError, TypeError) as e:
-        log.critical(f"Configuration error, aborting run: {e}")
+        # An uncoded one is reported by run_single, with its type.
+        if getattr(e, "code", None) is not None:
+            log.critical(f"Configuration error, aborting run: {e}")
         raise
 
     failures = []
@@ -289,6 +300,10 @@ def load_config(config_path: str) -> dict[str, Any]:
         except json.JSONDecodeError as e:
             raise ConfigFileError(
                 f"Configuration file '{config_path}' is not valid JSON: {e}") from None
+        except (ValueError, RecursionError) as e:
+            # A number longer than Python converts, or nesting deeper than it follows.
+            raise ConfigFileError(
+                f"Configuration file '{config_path}' cannot be read as JSON: {e}") from None
     else:
         try:
             yaml = import_optional_dependency("yaml", f"Reading {config_path!r}")
@@ -299,6 +314,12 @@ def load_config(config_path: str) -> dict[str, Any]:
         except yaml.YAMLError as e:
             raise ConfigFileError(
                 f"Configuration file '{config_path}' is not valid YAML: {e}") from None
+        except (ValueError, TypeError, KeyError, AttributeError, RecursionError) as e:
+            # A value PyYAML cannot build, such as the date 2026-13-45, or nesting
+            # deeper than it follows.
+            raise ConfigFileError(
+                f"Configuration file '{config_path}' holds a value that cannot be read as "
+                f"YAML ({type(e).__name__}: {e}).") from None
     # An empty file parses to None; anything non-mapping means run_single's config.get(...)
     if not isinstance(config, dict):
         raise ConfigFileError(f"Configuration file '{config_path}' is empty or not a mapping "
@@ -317,8 +338,8 @@ def _write_resolved_config(path: Path, resolved: Mapping[str, Any]) -> None:
     """Written in the format of `path`, as load_config reads it. Best-effort, like
     the plots: the CSVs are the deliverable, so a record that cannot be written is
     reported and the run goes on."""
-    data = plain(resolved)
     try:
+        data = plain(resolved)
         if _is_json(path):
             text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
         else:
@@ -334,7 +355,7 @@ def _write_resolved_config(path: Path, resolved: Mapping[str, Any]) -> None:
     log.info(f"Saved resolved config: {path}")
 
 
-def _resolve_jobs(source: str, batteries: list[str], datasets_cfg, fetch_kwargs: dict) -> list:
+def _resolve_jobs(source: str, batteries: list[str], datasets_cfg, fetch_kwargs: dict[str, Any]) -> list[tuple[Any, Any]]:
     """(battery, dataset) pairs to run."""
     if any(is_heavy(source, b) for b in batteries):
         log.warning(f"Selection includes a heavy '{source}' battery: expect long fetch/generation times.")
@@ -484,12 +505,19 @@ def _write_dataset(context: DatasetContext, generator: LabelGenerator,
     plot_title = f"{friendly}: {battery}/{dataset}"
     gt_col = context.gt_column(generator.source_labeling)
 
-    label_results = context.scores(generator.source_labeling)
+    try:
+        label_results = context.scores(generator.source_labeling)
 
-    _write_summary_txt(txt_dir / f"{stem}.txt", friendly, context, generator, gt_col,
-                       label_results, seed_lines,
-                       pair_lines=_pair_range_lines(generator.clm_config, final_df, gt_col),
-                       feature_lines=feature_lines)
+        _write_summary_txt(txt_dir / f"{stem}.txt", friendly, context, generator, gt_col,
+                           label_results, seed_lines,
+                           pair_lines=_pair_range_lines(generator.clm_config, final_df, gt_col),
+                           feature_lines=feature_lines)
+    except BaseException:
+        # A dataset without its summary counts as skipped, and leaves no CSV.
+        with contextlib.suppress(OSError):
+            csv_path.unlink(missing_ok=True)
+            log.info(f"Removed: {csv_path} (its summary was not written)")
+        raise
 
     if render_plots:
         # Deferred so --no-viz never imports matplotlib.
@@ -547,7 +575,44 @@ def _unknown_suite_keys(source: str, suite: Mapping[str, Any]) -> str | None:
             f"'{source}_suite' takes: {', '.join(takes)}.")
 
 
-def _with_closest(names: list, known: list) -> str:
+def _wrong_type(where: str, value: Any, kind: Kind, lo: float | None = None,
+                hi: float | None = None) -> str | None:
+    """Why a setting's value is not of its kind or is out of its bounds, or None. An
+    empty value passes: what it means is decided where it is read."""
+    if value is None:
+        return None
+    description, accepts = _KINDS[kind]
+    if accepts(value) and (lo is None or value >= lo) and (hi is None or value <= hi):
+        return None
+    bounds = (f" from {lo}" if lo is not None else "") + (f" up to {hi}" if hi is not None else "")
+    return f"'{where}' must be {description}{bounds}, got {value!r}."
+
+
+def _config_type_problems(config: Mapping[str, Any], source: str) -> list[str]:
+    """The settings of the wrong kind or out of bounds: global_settings,
+    label_generation and the source's suite keys. The command checks them before it
+    makes a run folder, `run_pipeline` before it reads a dataset. The clm_label block
+    is the engine's to check, with its codes; a section that is not a mapping is
+    refused where it is read."""
+    found = []
+    for section in ("global_settings", "label_generation"):
+        block = config.get(section) or {}
+        if isinstance(block, Mapping):
+            found += [_wrong_type(path, block.get(path.partition(".")[2]), s.kind, s.lo, s.hi)
+                      for path, s in SETTINGS.items()
+                      if s.kind is not None and path.startswith(f"{section}.")]
+    declared = SOURCES.get(source)
+    suite = config.get(f"{source}_suite") or {}
+    if declared is not None and isinstance(suite, Mapping):
+        if declared.seeded:
+            found.append(_wrong_type(f"{source}_suite.seed", suite.get("seed"), "whole",
+                                     lo=SUITE_SEED_MIN))
+        found += [_wrong_type(f"{source}_suite.{key}", suite.get(key), kind)
+                  for key, kind in (declared.suite_keys or {}).items()]
+    return [problem for problem in found if problem is not None]
+
+
+def _with_closest(names: list[Any], known: list[Any]) -> str:
     """The names, quoted, each with the closest known one as a suggestion."""
     shown = []
     for name in names:
@@ -596,6 +661,10 @@ def _selection_problem(source: str, suite: Mapping[str, Any]) -> str | None:
     if datasets_cfg == "all":
         return (f"{where} is 'all', but '{source}' has no list of its own. Name the file "
                 "stems to read.")
+    nested = [repr(d) for d in datasets_cfg if isinstance(d, (list, tuple, set, Mapping))]
+    if nested:
+        return (f"{where} holds {', '.join(nested)} where a name is expected. Give each "
+                "file stem as one entry of the list.")
     shaped = [repr(d) for d in datasets_cfg if not _is_plain_name(d)]
     if shaped:
         return (f"{where} names {', '.join(shaped)}, not a plain name. A name is used to "
@@ -615,7 +684,7 @@ def _selection_problem(source: str, suite: Mapping[str, Any]) -> str | None:
 def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: Path,
                  png_dir: Path, txt_dir: Path, render_plots: bool = True,
                  config_out: Path | None = None,
-                 report: dict[str, int] | None = None) -> int:
+                 report: dict[str, int] | None = None, cache: bool = False) -> int:
     """Runs every configured dataset through fetch, label generation, and
     output writing. Returns the number of datasets processed without error.
     With `render_plots`, the plots are drawn when matplotlib is installed and
@@ -625,7 +694,13 @@ def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: 
     With `report`, a run that reaches its datasets fills it with how many were
     `resolved`, written with all labels (`full`) or not all (`short`), and
     skipped by a per-dataset `[CLM-###]` code (`refused`); it stays empty when
-    the config is refused first."""
+    the config is refused first.
+    A setting of the wrong kind or out of its bounds, in `global_settings` too, is
+    logged and the run returns 0 before a seed is resolved or a dataset fetched.
+    With `cache`, a clustbench or mdcgen dataset is read from the dataset cache
+    when it is there and kept in it when fetched, as `dataset_sources.fetch` does; a
+    cache folder the run cannot write is only read, and one it cannot make or read
+    turns the cache off with one warning."""
     if source not in FETCHERS:
         log.error(f"Unknown data_source '{source}'. Valid options: {list(FETCHERS)}")
         return 0
@@ -646,6 +721,11 @@ def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: 
     problem = _unknown_suite_keys(source, source_config)
     if problem:
         log.error(problem)
+        return 0
+    wrong = _config_type_problems(config, source)
+    for problem in wrong:
+        log.error(problem)
+    if wrong:
         return 0
 
     problem = _selection_problem(source, source_config)
@@ -685,6 +765,12 @@ def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: 
     if render_plots and not is_installed("matplotlib"):
         log.info(f"No plots: {not_installed_message('matplotlib', 'drawing them')}.")
         render_plots = False
+    elif render_plots and (failure := import_failure("matplotlib.pyplot")) is not None:
+        log.error(f"No plots: matplotlib is installed but cannot be imported "
+                  f"({type(failure).__name__}: {failure}).")
+        render_plots = False
+    if cache:
+        cache = dataset_cache.ready(SOURCES[source])
 
     fetcher = FETCHERS[source]
     n_full = 0
@@ -696,7 +782,10 @@ def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: 
         # name it.
         log.info(f"Dataset {i} of {len(jobs)}: {battery}/{dataset}")
         try:
-            df = fetcher(battery, dataset, fetch_seed, **fetch_kwargs)
+            # The cache takes the suite keys as one mapping: an mdcgen key may be named
+            # like one of dataset_sources.fetch's parameters.
+            df = (dataset_cache.fetch(SOURCES[source], battery, dataset, fetch_seed, fetch_kwargs)
+                  if cache else fetcher(battery, dataset, fetch_seed, **fetch_kwargs))
             if df is None:
                 continue
 
@@ -747,10 +836,11 @@ def _exit_status(outcome: Mapping[str, int]) -> int:
     return 0 if outcome["full"] == outcome["resolved"] else 3
 
 
-def run_single(config_path: str, render_plots: bool = True, keep_failed: bool = False) -> int:
+def run_single(config_path: str, render_plots: bool = True, keep_failed: bool = False,
+               cache: bool = False) -> int:
     """One config as one run folder. Returns the run's exit status: `_exit_status`,
     130 on Ctrl-C and 143 on SIGTERM. A run that wrote nothing leaves no folder,
-    unless `keep_failed`."""
+    unless `keep_failed`. `cache` is `run_pipeline`'s."""
     log.info("Starting Test Data Orchestrator...")
 
     try:
@@ -767,10 +857,19 @@ def run_single(config_path: str, render_plots: bool = True, keep_failed: bool = 
         # Status 2 before anything is created, like a config that cannot be loaded.
         log.critical(f"Configuration file '{config_path}': {problem}")
         return 2
-    data_source = str(global_settings.get("data_source",
-                                          default("global_settings.data_source"))).lower()
+    # An empty setting is absent.
+    raw_source = global_settings.get("data_source")
+    data_source = str(default("global_settings.data_source") if raw_source is None
+                      else raw_source).lower()
+    problems = _config_type_problems(config, data_source)
+    if problems:
+        for problem in problems:
+            log.critical(f"Configuration file '{config_path}': {problem}")
+        return 2
 
-    raw_output_dir = global_settings.get("output_dir", default("global_settings.output_dir"))
+    raw_output_dir = global_settings.get("output_dir")
+    if raw_output_dir is None:
+        raw_output_dir = default("global_settings.output_dir")
     try:
         base_dir = Path(raw_output_dir)
     except TypeError:
@@ -831,17 +930,19 @@ def run_single(config_path: str, render_plots: bool = True, keep_failed: bool = 
     with sigterm_raises():
         try:
             n_ok = run_pipeline(data_source, config, csv_dir, png_dir, info_dir, render_plots,
-                                config_out=config_file, report=outcome)
+                                config_out=config_file, report=outcome, cache=cache)
             exit_code = _exit_status(outcome)
             if n_ok == 0:
                 log.error("No datasets were successfully processed.")
             else:
                 log.info(f"Pipeline ready. {n_ok} dataset(s) processed. "
                          f"Output folder: '{run_dir}'.")
-        except (ValueError, TypeError, MissingConfigKey):
-            # Coded [CLM-1xx] or [CLM-2xx] configuration error re-raised by
-            # run_pipeline, or a malformed config value that reached an operator,
-            # which has already logged it at CRITICAL.
+        except (ValueError, TypeError, MissingConfigKey) as e:
+            # A coded [CLM-1xx] or [CLM-2xx] configuration error was logged at
+            # CRITICAL where run_pipeline re-raised it. An uncoded one is a malformed
+            # config value that reached an operator, and is reported here.
+            if getattr(e, "code", None) is None:
+                log.critical(f"Configuration error, aborting run: {type(e).__name__}: {e}")
             exit_code = 2
         except KeyboardInterrupt:
             log.warning("Interrupted; stopping.")
@@ -849,6 +950,10 @@ def run_single(config_path: str, render_plots: bool = True, keep_failed: bool = 
         except Terminated:
             log.warning("Terminated; stopping.")
             exit_code = 143
+        except Exception:
+            # Reported with its traceback; the run still ends as any failed run does.
+            log.critical("Unexpected error, aborting run.", exc_info=True)
+            exit_code = 1
         finally:
             # Closed before the folder can be removed: Windows keeps an open file.
             logging.getLogger().removeHandler(log_file)

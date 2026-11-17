@@ -32,10 +32,16 @@ What is checked:
   mdcgen presets       each preset passes only names mdcgenpy reads, with the
                        size and dimension it names; a run records which
                        features are noise
+  dataset cache        what makes an entry and when it is read; an entry that
+                       is stale, broken or racing, or a cache that cannot be
+                       written, is reported and the fetch goes on; the
+                       --cache and --no-cache switches of a run and a batch
 
 """
 
+import dataclasses
 import errno
+import io
 import json
 import logging
 import os
@@ -43,8 +49,11 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import types
+import urllib.error
 from concurrent.futures import ThreadPoolExecutor
+from email.message import Message
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -59,8 +68,9 @@ import clmsynth.__main__
 import clmsynth._extras.visualization
 import clmsynth._single_run
 from clmsynth import dataset_sources, load_config, run_pipeline
+from clmsynth._extras import batch_run
 from clmsynth._extras.visualization import plot_feature_scatter
-from clmsynth._input_sources import clustbench_source
+from clmsynth._input_sources import clustbench_source, dataset_cache
 from clmsynth._input_sources.mdcgen_source import MDCGEN_CONFIGS
 from clmsynth._single_run import ConfigFileError, run_single
 from clmsynth._utils.write_files import discard_failed_run, resolved_for_report
@@ -1101,7 +1111,8 @@ def test_resolve_seed_keeps_the_documented_default():
     assert _resolve_seed({}, "x.seed") == (42, "default; the key is absent")
     assert _resolve_seed({"seed": 7}, "x.seed") == (7, "set in the config")
     drawn, how = _resolve_seed({"seed": None}, "x.seed")
-    assert isinstance(drawn, int) and 0 <= drawn < 2**31
+    assert isinstance(drawn, int)
+    assert 0 <= drawn < 2**31
     assert how == "drawn at random; the key has no value"
 
 
@@ -1220,26 +1231,6 @@ def run_main(tmp_path, monkeypatch, config, *flags):
     return code, sorted(p.name for p in out.iterdir()) if out.is_dir() else []
 
 
-def test_a_run_that_writes_nothing_leaves_no_run_folder(tmp_path, monkeypatch):
-    """The reported case: byoc pointed at a folder holding no such CSV.
-
-    The run names the missing file and refuses the selection, so no dataset is
-    processed and it exits 2. What used to survive that was a timestamped
-    folder containing an empty csv/, png/ and txt/ and a copy of the config --
-    indistinguishable at a glance from a run that succeeded, and picked up by
-    anything globbing the output directory. --keep-failed keeps it on request.
-    """
-    inputs = tmp_path / "input"
-    inputs.mkdir()
-
-    code, survivors = run_main(
-        tmp_path, monkeypatch, minimal_byoc_config(inputs, tmp_path / "out", ["no_such_dataset"])
-    )
-
-    assert code == 2, f"expected exit 2 for a dataset that is not there, got {code}"
-    assert survivors == [], f"an empty run folder survived: {survivors}"
-
-
 def test_a_coded_config_error_leaves_no_run_folder(tmp_path, monkeypatch):
     """Exit 2, and the same guarantee.
 
@@ -1298,27 +1289,6 @@ def test_keep_failed_keeps_the_config_and_the_log_of_why(tmp_path, monkeypatch):
     assert kept == [f"info/{run_dir.name}.json", f"info/{run_dir.name}.log"], kept
     log_text = (run_dir / "info" / f"{run_dir.name}.log").read_text(encoding="utf-8")
     assert "[CLM-105]" in log_text, log_text
-
-
-def test_a_successful_run_keeps_everything_it_wrote(tmp_path, monkeypatch):
-    """The other direction, and the one that matters if the predicate is wrong.
-
-    A cleanup that is too eager deletes real output, which is far worse than the
-    litter it was written to prevent. Asserted through the same entry point, so
-    it is the shipped path being checked and not a helper in isolation.
-    """
-    inputs = tmp_path / "input"
-    inputs.mkdir()
-    write_byoc_batch(inputs, [("solo", 20)])
-
-    code, survivors = run_main(
-        tmp_path, monkeypatch, minimal_byoc_config(inputs, tmp_path / "out", ["solo"])
-    )
-
-    assert code == 0, f"expected a clean run, got exit {code}"
-    assert len(survivors) == 1, f"the successful run's folder is missing: {survivors}"
-    written = sorted(p.name for p in (tmp_path / "out" / survivors[0] / "csv").iterdir())
-    assert written, "the run folder survived but its csv/ is empty"
 
 
 def test_a_run_folder_is_named_by_run_and_its_files_by_dataset(tmp_path, monkeypatch, caplog):
@@ -1600,19 +1570,156 @@ def one_fabricated(tmp_path, **suite):
     }
 
 
-@pytest.mark.parametrize(("value", "statuses"), [(5, {2}), (None, {0, 2})],
-                         ids=["a-number", "valueless"])
-def test_an_output_dir_that_is_not_text_is_no_traceback(value, statuses, tmp_path, monkeypatch,
-                                                        caplog):
+def test_an_output_dir_that_is_not_text_is_no_traceback(tmp_path, caplog):
     """`Path(5)` was an uncaught TypeError before anything was logged: exit 2,
-    naming the key. A valueless `output_dir:` runs or is refused, never a traceback."""
+    naming the key."""
+    config = one_fabricated(tmp_path)
+    config["global_settings"]["output_dir"] = 5
+    with caplog.at_level(logging.ERROR, logger="clmsynth"):
+        assert run_status(tmp_path, config) == 2
+    assert "output_dir" in caplog.text
+
+
+@pytest.mark.parametrize(("section", "key"), [
+    ("global_settings", "data_source"), ("global_settings", "output_dir"),
+    ("label_generation", "n_labels"), ("label_generation", "source_labeling"),
+])
+def test_an_empty_setting_takes_its_default(section, key, tmp_path, monkeypatch):
+    """Settled 2026-11-12. An empty data_source was read as the source "none",
+    output_dir was refused, n_labels skipped every dataset with "unexpected
+    TypeError", and source_labeling wrote each dataset without its label."""
     monkeypatch.chdir(tmp_path)
     config = one_fabricated(tmp_path)
-    config["global_settings"]["output_dir"] = value
+    config[section][key] = None
+    assert run_status(tmp_path, config) == 0
+    written = next(tmp_path.rglob("csv/*.csv"))
+    assert "Label_0" in written.read_text(encoding="utf-8").splitlines()[0]
+
+
+@pytest.mark.parametrize(("section", "key", "value"), [
+    ("label_generation", "n_labels", "2"),
+    ("label_generation", "n_labels", 2.5),
+    ("label_generation", "n_labels", [1]),
+    ("label_generation", "n_labels", 10_001),
+    ("label_generation", "seed", "42"),
+    ("label_generation", "seed", [1]),
+    ("label_generation", "seed", 1.5),
+    ("label_generation", "seed", -1),
+    ("fabricated_data_suite", "seed", "42"),
+    ("fabricated_data_suite", "seed", [1]),
+    ("fabricated_data_suite", "seed", 1.5),
+    ("fabricated_data_suite", "seed", -1),
+    ("fabricated_data_suite", "n_samples", "100"),
+    ("fabricated_data_suite", "n_samples", 0),
+    ("fabricated_data_suite", "n_samples", -5),
+])
+def test_a_setting_of_the_wrong_type_is_refused_naming_it(section, key, value, tmp_path,
+                                                          caplog):
+    """Checked once the config is loaded, by the command (Settled, 2026-11-10 and
+    12): these skipped every dataset with a raw "unexpected TypeError", or a seed
+    crashed in numpy; n_labels has a ceiling of 10 000. Nothing is created."""
+    config = one_fabricated(tmp_path)
+    config[section][key] = value
     with caplog.at_level(logging.ERROR, logger="clmsynth"):
-        status = run_status(tmp_path, config)
-    assert status in statuses
-    assert status != 2 or "output_dir" in caplog.text
+        assert run_status(tmp_path, config) == 2
+    assert f"{section}.{key}" in caplog.text, caplog.text
+    assert not (tmp_path / "OUT").exists()
+
+
+@pytest.fixture
+def pipeline_calls(monkeypatch):
+    """What a run does once its config is accepted, recorded: a seed resolved, a
+    dataset fetched, the config or a dataset written. Fetching returns no dataset
+    and the writers do nothing."""
+    calls = mock.Mock()
+    calls.resolve_seed.side_effect = clmsynth._single_run._resolve_seed
+    calls.fetch.return_value = None
+    monkeypatch.setattr(clmsynth._single_run, "_resolve_seed", calls.resolve_seed)
+    monkeypatch.setitem(clmsynth._single_run.FETCHERS, "fabricated_data", calls.fetch)
+    monkeypatch.setattr(clmsynth._single_run, "_write_resolved_config", calls.write_config)
+    monkeypatch.setattr(clmsynth._single_run, "_write_dataset", calls.write_dataset)
+    return calls
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        pytest.param({"label_generation": {"n_labels": "2"}}, id="quoted-label-count"),
+        pytest.param({"label_generation": {"n_labels": True}}, id="boolean-label-count"),
+        pytest.param({"label_generation": {"n_labels": 1.5}}, id="fractional-label-count"),
+        pytest.param({"label_generation": {"n_labels": 10001}}, id="excessive-label-count"),
+        pytest.param({"label_generation": {"seed": "42"}}, id="quoted-label-seed"),
+        pytest.param({"label_generation": {"seed": True}}, id="boolean-label-seed"),
+        pytest.param({"label_generation": {"seed": 1.5}}, id="fractional-label-seed"),
+        pytest.param({"label_generation": {"seed": -1}}, id="negative-label-seed"),
+        pytest.param({"fabricated_data_suite": {"seed": "42"}}, id="quoted-source-seed"),
+        pytest.param({"fabricated_data_suite": {"seed": True}}, id="boolean-source-seed"),
+        pytest.param({"fabricated_data_suite": {"seed": 1.5}}, id="fractional-source-seed"),
+        pytest.param({"fabricated_data_suite": {"seed": -1}}, id="negative-source-seed"),
+        pytest.param({"fabricated_data_suite": {"n_samples": "40"}}, id="quoted-sample-count"),
+        pytest.param({"fabricated_data_suite": {"n_samples": True}}, id="boolean-sample-count"),
+        pytest.param({"fabricated_data_suite": {"n_samples": 40.5}}, id="fractional-sample-count"),
+        pytest.param({"global_settings": {"data_source": 42}}, id="nontext-global-source"),
+        pytest.param({"global_settings": {"output_dir": 42}}, id="invalid-global-output-dir"),
+        pytest.param({"label_generation": {"source_labeling": 42}}, id="nontext-source-labeling"),
+        pytest.param(
+            {"label_generation": {"n_labels": True, "seed": -1},
+             "fabricated_data_suite": {"n_samples": "40"}},
+            id="all-problems-reported",
+        ),
+    ],
+)
+def test_a_direct_call_refuses_a_setting_of_the_wrong_type_before_any_work(
+    changes, pipeline_calls, tmp_path, caplog
+):
+    """`run_pipeline` checks what the command checks. A direct call fetched the
+    dataset and then reported an "unexpected TypeError", read `n_labels: true` as one
+    label, or failed on a seed in numpy. Every problem is logged and the call returns
+    0, its count of datasets processed. A `global_settings` value is checked too,
+    though the source and the folders are arguments."""
+    config: dict[str, dict[str, Any]] = {
+        "global_settings": {"data_source": "fabricated_data", "output_dir": str(tmp_path)},
+        "fabricated_data_suite": {
+            "batteries": ["fabricated"], "datasets": ["baseline_2class"],
+            "seed": 42, "n_samples": 40,
+        },
+        "label_generation": {
+            "n_labels": 1, "source_labeling": "labels0", "seed": 42,
+            "clm_label": {"num_classes": 2, "matching_mode": "random"},
+        },
+    }
+    for section, values in changes.items():
+        config[section].update(values)
+    report: dict[str, int] = {}
+
+    with caplog.at_level(logging.ERROR, logger="clmsynth"):
+        processed = run_pipeline(
+            "fabricated_data", config, tmp_path / "csv", tmp_path / "png", tmp_path / "txt",
+            render_plots=False, config_out=tmp_path / "resolved.json", report=report,
+        )
+
+    assert processed == 0, "the return value counts the datasets processed"
+    for section, values in changes.items():
+        for key in values:
+            assert f"{section}.{key}" in caplog.text, caplog.text
+    assert report == {}, "a refused config does not reach its datasets"
+    assert not pipeline_calls.mock_calls, "refused before a seed, a fetch or a write"
+
+
+def test_a_direct_call_runs_the_source_it_is_given(tmp_path):
+    """`global_settings.data_source` names another source: the argument decides."""
+    config, csv_dir, png_dir, txt_dir = _fabricated_config(tmp_path, dict(_ONE_DATASET))
+    config["global_settings"]["data_source"] = "clustbench"
+    assert run_pipeline("fabricated_data", config, csv_dir, png_dir, txt_dir, False) == 1
+
+
+def test_a_byoc_input_dir_that_is_not_text_is_refused_naming_it(tmp_path, caplog):
+    """The folder check raised on it and nothing said so: exit 2 with no message."""
+    config = minimal_byoc_config(tmp_path, tmp_path / "OUT", ["data"])
+    config["byoc_suite"]["input_dir"] = 5
+    with caplog.at_level(logging.ERROR, logger="clmsynth"):
+        assert run_status(tmp_path, config) == 2
+    assert "byoc_suite.input_dir" in caplog.text, caplog.text
 
 
 def test_an_output_dir_with_a_null_character_is_reported(tmp_path, caplog):
@@ -1876,6 +1983,22 @@ def test_clustbench_timeout_is_passed_to_urlopen():
     assert captured["timeout"] is not None, "fetch would inherit the OS default timeout"
 
 
+@pytest.mark.parametrize("status", [404, 503])
+def test_clustbench_closes_an_http_error_response(status):
+    """urlopen raises HTTPError before a response context manager can close it."""
+    body = io.BytesIO(b"unavailable")
+    error = urllib.error.HTTPError("https://example.invalid/data.gz", status,
+                                   "unavailable", Message(), body)
+    with (
+        mock.patch("clmsynth._input_sources.clustbench_source.urllib.request.urlopen",
+                   side_effect=error),
+        pytest.raises(urllib.error.HTTPError) as caught,
+    ):
+        clustbench_source._loadtxt_url(error.url)
+    assert caught.value is error
+    assert body.closed
+
+
 @pytest.mark.parametrize(
     "url",
     ["file:///etc/passwd", "data:text/plain,x", "/tmp/local.gz"],
@@ -1924,8 +2047,9 @@ MDCGEN_SIZES = [("basic", "blobs_2d_5c", 1000, 2), ("basic", "blobs_3d_10c", 200
 
 @pytest.fixture
 def mdcgenpy(monkeypatch):
-    """A stand-in for mdcgenpy.clusters; yields the keyword arguments of each call."""
-    calls = []
+    """A stand-in for mdcgenpy.clusters, its data drawn from the seed; yields the
+    keyword arguments of each call."""
+    calls: list[dict[str, Any]] = []
 
     class ClusterGenerator:
         def __init__(self, **kwargs):
@@ -1937,7 +2061,8 @@ def mdcgenpy(monkeypatch):
             n = int(self.kwargs.get("n_samples", 100))
             d = int(self.kwargs.get("n_feats", 2))
             parts = len(k) if isinstance(k, (list, tuple)) else int(k)
-            return np.random.default_rng(0).normal(size=(n, d)), np.arange(n) % parts
+            rng = np.random.default_rng(self.kwargs.get("seed", 0))
+            return rng.normal(size=(n, d)), np.arange(n) % parts
 
     package, clusters = types.ModuleType("mdcgenpy"), types.ModuleType("mdcgenpy.clusters")
     vars(clusters)["ClusterGenerator"] = ClusterGenerator
@@ -2014,3 +2139,373 @@ def test_mdcgen_records_which_features_are_noise(tmp_path, mdcgenpy):
     run_pipeline("mdcgen", config, csv_dir, png_dir, txt_dir, render_plots=False)
     summary = next(txt_dir.glob("*.txt")).read_text(encoding="utf-8")
     assert re.search(r"(?is)cluster structure.*noise", summary)
+
+
+# ---------------------------------------------------------------------------
+# The dataset cache
+#
+# The network is stubbed (`network` in conftest.py), and each test keeps its
+# cache in a folder of its own (`cache_dir`).
+# ---------------------------------------------------------------------------
+
+MIRROR = "https://mirror.example/data"
+
+
+def cached(dataset: str = "x1", **suite: Any) -> pd.DataFrame:
+    """A clustbench dataset fetched with the cache on."""
+    frame = dataset_sources.fetch("clustbench", "wut", dataset, cache=True, **suite)
+    assert frame is not None
+    return frame
+
+
+def files(folder: Path) -> list[Path]:
+    """Every file under `folder`, temporary ones included."""
+    return sorted(p for p in folder.rglob("*") if p.is_file()) if folder.exists() else []
+
+
+def feature_order(frame: pd.DataFrame) -> tuple[bool, bool]:
+    context = clmsynth.labeling.build_context("clustbench", "wut", "x1", frame)
+    coords = context.features.to_numpy()
+    return coords.flags.c_contiguous, coords.flags.f_contiguous
+
+
+def test_a_dataset_read_back_is_the_frame_the_source_gave(cache_dir, network):
+    """Names, types, index and attrs, and the memory order of the features the engine
+    reads: rows summed in another order round differently and move a centroid."""
+    fetched = cached()
+    requested = len(network)
+    read = cached()
+    assert len(network) == requested
+    assert list(read.columns) == list(fetched.columns)
+    assert list(read.dtypes) == list(fetched.dtypes)
+    assert isinstance(read.index, pd.RangeIndex) and read.index.equals(fetched.index)
+    assert read.attrs == fetched.attrs
+    assert feature_order(read) == feature_order(fetched)
+
+
+def test_the_entry_is_one_file_in_the_cache_folder(cache_dir, network, tmp_path, monkeypatch):
+    """Each run of a batch is a process of its own, so the entry is a file, and nothing
+    is left beside it or in the working folder."""
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    cached()
+    [entry] = files(cache_dir)
+    assert entry.parent == cache_dir and entry.suffix == ".npz"
+    assert entry.name.startswith("clustbench-wut-x1-")
+    assert not any(work.iterdir())
+
+
+def test_each_dataset_has_its_own_entry(cache_dir, network):
+    x1, x2 = cached("x1"), cached("x2")
+    assert not x1.equals(x2)
+    requested = len(network)
+    assert cached("x2").equals(x2) and cached("x1").equals(x1)
+    assert len(network) == requested
+    assert len(files(cache_dir)) == 2
+
+
+def test_another_base_url_has_its_own_entry(cache_dir, network):
+    """The URL is the version: a mirror or another release is another entry."""
+    default = cached()
+    requested = len(network)
+    mirror = cached(base_url=MIRROR)
+    assert len(network) > requested and not mirror.equals(default)
+    requested = len(network)
+    assert cached().equals(default) and cached(base_url=MIRROR).equals(mirror)
+    assert len(network) == requested
+
+
+def test_without_the_switch_the_cache_is_neither_read_nor_written(cache_dir, network):
+    dataset_sources.fetch("clustbench", "wut", "x1")
+    assert files(cache_dir) == []
+    cached()
+    requested = len(network)
+    dataset_sources.fetch("clustbench", "wut", "x1")
+    assert len(network) > requested
+
+
+def test_is_cached_answers_without_fetching(cache_dir, network):
+    assert not dataset_sources.is_cached("clustbench", "wut", "x1")
+    cached()
+    requested = len(network)
+    assert dataset_sources.is_cached("clustbench", "wut", "x1")
+    assert not dataset_sources.is_cached("clustbench", "wut", "x2")
+    assert not dataset_sources.is_cached("clustbench", "wut", "x1", base_url=MIRROR)
+    assert len(network) == requested
+
+
+def test_an_mdcgen_entry_is_one_per_seed_and_setting_and_keeps_its_record(cache_dir, mdcgenpy):
+    def generated(seed: int, **suite: Any) -> pd.DataFrame:
+        frame = dataset_sources.fetch("mdcgen", "noise_dims", "noise_5d_2n", seed=seed,
+                                      cache=True, **suite)
+        assert frame is not None
+        return frame
+
+    first = generated(3)
+    again = generated(3)
+    assert len(mdcgenpy) == 1
+    assert again.equals(first) and again.attrs == first.attrs and first.attrs
+    assert not generated(4).equals(first) and len(mdcgenpy) == 2
+    generated(3, n_samples=500)
+    assert len(mdcgenpy) == 3
+    assert dataset_sources.is_cached("mdcgen", "noise_dims", "noise_5d_2n", seed=4)
+    assert not dataset_sources.is_cached("mdcgen", "noise_dims", "noise_5d_2n", seed=5)
+
+
+def test_byoc_and_fabricated_data_are_never_cached(cache_dir, tmp_path, monkeypatch):
+    """fabricated_data stubbed with a frame the cache could hold, so the source is what
+    keeps it out."""
+    rows = [(float(i), float(i % 4), i % 3) for i in range(12)]
+    pd.DataFrame(rows, columns=["f1", "f2", "cluster"]).to_csv(tmp_path / "pts.csv", index=False)
+    byoc: dict[str, Any] = {"input_dir": str(tmp_path), "cluster_column": "cluster"}
+    assert dataset_sources.fetch("byoc", "local", "pts", cache=True, **byoc) is not None
+    plain = pd.DataFrame({"Feature_1": [0.1, 0.2, 0.3, 0.4], "GroundTruth_labels0": [0, 1, 0, 1]})
+    monkeypatch.setitem(dataset_sources.SOURCES, "fabricated_data", dataclasses.replace(
+        dataset_sources.SOURCES["fabricated_data"], fetch=lambda *a, **k: plain))
+    assert dataset_sources.fetch("fabricated_data", "fabricated", "baseline_2class",
+                                 cache=True) is plain
+    assert files(cache_dir) == []
+    assert not dataset_sources.is_cached("byoc", "local", "pts", **byoc)
+    assert not dataset_sources.is_cached("fabricated_data", "fabricated", "baseline_2class")
+
+
+def test_a_fetch_that_warns_is_not_kept(cache_dir, network, caplog):
+    """A labeling lost to the network leaves the frame short of it. Kept, every later
+    run would read it without that labeling, and without the warning."""
+    network.flaky.add(".labels1.gz")
+    with caplog.at_level(logging.INFO, logger="clmsynth"):
+        short = cached()
+    assert "GroundTruth_labels1" not in short.columns
+    assert files(cache_dir) == []
+    assert "'wut/x1' is not cached: its fetch logged a warning" in caplog.text
+    whole = cached()
+    assert "GroundTruth_labels1" in whole.columns and len(files(cache_dir)) == 1
+
+
+def test_a_setting_that_is_not_plain_data_is_not_cached(cache_dir, mdcgenpy, caplog):
+    """json writes a tuple like a list, and a source may read it otherwise."""
+    with caplog.at_level(logging.INFO, logger="clmsynth"):
+        frame = dataset_sources.fetch("mdcgen", "varied", "sizes_2d_4c", seed=3, cache=True,
+                                      k=(500, 300, 150, 50))
+    assert frame is not None and files(cache_dir) == []
+    assert "is not cached: a setting of mdcgen_suite is not plain data" in caplog.text
+
+
+def test_an_entry_kept_by_another_clmsynth_is_fetched_again_and_replaced(
+        cache_dir, network, monkeypatch):
+    cached()
+    [entry] = files(cache_dir)
+    monkeypatch.setattr(clmsynth, "__version__", "0.0.0")
+    assert not dataset_sources.is_cached("clustbench", "wut", "x1")
+    requested = len(network)
+    cached()
+    assert len(network) > requested
+    assert files(cache_dir) == [entry]
+    assert dataset_sources.is_cached("clustbench", "wut", "x1")
+
+
+def test_an_mdcgen_entry_goes_stale_when_a_package_mdcgenpy_needs_changes(
+        cache_dir, mdcgenpy, monkeypatch):
+    """mdcgenpy rotates its clusters with scipy, so a new scipy can draw other data."""
+    installed = {"mdcgenpy": "1.0.0", "six": "1.16.0", "scipy": "1.13.0"}
+    monkeypatch.setattr(dataset_cache.metadata, "requires", lambda name: [
+        "numpy>=1.20", "six", "scipy (>=1.0)", "pytest ; extra == 'test'"])
+    monkeypatch.setattr(dataset_cache, "_installed", installed.get)
+    assert set(dataset_cache._versions(dataset_sources.SOURCES["mdcgen"])) == {
+        "clmsynth", "numpy", "pandas", "mdcgenpy", "six", "scipy"}
+    dataset_sources.fetch("mdcgen", "basic", "blobs_2d_5c", seed=3, cache=True)
+    assert dataset_sources.is_cached("mdcgen", "basic", "blobs_2d_5c", seed=3)
+    installed["scipy"] = "1.14.0"
+    assert not dataset_sources.is_cached("mdcgen", "basic", "blobs_2d_5c", seed=3)
+    dataset_sources.fetch("mdcgen", "basic", "blobs_2d_5c", seed=3, cache=True)
+    assert len(mdcgenpy) == 2
+
+
+def test_a_broken_entry_is_reported_fetched_again_and_replaced(cache_dir, network, caplog):
+    first = cached()
+    [entry] = files(cache_dir)
+    entry.write_bytes(b"not an entry")
+    requested = len(network)
+    with caplog.at_level(logging.WARNING, logger="clmsynth"):
+        assert cached().equals(first)
+    assert len(network) > requested
+    assert "Cannot read the cached 'wut/x1'" in caplog.text
+    assert dataset_sources.is_cached("clustbench", "wut", "x1")
+
+
+def test_a_cache_folder_that_cannot_be_made_is_reported_and_the_fetch_goes_on(
+        tmp_path, network, monkeypatch, caplog):
+    blocker = tmp_path / "a-file"
+    blocker.write_text("")
+    monkeypatch.setenv(dataset_cache.ENV_VAR, str(blocker / "cache"))
+    with caplog.at_level(logging.WARNING, logger="clmsynth"):
+        frame = dataset_sources.fetch("clustbench", "wut", "x1", cache=True)
+    assert frame is not None and len(frame) == network.rows
+    assert "Could not keep 'wut/x1' in the dataset cache" in caplog.text
+
+
+def test_a_write_that_fails_leaves_no_file_behind(cache_dir, network, monkeypatch, caplog):
+    def disk_full(file, **arrays):
+        file.write(b"half an entry")
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(np, "savez_compressed", disk_full)
+    with caplog.at_level(logging.WARNING, logger="clmsynth"):
+        assert len(cached()) == network.rows
+    assert files(cache_dir) == []
+    assert "No space left on device" in caplog.text
+
+
+def test_a_frame_the_cache_cannot_hold_is_returned_and_not_kept(cache_dir, monkeypatch, caplog):
+    frame = pd.DataFrame({"Feature_1": [0.1, 0.2, 0.3], "Feature_2": ["a", "b", "c"],
+                          "GroundTruth_labels0": [0, 1, 0]})
+    source = dataclasses.replace(dataset_sources.SOURCES["clustbench"],
+                                 fetch=lambda *a, **k: frame)
+    monkeypatch.setitem(dataset_sources.SOURCES, "clustbench", source)
+    with caplog.at_level(logging.INFO, logger="clmsynth"):
+        assert dataset_sources.fetch("clustbench", "wut", "x1", cache=True) is frame
+    assert files(cache_dir) == []
+    assert "'wut/x1' is not cached: a column holds something other than numbers" in caplog.text
+
+
+def test_fetches_racing_for_one_entry_all_get_the_dataset(cache_dir, network):
+    """Two runs of a batch can fetch one dataset at once. Nothing locks: the last
+    write wins, and a replace that meets a reader on Windows is reported, not raised."""
+    start = threading.Barrier(8)
+    frames: list[pd.DataFrame | None] = [None] * 8
+    errors: list[BaseException] = []
+
+    def fetch(i: int) -> None:
+        try:
+            start.wait()
+            frames[i] = dataset_sources.fetch("clustbench", "wut", "x1", cache=True)
+        except BaseException as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=fetch, args=(i,)) for i in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+    first = frames[0]
+    assert first is not None and all(f is not None and f.equals(first) for f in frames)
+    [entry] = files(cache_dir)
+    assert entry.suffix == ".npz"
+    assert dataset_sources.is_cached("clustbench", "wut", "x1")
+
+
+def clustbench_config(datasets=("x1", "x2")) -> dict[str, Any]:
+    """Two labels per dataset, placed by distance to the centroid."""
+    return {
+        "global_settings": {"data_source": "clustbench"},
+        "clustbench_suite": {"batteries": ["wut"], "datasets": list(datasets)},
+        "label_generation": {"n_labels": 2, "seed": 7, "clm_label": {
+            "num_classes": 3, "matching_mode": "custom",
+            "assignment_matrix": [{"clusters": [k], "label": k, "recall_target": 0.7}
+                                  for k in range(3)],
+            "centroid_dependence": {"enabled": True, "favors": "core"},
+        }},
+    }
+
+
+def run_cached(config: dict[str, Any], folder: Path, cache: bool) -> tuple[int, dict[str, int]]:
+    """run_pipeline into `folder`: (datasets written, its report)."""
+    csv_dir, png_dir, txt_dir = (folder / sub for sub in ("csv", "png", "txt"))
+    for d in (csv_dir, png_dir, txt_dir):
+        d.mkdir(parents=True)
+    report: dict[str, int] = {}
+    n = run_pipeline(config["global_settings"]["data_source"], config, csv_dir, png_dir,
+                     txt_dir, render_plots=False, report=report, cache=cache)
+    return n, report
+
+
+def test_a_run_whose_cache_folder_cannot_be_made_runs_without_it(
+        tmp_path, network, monkeypatch, caplog):
+    blocker = tmp_path / "a-file"
+    blocker.write_text("")
+    monkeypatch.setenv(dataset_cache.ENV_VAR, str(blocker / "cache"))
+    with caplog.at_level(logging.WARNING, logger="clmsynth"):
+        n, report = run_cached(clustbench_config(), tmp_path / "run", cache=True)
+    assert n == 2 and report["full"] == 2
+    about_the_cache = [r.getMessage() for r in caplog.records
+                       if r.levelno >= logging.WARNING and "cache" in r.getMessage()]
+    assert len(about_the_cache) == 1 and "off for this run" in about_the_cache[0]
+
+
+@pytest.mark.parametrize("cache", [False, True], ids=["cache-off", "cache-on"])
+def test_an_mdcgen_suite_key_named_like_a_parameter_still_reaches_mdcgenpy(
+        cache_dir, mdcgenpy, tmp_path, cache):
+    config = {
+        "global_settings": {"data_source": "mdcgen"},
+        "mdcgen_suite": {"batteries": ["basic"], "datasets": ["blobs_2d_5c"], "seed": 3,
+                         "cache": True, "source": "x"},
+        "label_generation": {"n_labels": 1, "clm_label": {"num_classes": 5,
+                                                          "matching_mode": "perfect"}},
+    }
+    assert run_cached(config, tmp_path / "run", cache=cache)[0] == 1
+    assert mdcgenpy[0]["cache"] is True and mdcgenpy[0]["source"] == "x"
+
+
+def test_a_run_of_a_source_that_is_not_cached_leaves_the_cache_alone(cache_dir, tmp_path, caplog):
+    config = {
+        "global_settings": {"data_source": "fabricated_data"},
+        "fabricated_data_suite": {"batteries": ["fabricated"], "datasets": ["baseline_4class"]},
+        "label_generation": {"n_labels": 1, "clm_label": {"num_classes": 4,
+                                                          "matching_mode": "perfect"}},
+    }
+    with caplog.at_level(logging.INFO, logger="clmsynth"):
+        assert run_cached(config, tmp_path / "run", cache=True)[0] == 1
+    assert not cache_dir.exists()
+    assert "Dataset cache" not in caplog.text
+
+
+@pytest.mark.parametrize(("argv", "expected"), [
+    (["one.json"], False),
+    (["one.json", "--cache"], True),
+    (["one.json", "--no-cache"], False),
+    (["a.json", "b.json"], True),
+    (["a.json", "b.json", "--cache"], True),
+    (["a.json", "b.json", "--no-cache"], False),
+], ids=["single", "single-cache", "single-no-cache", "batch", "batch-cache", "batch-no-cache"])
+def test_a_single_run_caches_only_with_the_flag_and_a_batch_unless_told_not_to(
+        monkeypatch, argv, expected):
+    seen: dict[str, Any] = {}
+
+    def started(*args: Any, **kwargs: Any) -> int:
+        seen.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(clmsynth.__main__, "run_single", started)
+    monkeypatch.setattr(batch_run, "run_batch", started)
+    monkeypatch.setattr(clmsynth.__main__, "configure_cli_logging", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["clmsynth", *argv])
+    try:
+        clmsynth.__main__.main()
+    except SystemExit as stopped:
+        assert stopped.code == 0
+    assert seen["cache"] is expected
+
+
+def test_cache_and_no_cache_together_are_a_usage_error():
+    with pytest.raises(SystemExit) as stopped:
+        clmsynth.__main__._parse_args(["one.json", "--cache", "--no-cache"])
+    assert stopped.value.code == 2
+
+
+@pytest.mark.parametrize(("cache", "flag", "other"), [(True, "--cache", "--no-cache"),
+                                                      (False, "--no-cache", "--cache")])
+def test_a_batch_tells_every_run_whether_to_cache(monkeypatch, caplog, cache, flag, other):
+    told: list[list[str]] = []
+
+    def ran(config: str, flags: list[str], env: dict[str, str]) -> tuple[int, str]:
+        told.append(flags)
+        return 0, ""
+
+    monkeypatch.setattr(batch_run, "_run_config", ran)
+    with caplog.at_level(logging.INFO, logger="clmsynth"):
+        assert batch_run.run_batch(["a.json", "b.json"], 1, cache=cache) == 0
+    assert len(told) == 2 and all(flag in flags and other not in flags for flags in told)
+    folder = f"Dataset cache: '{dataset_cache.cache_folder()}'; --no-cache"
+    assert (folder in caplog.text) is cache

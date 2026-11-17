@@ -14,7 +14,7 @@ INFO - Generating offline fabricated_data dataset 'baseline_4class' (n=800, seed
 INFO - Generating synthetic data (Seed: 42)...
 INFO - Applying perfect separation ground truth to categorical labels...
 INFO - Generated fabricated_data 'baseline_4class': 800 rows, 6 feature(s), 1 labeling(s) (cluster ids 0..3).
-ERROR - Skipping label generation for fabricated/baseline_4class: [CLM-150] Infeasible rule: label 0 needs 320 of its 400 points in clusters [0], which hold only 200 points total. The rule's recall_target=0.8 is feasible up to 0.500 here. Lower it, or make label 0 smaller; its 400 points come from proportions[0] = 0.5.
+ERROR - Skipping label generation for fabricated/baseline_4class: [CLM-150] Infeasible rule: label 0 needs 320 of its 400 points in clusters [0], which hold only 200 points total. The rule's recall_target=0.8 is feasible up to 0.502 here. Lower it, or make label 0 smaller; its 400 points come from proportions[0] = 0.5.
 INFO - Saved: _scratch/CLM-150/{run}/csv/fabricated_data-fabricated-baseline_4class.csv
 INFO - Saved summary: _scratch/CLM-150/{run}/info/fabricated_data-fabricated-baseline_4class.txt
 WARNING - Of the 1 resolved dataset(s): 0 written with all labels, 1 written with not all labels, 0 skipped (see the errors above).

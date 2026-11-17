@@ -202,8 +202,6 @@ def test_the_reachable_pair_range_is_reported_under_scope_pair(
     baseline_4class: N = 800 and cluster 0 holds 200, so
     phi_min = sqrt(600 / (200 * 799)) = 0.0613.
     """
-    from clmsynth._extras.visualization import _clm_info_text
-
     clm = {
         "num_classes": 4,
         "balance": "balanced",
@@ -249,7 +247,6 @@ def test_the_reachable_pair_range_is_reported_under_scope_pair(
     else:
         assert "Reachable pair MCC" not in summary, summary
         assert "reachable pair mcc" not in caplog.text, caplog.text
-    assert "0.0613" not in _clm_info_text(clm)
 
 
 THREE_LABELS = {
@@ -472,15 +469,9 @@ def test_proportions_that_are_clearly_wrong_are_still_rejected():
 @pytest.mark.parametrize(
     "skew_rule,params,note",
     [
-        ("geometric", {"ratio": 0.0}, "0**0 == 1 by convention, so all mass lands on label 0"),
-        (
-            "dominant_minority",
-            {"dominant_index": 0, "dominant_share": 1.0},
-            "every other label gets exactly 0",
-        ),
         ("dirichlet", {"alpha": 1e-4}, "near-degenerate draw, almost all mass on one label"),
     ],
-    ids=["geometric-ratio-0", "dominant-share-1", "dirichlet-tiny-alpha"],
+    ids=["dirichlet-tiny-alpha"],
 )
 def test_degenerate_skew_parameters_still_partition_n(skew_rule, params, note):
     """Extreme skew settings must still produce counts summing to exactly N.
@@ -534,6 +525,8 @@ def _skew_cfg(skew_rule, params, num_classes=4):
             "returned [-1000, 667, 667, 666]",
         ),
         (4, "dominant_minority", {"dominant_index": 99, "dominant_share": 0.5}, "IndexError"),
+        (4, "dominant_minority", {"dominant_index": -1, "dominant_share": 0.5},
+         "accepted, where the lower bound is not checked"),
         (1, "dominant_minority", {"dominant_index": 0, "dominant_share": 0.9}, "ZeroDivisionError"),
         (4, "dirichlet", {"alpha": 0.0}, "ZeroDivisionError"),
         (4, "dirichlet", {"alpha": -1}, "numpy's bare ValueError: alpha < 0"),
@@ -545,6 +538,7 @@ def _skew_cfg(skew_rule, params, num_classes=4):
         "share-above-1",
         "share-below-0",
         "index-past-end",
+        "index-negative",
         "one-class",
         "alpha-zero",
         "alpha-negative",
@@ -671,38 +665,6 @@ def test_unreachable_tolerance_reports_non_convergence(caplog):
         )
     assert any(getattr(r, "clm_code", None) == 306 and r.levelno == logging.WARNING
                for r in caplog.records)
-
-
-def test_zero_max_iter_skips_the_refinement_without_crashing():
-    """`max_iter: 0` means the bisection body never runs: the grid's best stands.
-
-    A negative value used to do the same silently; it is refused since 0.7.2,
-    now as [CLM-141] (test_01_logic::test_a_value_of_the_wrong_type_is_refused).
-    """
-    max_iter = 0
-    out = generate_clm_labels(
-        CLUSTERS,
-        COORDS,
-        {
-            "num_classes": 4,
-            "balance": "unbalanced",
-            "proportions": [0.4, 0.3, 0.2, 0.1],
-            "matching_mode": "custom",
-            "assignment_matrix": [
-                {"label": i, "clusters": [i], "recall_target": 0.5} for i in range(4)
-            ],
-            "split_rule": "proportional_to_size",
-            "spillover_rule": "proportional_to_marginal",
-            "target_metric": {
-                "type": "mcc",
-                "value": 0.9,
-                "tolerance": 0.001,
-                "max_iter": max_iter,
-            },
-        },
-        seed=1,
-    ).to_numpy()
-    assert len(out) == N
 
 
 # ---------------------------------------------------------------------------

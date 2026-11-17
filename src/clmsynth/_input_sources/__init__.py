@@ -9,7 +9,12 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-__all__ = ["FEATURE_RECORD", "Source"]
+from ..config_tree import Kind
+
+__all__ = ["FEATURE_RECORD", "SUITE_SEED_MIN", "Source"]
+
+# The lowest `<source>_suite.seed` a seeded source takes.
+SUITE_SEED_MIN = 0
 
 # The key in a fetched frame's `attrs` under which a source records which features
 # carry cluster structure, as lines for the dataset's summary txt.
@@ -28,9 +33,10 @@ class Source:
     datasets: Mapping[str, Sequence[str]]       # battery -> dataset names
     heavy: AbstractSet[str]                     # batteries slow or large to fetch
     seeded: bool                                # the suite seed reaches the data
-    suite_keys: tuple[str, ...] | None          # its own <source>_suite keys; None: unchecked
+    # Its own <source>_suite keys and what each takes; None: unchecked, passed on
+    suite_keys: Mapping[str, Kind] | None
     fetch: Callable[..., pd.DataFrame | None]   # (battery, dataset, seed, **suite keys)
-    licence: str | None                         # upstream licence and what to cite; None: no upstream
+    licence: str | None                         # upstream license and what to cite; None: no upstream
     needs: str | None = None                    # optional package it imports
     # (**suite keys) -> one extra log line about the input
     describe: Callable[..., str] | None = None

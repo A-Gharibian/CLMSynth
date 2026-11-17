@@ -14,9 +14,10 @@ import pandas as pd
 
 from .byoc_source import TAG_PREFIX
 from .clm_errors import clm_missing
-from .clm_label_engine import _FEATURE_COLUMNS, _check_config, generate_clm_labels
+from .clm_label_engine import _check_config, generate_clm_labels
 from .config_tree import default
 from .metrics import clustering_ari, clustering_mcc
+from .spatial_placement import _FEATURE_COLUMNS
 
 __all__ = ["DatasetContext", "LabelGenerator", "build_context", "generate_additional_labels"]
 
@@ -68,6 +69,8 @@ class DatasetContext:
         self.features = self.features.reset_index(drop=True)
         self.n_rows: int = len(self.features)
         self.ground_truths = {name: self._align(s, name) for name, s in self.ground_truths.items()}
+        self.generated_labels = {name: self._align(s, name)
+                                 for name, s in self.generated_labels.items()}
         self.tags = self.tags.reset_index(drop=True)
         if len(self.tags.columns) and len(self.tags) != self.n_rows:
             raise ValueError(
@@ -98,8 +101,11 @@ class DatasetContext:
         log.info(f"[{self._tag}] Attached generated label '{name}'.")
 
     def next_generated_label_name(self) -> str:
-        """Next output column name: Label_0, Label_1, ..."""
-        return f"Label_{len(self.generated_labels)}"
+        """Next output column name: Label_0, Label_1, ..., past any name already attached."""
+        i = len(self.generated_labels)
+        while f"Label_{i}" in self.generated_labels:
+            i += 1
+        return f"Label_{i}"
 
     def gt_column_name(self, name: str) -> str:
         """Output/display name for a ground-truth labeling, by position: the
@@ -166,8 +172,9 @@ def build_context(source: str, battery: str, dataset: str, df: pd.DataFrame) -> 
         With ``generated_labels`` still empty.
     """
     # A name that is not text, as pd.DataFrame(X) gives its columns, carries no prefix.
-    gt_cols = [c for c in df.columns if isinstance(c, str) and c.startswith("GroundTruth_")]
-    tag_cols = [c for c in df.columns if isinstance(c, str) and c.startswith(TAG_PREFIX)]
+    columns: pd.Index[Any] = df.columns
+    gt_cols = [c for c in columns if isinstance(c, str) and c.startswith("GroundTruth_")]
+    tag_cols = [c for c in columns if isinstance(c, str) and c.startswith(TAG_PREFIX)]
     feature_cols = [c for c in df.columns
                     if c not in gt_cols and c not in tag_cols and c != "Cohort_Class"]
     ground_truths = {c.removeprefix("GroundTruth_"): df[c] for c in gt_cols}
@@ -193,13 +200,14 @@ class LabelGenerator:
     @classmethod
     def from_block(cls, block: Mapping[str, Any], seed: int) -> Self:
         """From a config's label_generation block, with the run's default for
-        each setting it leaves out. `seed` comes resolved: an absent or valueless
-        seed is decided by the run."""
-        return cls(block.get("clm_label"),
-                   n_labels=block.get("n_labels", default("label_generation.n_labels")),
-                   source_labeling=block.get("source_labeling",
-                                             default("label_generation.source_labeling")),
-                   seed=seed)
+        each setting it leaves out or leaves empty. `seed` comes resolved: an
+        absent or valueless seed is decided by the run."""
+        def given(key: str) -> Any:
+            value = block.get(key)
+            return default(f"label_generation.{key}") if value is None else value
+
+        return cls(block.get("clm_label"), n_labels=given("n_labels"),
+                   source_labeling=given("source_labeling"), seed=seed)
 
     def check(self) -> None:
         """The checks on clm_label that need no dataset: [CLM-207] when it is
@@ -223,7 +231,8 @@ class LabelGenerator:
         cluster_labels = context.ground_truths[self.source_labeling].to_numpy()
         coords = context.features.to_numpy()
         clm_config = _require_clm_config(self.clm_config)
-        if isinstance(clm_config, Mapping) and clm_config.get("feature_dependence"):
+        # Keep the runtime guard for callers that bypass configuration validation.
+        if isinstance(clm_config, Mapping) and clm_config.get("feature_dependence"):  # type: ignore[redundant-expr]
             # to_numpy() drops the names an entry finds its feature by.
             clm_config = {**clm_config, _FEATURE_COLUMNS: list(context.features.columns)}
 

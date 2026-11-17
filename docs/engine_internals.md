@@ -1,4 +1,6 @@
-<a href="https://archive.softwareheritage.org/browse/origin/?origin_url=https://doi.org/10.5281/zenodo.21759538">
+# Engine Internals
+
+<a href="https://archive.softwareheritage.org/browse/origin/?origin_url=https://doi.org/10.5281/zenodo.21759538" title="Software Heritage">
   <img src="https://archive.softwareheritage.org/badge/origin/https://doi.org/10.5281/zenodo.21759538/" alt="Archived | https://doi.org/10.5281/zenodo.21759538"/>
 </a>
 
@@ -19,13 +21,15 @@ composes the stages below and returns a `pandas.Series` of length `N`, values in
 
 ```
 rng          = default_rng(seed)
-M = cfg.num_classes; assert 1 <= M <= MAX_CARDINALITY (64)  # [CLM-126]
+M = cfg.num_classes; assert 1 <= M <= MAX_CARDINALITY (64)  # [CLM-201/126]
+matching_mode in {perfect, single, random, custom}         # [CLM-202/101]
+an array in a setting the mode reads: that setting's code  # _refuse_arrays
 cluster_ids  = sorted unique of c(x);  K = len(cluster_ids)
 assert K <= MAX_CARDINALITY (64)                             # [CLM-127]
 cluster_sizes[k] = |{x : c(x)=k}|
-m_counts     = resolve_label_counts(cfg, N, rng)          # Stage 1
-if perfect:  m_counts = cluster sizes (requires M==K)     # Stage 2
-if random:   return draw-from-p, shuffled (early return)  # Stage 2
+if perfect:  m_counts = cluster sizes (requires M==K)     # Stage 2 [CLM-102]
+else:        m_counts = resolve_label_counts(cfg, N, rng) # Stage 1
+if random:   return m_counts' labels, shuffled (early return)  # Stage 2
 validate spillover concentrated_labels [CLM-128], centroid favors [CLM-129],
     target_metric (incl. scope==pair guards [CLM-123/124/130]),
     and the feature_dependence entries [CLM-207/104/141], then their columns [CLM-125]
@@ -48,9 +52,8 @@ per-dataset significance limit is future work (a dedicated module, or manual
 guidance), not something this guard attempts. The check lives once, at this
 top-level entry point, the same place as the `_ensure_coords` geometry guard;
 lower-level helpers like `resolve_label_counts` remain uncapped when called
-directly. As a side effect, `num_classes=0` now fails here with a coded error
-instead of the unguarded `1/M` `ZeroDivisionError` it used to hit inside
-`resolve_label_counts`.
+directly. `num_classes: 0` is refused here too, before `resolve_label_counts`
+would divide by it.
 
 ## Stage 1: Label totals (`resolve_label_counts`, `_skewed_proportions`, `_largest_remainder_counts`)
 
@@ -88,7 +91,7 @@ Every mode is normalized to a uniform list of `Rule(label, clusters, recall_targ
   `recall * m_{l*}` points of `l*`, rounded, are placed inside `k*` (default recall
   `1`), so every `l*`-labeled point lies in `k*`; feasibility needs
   `|k*| >= floor(recall * m_{l*})`.
-- **`random`**: `L(x)` drawn from the resolved proportions, independent of
+- **`random`**: the resolved label counts in random order, independent of
   `c(x)`; returns early (no allocation/placement). Rejects `target_metric`
   (`[CLM-114]`) and `competing_noise` (`[CLM-115]`).
 - **`custom`**: one `Rule` per `assignment_matrix` row: route a
@@ -185,7 +188,9 @@ with `steepness`, or deterministic top-`tp` `step`), favouring `core` or
 profile -> `[CLM-110]`. The target labels are placed first; the `competing_noise`
 labels follow, each with its own core/boundary/random placement
 (`favors_overrides`), in the points the targets leave. The order changes which
-points carry a label, never how many per cluster.
+points carry a label, never how many per cluster. A distance score whose span is
+below 1e-6 or above 1e150 is rescaled to 0..1 before the pick (`_off_scale`,
+`_unit_span`), so the pick's fixed 1e-9 tie-break stays below its differences.
 
 With `feature_dependence`, a label follows one feature column instead. Each entry
 gives its label a score per point, on the raw values of the column:
@@ -196,7 +201,7 @@ gives its label a score per point, on the raw values of the column:
 | `value`       | minus the distance to `value` |
 
 and a profile, `linear` or `step`, picked by the same weighted sampling
-(`feature_scores`). The order inside a cluster is then: the entries, in the order
+(`feature_scores`), the score always rescaled to 0..1 over the points still available. The order inside a cluster is then: the entries, in the order
 written; the other target labels, biggest first, at random; the `competing_noise`
 labels; spillover. An entry goes first because a bigger label placed at random
 before it would take the points it favors. It moves only the points the matching
@@ -341,7 +346,6 @@ clustbench_suite:                  # key must be "{data_source}_suite"
 label_generation:
   n_labels: 1                       # produces Label_0, Label_1, ...
   source_labeling: "labels0"        # which ground-truth labeling to key CLM math off
-  noise: 0.15                       # fallback only, if clm_label is omitted
   seed: 42
 
   clm_label:
@@ -415,29 +419,34 @@ label_generation:
 
 ## Project layout
 
-| File                                          | Role                                                                                                                                                                                                                                                                                                        |
-|-----------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `../src/clmsynth/__main__.py`                 | The `clmsynth` command: reads the command line, defaults to `test_data_config.yaml`, hands the configs to a single run or a batch. The only place that exits the process.                                                                                                                                  |
-| `../src/clmsynth/_single_run.py`              | One config, one run folder: `run_single`, `run_pipeline`, `load_config`, the summary txt and the run's exit status.                                                                                                                                                                                         |
-| `../src/clmsynth/main.py`                     | Deprecated import path, removed in 0.7.8.                                                                                                                                                                                                                                                                   |
-| `../src/clmsynth/dataset_sources.py`          | The interface to the data sources and their shared registry: the `fabricated_data` wrapper, and the `clustbench` and `mdcgen` names re-exported from the two modules below. For byoc see below.                                                                                                            |
-| `../src/clmsynth/_input_sources/clustbench_source.py` | Online `clustbench` source: Gagolewski benchmark downloads, with the battery list, descriptions and dataset names.                                                                                                                                                                                  |
-| `../src/clmsynth/_input_sources/mdcgen_source.py` | Synthetic `mdcgen` source: named presets generated by `mdcgenpy`, with their batteries and descriptions; outliers only where named, and the record of which features are noise.                                                                                                                                                                                                |
-| `../src/clmsynth/_input_sources/fabricated_generator.py` | Feature generator with perfect-separation labels, used by the `fabricated_data` source.                                                                                                                                                                                                          |
-| `../src/clmsynth/byoc_source.py`              | Bring-your-own-clusters: imports user-provided CSV, with optional min-max standardization on import.                                                                                                                                                                                                        |
-| `../src/clmsynth/labeling.py`                 | `DatasetContext` holds features, every ground-truth labeling, every generated label and its report, and scores the labels. `LabelGenerator` is the run's `label_generation` block: it calls the CLM engine once per label, with seed + i; without a `clm_label` block it refuses with [CLM-207].              |
-| `../src/clmsynth/clm_label_engine.py`         | The CLM label-assignment: proportions/skew, matching modes, recall targets, allocation, spillover, competing noise, spatial placement, and the global target-metric solver.                                                                                                                                 |
-| `../src/clmsynth/clm_errors.py`               | Diagnostics: message templates keyed by a `[CLM-###]` code (1xx `ValueError`, 15x `InfeasibleAllocationError`, 3xx warnings) plus helpers.                                                                                                                                                                  |
-| `../src/clmsynth/config_tree.py`              | Each setting's default, accepted values and bounds, read by the engine, `resolved_config.py` and `_single_run.py`.                                                                                                                                                                                                  |
-| `../src/clmsynth/metrics.py`                  | Three standalone measures: `clustering_mcc` (multiclass MCC / Gorodkin R_K, Hungarian-matched to maximise R_K), `clustering_mcc_pair` (the quantity `target_metric.scope: pair` with `type: mcc`), and `clustering_ari` (adjusted Rand index). `MetricCeilings`: the size ceiling. |
-| `../src/clmsynth/_extras/visualization.py`    | Scatter-plot, annotated with measured MCC/ARI and the generating config. Drawn only with matplotlib installed.                                                                                                                                                                                              |
-| `../src/clmsynth/_extras/batch_run.py`        | Several configs, or a folder of them, as a batch: each config in its own process.                                                                                                                                                                                                                         |
-| `../src/clmsynth/_config_gen/config_template.py` | The YAML template string used to render a config.                                                                                                                                                                                                                                                           |
-| `../src/clmsynth/_config_gen/generate_config.py` | Renders `config_template.py` into a runnable config YAML from the upstream payload file it is given.                                                                                                                                                                            |
-| `examples/hepta_payload.yaml`                 | Example upstream payload: the minimal facts `generate_config.py` renders into the full config.                                                                                                                                                                                                              |
-| `examples/example_config.json`                | Offline example config: `fabricated_data`, JSON, runs on the base install with no network.                                                                                                                                                                                                                  |
-| `../src/clmsynth/_config_gen/config_wizard.py` | Interactive CLI wizard: asks and explains every option, then writes a config YAML.                                                                                                                                                                                                                          |
-| `../src/clmsynth/_config_gen/questions.py`    | The wizard's `Question`s per prompt (wording, help, default, range, `visible_when`), read by `config_wizard.py`.                                                                                                                                                                                            |
+| File                                                     | Role                                                                                                                                                                                                                                                                                                                                      |
+|----------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `../src/clmsynth/__main__.py`                            | The `clmsynth` command: reads the command line, defaults to `test_data_config.yaml`, hands the configs to a single run or a batch. The only place that exits the process.                                                                                                                                                                 |
+| `../src/clmsynth/_single_run.py`                         | One config, one run folder: `run_single`, `run_pipeline`, `load_config`, the summary txt and the run's exit status.                                                                                                                                                                                                                       |
+| `../src/clmsynth/dataset_sources.py`                     | The interface to the data sources: `SOURCES`, built from each source's declaration, `fetch` for one dataset of any source, through the dataset cache with `cache=True`, `is_cached`, and the `fabricated_data` wrapper. For byoc see below.                                                                                               |
+| `../src/clmsynth/_input_sources/__init__.py`             | `Source`, the declaration each data source makes, and `FEATURE_RECORD`.                                                                                                                                                                                                                                                                   |
+| `../src/clmsynth/_input_sources/dataset_cache.py`        | The dataset cache: its folder, one `.npz` file per clustbench or mdcgen dataset, read without pickle, written whole then swapped in (a link is replaced, never followed), and fetched again when the versions differ. A frame is kept only when its fetch did not warn and it reads back the same, its features in the same memory order. |
+| `../src/clmsynth/_input_sources/clustbench_source.py`    | Online `clustbench` source: Gagolewski benchmark downloads, with the battery list, descriptions and dataset names.                                                                                                                                                                                                                        |
+| `../src/clmsynth/_input_sources/mdcgen_source.py`        | Synthetic `mdcgen` source: named presets generated by `mdcgenpy`, with their batteries and descriptions; outliers only where named, and the record of which features are noise.                                                                                                                                                           |
+| `../src/clmsynth/_input_sources/fabricated_generator.py` | Feature generator with perfect-separation labels, used by the `fabricated_data` source.                                                                                                                                                                                                                                                   |
+| `../src/clmsynth/byoc_source.py`                         | Bring-your-own-clusters: imports user-provided CSV, with optional min-max standardization on import.                                                                                                                                                                                                                                      |
+| `../src/clmsynth/labeling.py`                            | `DatasetContext` holds features, every ground-truth labeling, every generated label and its report, and scores the labels. `LabelGenerator` is the run's `label_generation` block: it calls the CLM engine once per label, with seed + i; without a `clm_label` block it refuses with [CLM-207].                                          |
+| `../src/clmsynth/clm_label_engine.py`                    | The CLM label-assignment: proportions/skew, matching modes, recall targets, allocation, spillover, competing noise, spatial placement, and the global target-metric solver.                                                                                                                                                               |
+| `../src/clmsynth/config_validation.py`                   | The checks on a `clm_label` block and what they build for the engine: the matching rules from `single_match` or `assignment_matrix`, and a `competing_noise` or `feature_dependence` entry with its defaults. The engine calls them, in its order.                                                                                        |
+| `../src/clmsynth/spatial_placement.py`                   | Which points of a cluster carry each label, once the engine has counted them: whether the coordinates can be used, the score a `feature_dependence` entry gives each point, and the choice of the points, by their distance to the centroid, by a feature or at random.                                                                   |
+| `../src/clmsynth/clm_errors.py`                          | Diagnostics: message templates keyed by a `[CLM-###]` code (1xx `ValueError`, 15x `InfeasibleAllocationError`, 2xx `MissingConfigKey`, 3xx warnings) plus helpers.                                                                                                                                                                        |
+| `../src/clmsynth/config_tree.py`                         | Each setting's default, accepted values, bounds, codes, when the run reads it and what the command checks after loading; an empty setting reads as absent. Read by the engine, `config_validation.py`, `spatial_placement.py`, `clm_errors.py`, `resolved_config.py`, `labeling.py`, `_single_run.py`, the wizard and `clmsynth-config`.  |
+| `../src/clmsynth/resolved_config.py`                     | `resolve_config`: the config a run used, as the run read it, written to the run's `info/`. `plain` turns numpy values and paths into YAML/JSON types.                                                                                                                                                                                     |
+| `../src/clmsynth/metrics.py`                             | Three standalone measures: `clustering_mcc` (multiclass MCC / Gorodkin R_K, Hungarian-matched to maximise R_K), `clustering_mcc_pair` (the quantity `target_metric.scope: pair` with `type: mcc`), and `clustering_ari` (adjusted Rand index). `MetricCeilings`: the size ceiling.                                                        |
+| `../src/clmsynth/_extras/visualization.py`               | Scatter-plot, annotated with measured MCC/ARI and the generating config. Drawn only with matplotlib installed.                                                                                                                                                                                                                            |
+| `../src/clmsynth/_extras/batch_run.py`                   | Several configs, or a folder of them, as a batch: each config in its own process.                                                                                                                                                                                                                                                         |
+| `../src/clmsynth/_utils/`                                | Shared by the run and the config tools: optional imports (`compat.py`), console logging (`cli_logging.py`), files written whole (`write_files.py`), SIGTERM handling (`signals.py`).                                                                                                                                                      |
+| `../src/clmsynth/_config_gen/config_template.py`         | The YAML template string used to render a config.                                                                                                                                                                                                                                                                                         |
+| `../src/clmsynth/_config_gen/generate_config.py`         | Renders `config_template.py` into a runnable config YAML from the upstream payload file it is given.                                                                                                                                                                                                                                      |
+| `examples/hepta_payload.yaml`                            | Example upstream payload: the minimal facts `generate_config.py` renders into the full config.                                                                                                                                                                                                                                            |
+| `examples/example_config.json`                           | Offline example config: `fabricated_data`, JSON, runs on the base install with no network.                                                                                                                                                                                                                                                |
+| `../src/clmsynth/_config_gen/config_wizard.py`           | Interactive CLI wizard: asks and explains every option, then writes a config YAML.                                                                                                                                                                                                                                                        |
+| `../src/clmsynth/_config_gen/questions.py`               | The wizard's `Question`s per prompt (wording, help, default, range, `visible_when`), read by `config_wizard.py`.                                                                                                                                                                                                                          |
 
 
 - The global solver builds rules, runs allocation **and assignment**, then

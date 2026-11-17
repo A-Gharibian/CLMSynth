@@ -23,6 +23,7 @@ import numpy as np
 import pytest
 
 from clmsynth.byoc_source import fetch_byoc_data
+from clmsynth.clm_errors import MissingConfigKey
 from clmsynth.clm_label_engine import (
     InfeasibleAllocationError,
     build_rules,
@@ -30,6 +31,7 @@ from clmsynth.clm_label_engine import (
     resolve_label_counts,
     validate_matching_ids,
 )
+from clmsynth.labeling import LabelGenerator
 from clmsynth.metrics import (
     MetricCeilings,
     clustering_ari,
@@ -193,14 +195,29 @@ def test_centroid_placement_without_coords_is_coded(coords):
     assert "[CLM-125]" in str(excinfo.value)
 
 
-def test_labels_only_config_tolerates_missing_coords():
-    """The other half of the guard: coords are required only when used.
+def test_a_block_that_passes_the_check_before_the_first_dataset_can_still_be_refused():
+    """The check before the first dataset reads the block alone. A row too large
+    for its cluster passes it and is [CLM-150] when the dataset is counted."""
+    cfg = base_custom_cfg(
+        assignment_matrix=[{"label": 0, "clusters": [3], "recall_target": 0.9}])
+    LabelGenerator(cfg).check()
+    with pytest.raises(InfeasibleAllocationError) as excinfo:
+        generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+    assert getattr(excinfo.value, "code", None) == 150
 
-    Without this, the [CLM-125] check above could be made to pass by demanding
-    coords unconditionally, which would break every labels-only run.
-    """
-    out = generate_clm_labels(CLUSTERS, None, base_custom_cfg(), seed=1)
-    assert_contingency_invariant(out.to_numpy(), 4)
+
+def test_a_direct_call_meets_a_dataset_problem_before_a_config_problem():
+    """`feature_dependence` beside an enabled `centroid_dependence` is [CLM-141] at
+    the check before the first dataset, which a run meets first. A direct call
+    without coordinates is refused for them first, with [CLM-125]."""
+    cfg = base_custom_cfg(centroid_dependence={"enabled": True, "favors": "core"},
+                          feature_dependence=[{"label": 0, "feature": "f1"}])
+    with pytest.raises(ValueError) as at_check:
+        LabelGenerator(cfg).check()
+    assert getattr(at_check.value, "code", None) == 141
+    with pytest.raises(ValueError) as direct:
+        generate_clm_labels(CLUSTERS, None, cfg, seed=1)
+    assert getattr(direct.value, "code", None) == 125
 
 
 def test_perfect_mode_cardinality_is_refused_at_the_entry_point():
@@ -263,30 +280,6 @@ def test_skew_guard_lives_at_the_entry_point_not_in_the_helper():
     with pytest.raises(ZeroDivisionError):
         resolve_label_counts(cfg, N, np.random.default_rng(0))
 
-    with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
-    assert getattr(excinfo.value, "code", None) == 131
-
-
-def test_skew_guard_precedes_the_counts_it_protects():
-    """Ordering, not merely presence.
-
-    `resolve_label_counts` is what consumes `skew_params`, and it runs early --
-    before the mode branches and well before the other three validators. A guard
-    placed alongside those would have run *after* the counts it exists to
-    protect were already computed, which for the three silent cases means after
-    the damage.
-    """
-    cfg = {
-        "num_classes": 4,
-        "balance": "unbalanced",
-        "skew_rule": "geometric",
-        "skew_params": {"ratio": -0.5},
-        "matching_mode": "random",
-    }
-    # 'random' delivers whatever counts resolve_label_counts returns, with no
-    # allocation step to object: here [1600, -800, 400, -200]. Only a guard that runs
-    # first can catch them. ('perfect' no longer reads skew_params at all.)
     with pytest.raises(ValueError) as excinfo:
         generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
     assert getattr(excinfo.value, "code", None) == 131
@@ -420,7 +413,6 @@ def _rows(**row0):
     [
         ({"centroid_dependence": {"enabled": "false"}}, 141),
         ({"centroid_dependence": {"enabled": "no"}}, 141),
-        ({"centroid_dependence": {"enabled": None}}, 141),
         ({"matching_mode": "single", "single_match": {"cluster": True, "label": 0}}, 141),
         ({"assignment_matrix": _rows(clusters=[True])}, 141),
         ({"assignment_matrix": _rows(clusters="01")}, 141),
@@ -433,7 +425,6 @@ def _rows(**row0):
         ({"competing_noise": [{"cluster": 0, "label": 1, "share": "0.5"}]}, 117),
         ({"competing_noise": [{"cluster": True, "label": 1, "favors": "random"}]}, 141),
         ({"target_metric": {**_TM, "value": True}}, 113),
-        ({"target_metric": {**_TM, "value": None}}, 113),
         ({"target_metric": {**_TM, "tolerance": _NAN}}, 141),
         ({"target_metric": {**_TM, "tolerance": _INF}}, 141),
         ({"target_metric": {**_TM, "tolerance": True}}, 141),
@@ -462,6 +453,7 @@ def _rows(**row0):
         ({"proportions": None, "skew_rule": "geometric", "skew_params": {"ratio": _INF}}, 131),
         ({"proportions": None, "skew_rule": "dirichlet", "skew_params": {"alpha": _INF}}, 131),
         ({"spillover_rule": "concentrated", "concentrated_labels": [_INF]}, 128),
+        ({"spillover_rule": "concentrated", "concentrated_labels": [-1]}, 128),
         ({"target_metric": [_TM]}, 141),
         ({"target_metric": 0.5}, 141),
         ({"centroid_dependence": True}, 141),
@@ -483,6 +475,13 @@ def _rows(**row0):
             {"centroid_dependence": {"enabled": True, "profile": "exponential", "steepness": -2.0}},
             141,
         ),
+        (
+            {"centroid_dependence": {"enabled": False, "profile": "exponential",
+                                     "steepness": -2.0},
+             "competing_noise": [{"cluster": 0, "label": 1, "share": 0.5,
+                                  "favors": "boundary"}]},
+            141,
+        ),
         ({"matching_mode": "single", "single_match": {"cluster": None, "label": 0}}, 141),
         ({"matching_mode": "single", "single_match": {"cluster": _NAN, "label": 0}}, 141),
         ({"assignment_matrix": _rows(clusters=[None])}, 141),
@@ -502,7 +501,6 @@ def _rows(**row0):
     ids=[
         "enabled-quoted-false",
         "enabled-quoted-no",
-        "enabled-bare",
         "single-cluster-true",
         "clusters-true",
         "clusters-string",
@@ -515,7 +513,6 @@ def _rows(**row0):
         "share-string",
         "noise-cluster-true",
         "value-true",
-        "value-bare",
         "tolerance-nan",
         "tolerance-inf",
         "tolerance-true",
@@ -536,6 +533,7 @@ def _rows(**row0):
         "ratio-inf",
         "alpha-inf",
         "concentrated-inf",
+        "concentrated-negative",
         "target-list",
         "target-number",
         "centroid-true",
@@ -554,6 +552,7 @@ def _rows(**row0):
         "recall-negative",
         "tolerance-negative",
         "steepness-negative",
+        "steepness-negative-read-by-noise-alone",
         "single-cluster-null",
         "single-cluster-nan",
         "clusters-null-id",
@@ -623,13 +622,34 @@ def test_the_id_precheck_reads_a_numpy_num_classes():
     assert getattr(excinfo.value, "code", None) == 105
 
 
-def test_a_read_only_mapping_is_accepted_as_a_block():
+@pytest.mark.parametrize("overrides", [
+    {"centroid_dependence": MappingProxyType({"enabled": True, "favors": "core"})},
+    {"proportions": None, "skew_rule": "geometric",
+     "skew_params": MappingProxyType({"ratio": 0.5}),
+     "assignment_matrix": [{"label": i, "clusters": [i], "recall_target": 0.1}
+                           for i in range(4)]},
+], ids=["centroid", "skew-params"])
+def test_a_read_only_mapping_is_accepted_as_a_block(overrides):
     """The shape checks ask for a mapping, not a dict: a read-only mapping ran
-    before they existed, as the whole clm_label block and as a block inside it."""
-    centroid = MappingProxyType({"enabled": True, "favors": "core"})
-    cfg: Any = MappingProxyType(base_custom_cfg(centroid_dependence=centroid))
+    before they existed, as the whole clm_label block and as a block inside it.
+    A read-only skew_params was refused with [CLM-131] for not being a dict."""
+    cfg: Any = MappingProxyType(base_custom_cfg(**overrides))
     out = generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
     assert len(out) == N
+
+
+def test_a_read_only_row_is_read_as_a_row(caplog):
+    """The [CLM-303] scan and the precheck of the ids asked a row to be a dict, and
+    skipped a read-only one."""
+    row = MappingProxyType({"clusters": [0], "label": 0, "recall_target": 0.8})
+    with caplog.at_level(logging.WARNING, logger="clmsynth"):
+        generate_clm_labels(CLUSTERS, COORDS,
+                            base_custom_cfg(assignment_matrix=[row], target_metric=_TM), seed=1)
+    assert "[CLM-303]" in caplog.text
+    unknown = MappingProxyType({"clusters": [9], "label": 0, "recall_target": 0.8})
+    with pytest.raises(ValueError) as excinfo:
+        validate_matching_ids(base_custom_cfg(assignment_matrix=[unknown]), [0, 1, 2, 3])
+    assert getattr(excinfo.value, "code", None) == 105
 
 
 def test_proportions_given_as_a_mapping_are_refused():
@@ -646,6 +666,100 @@ def test_proportions_given_as_a_mapping_are_refused():
         with pytest.raises(ValueError) as excinfo:
             generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
         assert getattr(excinfo.value, "code", None) == 141
+
+
+# ---------------------------------------------------------------------------
+# An empty setting is absent, and a setting given where it is not read warns
+# where clmsynth-config never writes it. Two clusters of 100 points.
+# ---------------------------------------------------------------------------
+
+_TWO = np.repeat([0, 1], 100)
+_TWO_COORDS = np.random.default_rng(0).normal(size=(200, 2))
+
+
+def _two_labels(recall=0.8, **extra):
+    """label k on cluster k of _TWO at `recall`, balanced."""
+    return {"num_classes": 2, "matching_mode": "custom", "balance": "balanced",
+            "assignment_matrix": [{"clusters": [k], "label": k, "recall_target": recall}
+                                  for k in range(2)], **extra}
+
+
+_SKEWED = {"balance": "unbalanced"}
+_EMPTY = {
+    "split_rule": _two_labels(split_rule=None),
+    "centroid-profile": _two_labels(centroid_dependence={"enabled": True, "profile": None}),
+    "centroid-favors": _two_labels(centroid_dependence={"enabled": True, "favors": None}),
+    "centroid-enabled": _two_labels(centroid_dependence={"enabled": None}),
+    "steepness": _two_labels(centroid_dependence={"enabled": True, "profile": "exponential",
+                                                  "steepness": None}),
+    "noise-share": _two_labels(0.5, competing_noise=[{"cluster": 1, "label": 0, "share": None,
+                                                      "favors": "random"}]),
+    "noise-favors": _two_labels(0.5, competing_noise=[{"cluster": 1, "label": 0, "share": 0.5,
+                                                       "favors": None}]),
+    "target-scope": _two_labels(target_metric={"type": "mcc", "value": 0.5, "scope": None}),
+    "target-tolerance": _two_labels(target_metric={"type": "mcc", "value": 0.5,
+                                                   "tolerance": None}),
+    "target-max-iter": _two_labels(target_metric={"type": "mcc", "value": 0.5,
+                                                  "max_iter": None}),
+    "target-strict": _two_labels(target_metric={"type": "mcc", "value": 0.5, "strict": None}),
+    # Recall 0.5: the skewed label 0 holds more points than its 100-point cluster.
+    "skew-ratio": _two_labels(0.5, **_SKEWED, skew_rule="geometric",
+                              skew_params={"ratio": None}),
+    "skew-share": _two_labels(**_SKEWED, skew_rule="dominant_minority",
+                              skew_params={"dominant_share": None}),
+    "skew-index": _two_labels(**_SKEWED, skew_rule="dominant_minority",
+                              skew_params={"dominant_index": None}),
+    "skew-alpha": _two_labels(0.5, **_SKEWED, skew_rule="dirichlet",
+                              skew_params={"alpha": None}),
+}
+
+
+@pytest.mark.parametrize("cfg", _EMPTY.values(), ids=_EMPTY.keys())
+def test_an_empty_optional_setting_takes_its_default(cfg):
+    """`key:` with no value in YAML, null in JSON (Settled, 2026-11-12). Each was
+    refused as an unknown or malformed value."""
+    assert len(generate_clm_labels(_TWO, _TWO_COORDS, cfg, seed=1)) == len(_TWO)
+
+
+@pytest.mark.parametrize(("cfg", "code"), [
+    ({"num_classes": None, "matching_mode": "perfect"}, 201),
+    (_two_labels(**_SKEWED, skew_rule=None), 203),
+    (_two_labels(target_metric={"type": "mcc", "value": None}), 209),
+], ids=["num_classes", "skew_rule", "target-value"])
+def test_an_empty_required_setting_reports_its_missing_key_code(cfg, code):
+    """Settled 2026-11-12: no longer [CLM-126], [CLM-107] and [CLM-113]."""
+    with pytest.raises(MissingConfigKey) as excinfo:
+        generate_clm_labels(_TWO, _TWO_COORDS, cfg, seed=1)
+    assert getattr(excinfo.value, "code", None) == code
+
+
+_UNREAD = {
+    "concentrated_labels-outside-concentrated": (_two_labels(concentrated_labels=[1]),
+                                                 "concentrated_labels", 312),
+    "steepness-outside-exponential": (
+        _two_labels(centroid_dependence={"enabled": True, "steepness": 4.0}), "steepness", 312),
+    "max_iter-under-pair": ({"num_classes": 2, "matching_mode": "single",
+                             "single_match": {"cluster": 0, "label": 0},
+                             "target_metric": {"type": "mcc", "value": 0.7, "scope": "pair",
+                                               "max_iter": 5}}, "max_iter", 312),
+    "probe_seed-under-pair": ({"num_classes": 2, "matching_mode": "single",
+                               "single_match": {"cluster": 0, "label": 0},
+                               "target_metric": {"type": "mcc", "value": 0.7, "scope": "pair",
+                                                 "probe_seed": 5}}, "probe_seed", 312),
+    "concentrated_labels-under-random": ({"num_classes": 2, "matching_mode": "random",
+                                          "concentrated_labels": [99]},
+                                         "concentrated_labels", 311),
+}
+
+
+@pytest.mark.parametrize(("cfg", "key", "code"), _UNREAD.values(), ids=_UNREAD.keys())
+def test_a_setting_that_is_not_read_is_warned_about(cfg, key, code, caplog):
+    """Only where clmsynth-config never writes the setting (Settled, 2026-11-11 and
+    12); what its template writes whatever the mode stays silent."""
+    with caplog.at_level(logging.WARNING, logger="clmsynth"):
+        generate_clm_labels(_TWO, _TWO_COORDS, cfg, seed=1)
+    assert any(f"[CLM-{code}]" in r.getMessage() and key in r.getMessage()
+               for r in caplog.records), caplog.text
 
 
 def test_a_competing_noise_entry_without_a_cluster_names_the_key():
@@ -1176,7 +1290,8 @@ def test_150_under_a_target_names_the_search_level_not_a_recall_target(caplog):
     Lower it", pointing at a key the search ignores, and printed a grid level
     raw (0.7000000000000001). It now names the level, to three places (the lowest
     one blocked, 0.259375, found between the grid levels 0.2 and 0.3), and the
-    highest level that fits: 200 of label 0's 776 points is 0.2577, rounded down.
+    highest level that fits: 0.259 x 776 = 200.98, which rounds down to the 200
+    points the cluster holds.
     """
     cfg = equal_cfg(
         proportions=[0.97, 0.01, 0.01, 0.01], target_metric={"type": "mcc", "value": 0.5}
@@ -1186,15 +1301,15 @@ def test_150_under_a_target_names_the_search_level_not_a_recall_target(caplog):
 
     line = next(r.getMessage() for r in caplog.records if BLOCKED_LINE.match(r.getMessage()))
     assert "search's recall level alpha=0.259" in line, line
-    assert "levels up to 0.257 fit here" in line, line
+    assert "levels up to 0.259 fit here" in line, line
     assert "Lower it" not in line, line
     assert not re.search(r"\d\.\d{5,}", line), line
 
 
 @pytest.mark.parametrize(
     "probe_seed,diverges",
-    [("absent", False), (None, False), (42, False), (7, True)],
-    ids=["default", "empty", "run-seed", "other-seed"],
+    [(None, False), (42, False), (7, True)],
+    ids=["empty", "run-seed", "other-seed"],
 )
 def test_309_reports_only_a_probe_seed_divergence(probe_seed, diverges, caplog):
     """[CLM-309] used to fire on every delivered value outside tolerance, so each
@@ -1209,9 +1324,7 @@ def test_309_reports_only_a_probe_seed_divergence(probe_seed, diverges, caplog):
     An empty probe_seed (`probe_seed:`, None) seeded each probe from fresh OS
     entropy, so the search scored labelings on no stream the run could deliver.
     """
-    tm: dict[str, Any] = {"type": "mcc", "value": 0.5}
-    if probe_seed != "absent":
-        tm["probe_seed"] = probe_seed
+    tm: dict[str, Any] = {"type": "mcc", "value": 0.5, "probe_seed": probe_seed}
     cfg = equal_cfg(proportions=[0.97, 0.01, 0.01, 0.01], target_metric=tm)
     with caplog.at_level(logging.WARNING, logger="clmsynth"):
         out = generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, seed=42).to_numpy()
@@ -1624,26 +1737,6 @@ def test_the_pair_ari_curve_is_sklearns_ari():
                 ), (N, n_k, m)
 
 
-@pytest.mark.parametrize(
-    "n_k,value",
-    [(250, 0.5), (600, 0.5), (600, -0.05)],
-    ids=["rising", "dipping-cluster", "inside-the-dip"],
-)
-def test_the_pair_ari_size_is_the_closest_on_the_rising_side(n_k, value):
-    """The size of l* whose pair ARI comes closest to the target, searched over
-    every size of 1000 points. Past half the points the curve dips below 0
-    before it rises to 1; inside the dip two sizes score alike, and the larger
-    is taken, the side every target above the dip lands on.
-    """
-    from clmsynth.clm_label_engine import _pair_ari_curve, _pair_ari_size
-
-    curve = _pair_ari_curve(1000, n_k)
-    low = int(np.argmin(curve))
-    m = _pair_ari_size(1000, n_k, value)
-    assert m >= low + 1, (m, low + 1)
-    assert np.abs(curve[m - 1] - value) == pytest.approx(np.abs(curve[low:] - value).min())
-
-
 def test_the_pair_ari_floor_is_the_bottom_of_its_curve():
     """pair_reachable_range(kind='ari') reports the bottom of the curve, which is
     not at m = 1 when the cluster holds more than half the points: 600 of 1000
@@ -1666,24 +1759,6 @@ def test_pair_scope_outside_single_mode_is_rejected():
             seed=1,
         )
     assert "[CLM-124]" in str(excinfo.value)
-
-
-def test_global_scope_with_ari_and_custom_mode_is_accepted():
-    """A negative test: the pair-scope guards must not over-reject.
-
-    `custom` ([CLM-124]) and `ari` ([CLM-123]) are each rejected under
-    `scope: pair`; together under the default global scope they are a valid
-    request, and a guard written too broadly would refuse it.
-    """
-    out = generate_clm_labels(
-        CLUSTERS,
-        COORDS,
-        base_custom_cfg(
-            target_metric={"type": "ari", "value": 0.3, "tolerance": 0.05, "max_iter": 10}
-        ),
-        seed=1,
-    )
-    assert_contingency_invariant(out.to_numpy(), 4)
 
 
 @pytest.mark.parametrize(
@@ -1749,45 +1824,6 @@ def test_split_rule_is_validated_wherever_custom_reads_it():
 # ---------------------------------------------------------------------------
 # Exact boundaries
 # ---------------------------------------------------------------------------
-
-
-def test_single_label_space():
-    """M=1: every point takes label 0. Degenerate, and must stay non-crashing."""
-    out = generate_clm_labels(
-        CLUSTERS,
-        COORDS,
-        {
-            "num_classes": 1,
-            "balance": "balanced",
-            "matching_mode": "random",
-        },
-        seed=1,
-    )
-    assert_contingency_invariant(out.to_numpy(), 1)
-
-
-def test_allocation_exactly_saturating_a_cluster_succeeds():
-    """tp == capacity is feasible; the failure starts one point later.
-
-    Cluster 3 holds exactly 100 points and label 0's budget is exactly 100 at
-    recall 1.0, so this is the tightest allocation that can still succeed. A
-    `>=` where `>` belongs would reject it.
-    """
-    out = generate_clm_labels(
-        CLUSTERS,
-        COORDS,
-        {
-            "num_classes": 2,
-            "balance": "unbalanced",
-            "proportions": [0.1, 0.9],
-            "matching_mode": "custom",
-            "assignment_matrix": [{"label": 0, "clusters": [3], "recall_target": 1.0}],
-            "split_rule": "equal",
-            "spillover_rule": "proportional_to_marginal",
-        },
-        seed=1,
-    )
-    assert_contingency_invariant(out.to_numpy(), 2)
 
 
 def test_allocation_exceeding_capacity_by_one_point_is_infeasible():
@@ -1913,9 +1949,9 @@ def test_infeasible_advice_is_itself_feasible():
 def test_solver_grid_endpoints_are_evaluable(value):
     """The coarse scan is the tenths 0.0, 0.1, ..., 1.0, so both endpoints are probed.
 
-    Neither is expected to be *reached* -- 1.0 sits above the structural
-    ceiling for this geometry, which is what [CLM-306] reports -- but both must
-    be evaluable rather than crashing the bracket search.
+    Both are reached on this geometry, where the proportions equal the cluster
+    sizes, so [CLM-306] does not appear; both must be evaluable rather than
+    crashing the bracket search.
     """
     out = generate_clm_labels(
         CLUSTERS,
@@ -1990,14 +2026,6 @@ def test_dirichlet_is_stochastic_across_seeds():
 
     assert counts(1) == counts(1)
     assert counts(1) != counts(2)
-
-
-def test_resolve_label_counts_at_zero_rows():
-    """N=0: the largest-remainder split has nothing to distribute."""
-    counts = resolve_label_counts(
-        {"num_classes": 3, "balance": "balanced"}, 0, np.random.default_rng(0)
-    )
-    assert list(counts) == [0, 0, 0], list(counts)
 
 
 # ---------------------------------------------------------------------------

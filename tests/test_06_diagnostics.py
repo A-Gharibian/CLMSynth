@@ -21,9 +21,9 @@ Four bands, two mechanisms, decided by what the pipeline actually does:
                            equally wrong for every dataset, so it aborts the
                            run rather than being swallowed per dataset.
                            Asserted on the exception and its `.code`.
-                           EXCEPTIONS, logged per dataset while the batch
-                           continues. See MECHANISM_OVERRIDES below.
-                           The codes in main.PER_DATASET_CODES judge the
+                           Exceptions to that are logged per dataset while the
+                           batch continues: see MECHANISM_OVERRIDES below.
+                           The codes in _single_run.PER_DATASET_CODES judge the
                            DATASET's K, cluster ids or features rather than
                            the config, so that dataset is skipped.
                            [CLM-120] (no target_metric level fits) is judged
@@ -45,22 +45,25 @@ looks correct while being not what was configured.
 Those are the cases where a regression is invisible without this module.
 """
 
+import contextvars
 import json
 import logging
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from clmsynth import run_pipeline
+import clmsynth
+from clmsynth import clm_errors, run_pipeline
 from clmsynth._single_run import PER_DATASET_CODES
 
 # The Agg backend is selected once in conftest, before any test module is
 # imported, so no GUI toolkit is initialized even if something reaches
 # matplotlib despite the plot suppression below.
 from clmsynth.byoc_source import fetch_byoc_data
+from clmsynth.clm_errors import collect_codes
 from clmsynth.clm_label_engine import generate_clm_labels
 
 # How each catalog band surfaces its diagnostic.
@@ -351,11 +354,10 @@ def test_generate_config_warns_about_an_unknown_data_source(tmp_path, caplog):
 @pytest.mark.parametrize(
     "overrides,drop",
     [
-        ({"balance": "Balanced"}, ()),
         ({"balance": "balanced"}, ()),
         ({"skew_rule": "bogus_rule"}, ("proportions",)),
     ],
-    ids=["unknown-balance", "balanced+proportions", "unknown-skew"],
+    ids=["balanced+proportions", "unknown-skew"],
 )
 @pytest.mark.usefixtures("yaml")
 def test_generate_config_ignores_sizing_keys_under_perfect(overrides, drop, tmp_path, caplog):
@@ -499,6 +501,33 @@ def test_generate_config_creates_the_folder_of_its_output(tmp_path):
     assert out.is_file()
 
 
+@pytest.mark.usefixtures("yaml")
+def test_generate_config_falls_back_to_the_suggested_num_classes(tmp_path):
+    """The value the wizard suggests, from questions.py; it wrote 4."""
+    from clmsynth._config_gen.generate_config import generate_base_config
+
+    out = tmp_path / "config.json"
+    generate_base_config({"matching_mode": "perfect"}, output_path=str(out))
+    block = json.loads(out.read_text(encoding="utf-8"))["label_generation"]["clm_label"]
+    assert block["num_classes"] == 3
+
+
+@pytest.mark.parametrize("extra", [{"n_label": 5}, {"label_generation": {"n_labels": 5}}],
+                         ids=["misspelt", "a-whole-config"])
+def test_a_payload_key_nothing_reads_is_refused(extra, tmp_path, monkeypatch, caplog, yaml):
+    """It was dropped without a word: `n_label: 5` wrote one label, and a whole config
+    given as a payload rendered the defaults (Settled, 2026-11-12)."""
+    import clmsynth._config_gen.generate_config as generate_config
+
+    payload, out = tmp_path / "payload.yaml", tmp_path / "out.yaml"
+    payload.write_text(yaml.safe_dump({**MINIMAL_PAYLOAD, **extra}), encoding="utf-8")
+    monkeypatch.setattr("sys.argv", ["clmsynth-config", str(payload), str(out)])
+    with caplog.at_level(logging.WARNING), pytest.raises(SystemExit) as excinfo:
+        generate_config.main()
+    assert excinfo.value.code == 2 and not out.exists()
+    assert next(iter(extra)) in caplog.text
+
+
 # ---------------------------------------------------------------------------
 # A key missing inside a block is coded and names where it is missing.
 # ---------------------------------------------------------------------------
@@ -521,3 +550,127 @@ def test_assignment_matrix_missing_key_is_coded():
             seed=1,
         )
     assert "[CLM-207] assignment_matrix row 0" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# The codes of a call's warnings, from Python: clm_errors.collect_codes.
+# ---------------------------------------------------------------------------
+
+_TWO = np.repeat([0, 1], 100)
+_TWO_COORDS = np.random.default_rng(0).normal(size=(200, 2))
+
+
+def _two_labels(**extra):
+    """label k on cluster k of _TWO at recall 0.8, balanced."""
+    return {"num_classes": 2, "matching_mode": "custom", "balance": "balanced",
+            "assignment_matrix": [{"clusters": [k], "label": k, "recall_target": 0.8}
+                                  for k in range(2)], **extra}
+
+
+_IGNORED_PROPORTIONS = _two_labels(proportions=[0.5, 0.5])                 # [CLM-301]
+_MOVED_COUNTS = _two_labels(spillover_rule="uniform")                      # [CLM-304]
+_MISSED_TARGET: dict[str, Any] = {"num_classes": 2, "matching_mode": "custom",
+                                  "balance": "unbalanced",
+                  "proportions": [0.9, 0.1],
+                  "assignment_matrix": [{"clusters": [0], "label": 0},
+                                        {"clusters": [1], "label": 1}],
+                  "target_metric": {"type": "mcc", "value": 1.0}}           # [CLM-306]
+
+
+def test_collect_codes_is_public_in_clm_errors_only():
+    """Settled 2026-11-12: not in the top-level __all__."""
+    assert "collect_codes" in clm_errors.__all__
+    assert "collect_codes" not in clmsynth.__all__
+
+
+@pytest.mark.parametrize(("cfg", "code"), [(_MISSED_TARGET, 306)])
+def test_a_call_s_codes_are_collected(cfg, code):
+    with collect_codes() as codes:
+        generate_clm_labels(_TWO, _TWO_COORDS, cfg, seed=1)
+    assert code in codes
+
+
+def test_a_quiet_call_collects_nothing():
+    with collect_codes() as codes:
+        generate_clm_labels(_TWO, _TWO_COORDS, _two_labels(), seed=1)
+    assert codes == []
+
+
+def test_each_warning_is_one_entry_in_order():
+    with collect_codes() as codes:
+        generate_clm_labels(_TWO, _TWO_COORDS, _IGNORED_PROPORTIONS, seed=1)
+        generate_clm_labels(_TWO, _TWO_COORDS, _MOVED_COUNTS, seed=1)
+        generate_clm_labels(_TWO, _TWO_COORDS, _IGNORED_PROPORTIONS, seed=1)
+    assert codes == [301, 304, 301]
+
+
+def test_nothing_is_collected_after_the_block():
+    with collect_codes() as codes:
+        pass
+    generate_clm_labels(_TWO, _TWO_COORDS, _IGNORED_PROPORTIONS, seed=1)
+    assert codes == []
+
+
+def test_the_block_leaves_the_loggers_as_it_found_them():
+    """0.6.6's work not to reconfigure other people's logging."""
+    named, root = logging.getLogger("clmsynth"), logging.getLogger()
+    before = (list(named.handlers), named.level, named.propagate, list(root.handlers), root.level)
+    with collect_codes():
+        pass
+    assert before == (list(named.handlers), named.level, named.propagate,
+                      list(root.handlers), root.level)
+
+
+def test_codes_are_collected_when_the_call_raises():
+    """A missed strict target logs [CLM-306] before [CLM-154] refuses it."""
+    strict = {**_MISSED_TARGET,
+              "target_metric": {**_MISSED_TARGET["target_metric"], "strict": True}}
+    with collect_codes() as codes, pytest.raises(ValueError):
+        generate_clm_labels(_TWO, _TWO_COORDS, strict, seed=1)
+    assert 306 in codes
+
+
+def test_an_error_s_code_is_not_a_collected_warning():
+    with collect_codes() as codes, pytest.raises(ValueError):
+        generate_clm_labels(_TWO, _TWO_COORDS, {"num_classes": 2, "matching_mode": "nope"},
+                            seed=1)
+    assert codes == []
+
+
+def test_blocks_nest():
+    with collect_codes() as outer:
+        generate_clm_labels(_TWO, _TWO_COORDS, _IGNORED_PROPORTIONS, seed=1)
+        with collect_codes() as inner:
+            generate_clm_labels(_TWO, _TWO_COORDS, _MOVED_COUNTS, seed=1)
+    assert (outer, inner) == ([301, 304], [304])
+
+
+def test_a_context_copied_in_the_block_stops_collecting_when_it_closes():
+    """A thread that inherits the block's context (thread_inherit_context, the default
+    on free-threaded builds) keeps that copy for every later task it runs."""
+    with collect_codes() as codes:
+        inherited = contextvars.copy_context()
+        inherited.run(generate_clm_labels, _TWO, _TWO_COORDS, _IGNORED_PROPORTIONS, seed=1)
+    inherited.run(generate_clm_labels, _TWO, _TWO_COORDS, _MOVED_COUNTS, seed=1)
+    assert codes == [301]
+
+
+def test_blocks_may_close_out_of_order():
+    """Two generators, each holding a block open across its yields, run in turn."""
+    seen: dict[str, list[int]] = {}
+
+    def labels(name, cfgs):
+        with collect_codes() as codes:
+            seen[name] = codes
+            for cfg in cfgs:
+                yield generate_clm_labels(_TWO, _TWO_COORDS, cfg, seed=1)
+
+    first = labels("first", [_IGNORED_PROPORTIONS])
+    second = labels("second", [_MOVED_COUNTS, _MOVED_COUNTS])
+    next(first)
+    next(second)            # opens inside first: its call reaches both blocks
+    next(first, None)       # first closes while second is open
+    next(second)
+    next(second, None)
+    generate_clm_labels(_TWO, _TWO_COORDS, _IGNORED_PROPORTIONS, seed=1)
+    assert (seen["first"], seen["second"]) == ([301, 304], [304, 304])

@@ -16,6 +16,7 @@ dependency.
     python -m pytest tests/test_00_contract.py -v         # per-case detail
 """
 
+import functools
 import logging
 from typing import Any
 
@@ -432,6 +433,7 @@ def check_case(name, gkey, cfg):
     return res
 
 
+@functools.cache  # every geometry's test reads the same table
 def check_placement_invariance():
     """Core / boundary / random placement must leave MCC and ARI untouched.
 

@@ -5,6 +5,7 @@ The input is a flat "upstream payload" mapping (see docs/examples/hepta_payload.
 """
 
 import argparse
+import difflib
 import json
 import logging
 import os
@@ -20,6 +21,7 @@ from ..clm_errors import MissingConfigKey
 from ..config_tree import default as setting_default
 from ..dataset_sources import SOURCES
 from .config_template import PERFECT_SIZING, SIZING_TEMPLATE, YAML_TEMPLATE
+from .questions import SCHEMA
 
 __all__ = [
     "VALID_SOURCES",
@@ -33,6 +35,22 @@ log: logging.Logger = logging.getLogger(__name__)
 
 # A tuple, not a set: `in` must not hash a payload value, which may be a list.
 VALID_SOURCES = tuple(SOURCES)
+
+# Every payload key the renderer reads; any other is refused.
+PAYLOAD_KEYS = (
+    "data_source", "output_dir", "batteries", "datasets", "source_seed",
+    "input_dir", "cluster_column", "tag_columns", "standardize",
+    "n_labels", "source_labeling", "label_seed",
+    "num_classes", "matching_mode", "balance", "proportions", "skew_rule", "skew_params",
+    "single_match", "assignment_matrix", "split_rule", "spillover_rule",
+    "concentrated_labels", "competing_noise", "target_metric",
+    "centroid_enabled", "centroid_profile", "centroid_favors", "centroid_steepness",
+    "feature_dependence",
+)
+
+
+class UnknownPayloadKeys(ValueError):
+    """A payload names a key the renderer does not read."""
 
 
 def format_yaml_snippet(data: dict[str, Any] | list[Any], indent_level: int = 6) -> str:
@@ -68,7 +86,11 @@ def _yaml_scalar(value) -> str:
     if isinstance(value, str):
         # JSON strings are valid YAML double-quoted scalars. Not as ASCII: JSON writes
         # a character past U+FFFF as two escapes, which YAML reads as two characters.
-        return json.dumps(value, ensure_ascii=False)
+        quoted = json.dumps(value, ensure_ascii=False)
+        # YAML takes these as line breaks inside quotes too: U+0085 reads back as a space.
+        for line_break in ("\x85", chr(0x2028), chr(0x2029)):
+            quoted = quoted.replace(line_break, f"\\u{ord(line_break):04x}")
+        return quoted
     text = str(value)
     if isinstance(value, float) and "e" in text and "." not in text:
         return _dotted_exponent(text)
@@ -102,10 +124,19 @@ def generate_base_config(upstream_data: dict[str, Any],
     output path, YAML otherwise. The clm_label block is written as given and
     checked as generate_clm_labels checks it, without a dataset; a refusal is
     raised with its [CLM-###] code (ValueError or MissingConfigKey) and nothing
-    is written."""
+    is written. A payload key outside PAYLOAD_KEYS raises UnknownPayloadKeys."""
     import yaml
 
     from ..clm_label_engine import _check_config
+
+    unknown = [key for key in upstream_data if key not in PAYLOAD_KEYS]
+    if unknown:
+        shown = []
+        for key in unknown:
+            close = difflib.get_close_matches(str(key), PAYLOAD_KEYS, n=1)
+            shown.append(f"'{key}'" + (f" (did you mean '{close[0]}'?)" if close else ""))
+        raise UnknownPayloadKeys(f"clmsynth-config does not read {', '.join(shown)}. "
+                                 f"It reads: {', '.join(PAYLOAD_KEYS)}.")
 
     def pick(key, default):
         """Payload value, or the default when absent or null."""
@@ -117,15 +148,15 @@ def generate_base_config(upstream_data: dict[str, Any],
         log.warning(f"data_source '{data_source}' is not one of {VALID_SOURCES}; "
                     "the run will reject this.")
 
-    mode = pick("matching_mode", "custom")
+    mode = pick("matching_mode", SCHEMA["clm_label.matching_mode"].default)
     if mode == "perfect":
         sizing = PERFECT_SIZING
     else:
         skew_params = pick("skew_params", {})
         sizing = SIZING_TEMPLATE.format(
             proportions=_yaml_list(pick("proportions", [])),
-            balance=_yaml_scalar(pick("balance", "balanced")),
-            skew_rule=_yaml_scalar(pick("skew_rule", "geometric")),
+            balance=_yaml_scalar(pick("balance", setting_default("clm_label.balance"))),
+            skew_rule=_yaml_scalar(pick("skew_rule", SCHEMA["clm_label.skew_rule"].default)),
             skew_params=_optional_block(
                 ["    skew_params:"]
                 + [f"      {k}: {_yaml_scalar(v)}" for k, v in skew_params.items()]
@@ -176,7 +207,9 @@ def generate_base_config(upstream_data: dict[str, Any],
     steepness = pick("centroid_steepness", None)
     steepness_block = _optional_block(
         [f"      steepness: {_yaml_scalar(steepness)}  # exponential profile only"]
-        if steepness is not None and pick("centroid_profile", "linear") == "exponential" else []
+        if steepness is not None and pick(
+            "centroid_profile", setting_default("clm_label.centroid_dependence.profile"))
+        == "exponential" else []
     )
 
     follow_lines: list[str] = []
@@ -216,27 +249,33 @@ def generate_base_config(upstream_data: dict[str, Any],
 
     rendered_yaml = YAML_TEMPLATE.format(
         data_source=data_source,
-        output_dir=_yaml_scalar(str(pick("output_dir", "OUTPUT"))),
+        output_dir=_yaml_scalar(str(pick("output_dir",
+                                         setting_default("global_settings.output_dir")))),
         byoc_extra=byoc_extra,
         data_source_suite_key=f"{data_source}_suite",
         batteries=format_list_or_all(pick("batteries", "all")),
         datasets=format_list_or_all(pick("datasets", "all")),
         source_seed=pick("source_seed", 42),
 
-        n_labels=pick("n_labels", 1),
-        source_labeling=_yaml_scalar(str(pick("source_labeling", "labels0"))),
-        label_seed=pick("label_seed", 42),
+        n_labels=pick("n_labels", setting_default("label_generation.n_labels")),
+        source_labeling=_yaml_scalar(str(pick(
+            "source_labeling", setting_default("label_generation.source_labeling")))),
+        label_seed=pick("label_seed", setting_default("label_generation.seed")),
 
-        num_classes=_yaml_scalar(pick("num_classes", 4)),
+        num_classes=_yaml_scalar(pick("num_classes", SCHEMA["clm_label.num_classes"].default)),
         sizing=sizing,
         matching_mode=_yaml_scalar(mode),
         single_match=single_match_yaml,
         assignment_matrix=assignment_matrix_yaml,
-        split_rule=_yaml_scalar(pick("split_rule", "proportional_to_size")),
-        spillover_rule=_yaml_scalar(pick("spillover_rule", "proportional_to_marginal")),
-        centroid_enabled=_yaml_scalar(pick("centroid_enabled", False)),
-        centroid_profile=_yaml_scalar(pick("centroid_profile", "linear")),
-        centroid_favors=_yaml_scalar(pick("centroid_favors", "core")),
+        split_rule=_yaml_scalar(pick("split_rule", setting_default("clm_label.split_rule"))),
+        spillover_rule=_yaml_scalar(pick("spillover_rule",
+                                         setting_default("clm_label.spillover_rule"))),
+        centroid_enabled=_yaml_scalar(pick(
+            "centroid_enabled", setting_default("clm_label.centroid_dependence.enabled"))),
+        centroid_profile=_yaml_scalar(pick(
+            "centroid_profile", setting_default("clm_label.centroid_dependence.profile"))),
+        centroid_favors=_yaml_scalar(pick(
+            "centroid_favors", setting_default("clm_label.centroid_dependence.favors"))),
 
         # Optional blocks: '' unless the payload asked for them.
         concentrated_labels=concentrated_block,
@@ -321,6 +360,12 @@ def main() -> None:
         # A folder, a file that cannot be opened, or text that is not UTF-8.
         log.critical(f"Payload file '{payload_path}' cannot be read as UTF-8 text: {e}")
         sys.exit(2)
+    except (ValueError, TypeError, KeyError, AttributeError, RecursionError) as e:
+        # A value PyYAML cannot build, such as the date 2026-13-45, or nesting deeper
+        # than it follows.
+        log.critical(f"Payload file '{payload_path}' holds a value that cannot be read as "
+                     f"YAML ({type(e).__name__}: {e}).")
+        sys.exit(2)
 
     if not isinstance(payload, dict):
         log.critical(f"Payload file '{payload_path}' must contain a YAML mapping.")
@@ -336,6 +381,9 @@ def main() -> None:
     except KeyboardInterrupt:
         log.warning("Interrupted; nothing written.")
         sys.exit(130)
+    except UnknownPayloadKeys as e:
+        log.critical(f"Payload file '{payload_path}': {e} Nothing was written.")
+        sys.exit(2)
     except (AttributeError, TypeError) as e:
         # Raised while rendering, before anything is written.
         log.critical(f"Payload file '{payload_path}': a value has the wrong shape "

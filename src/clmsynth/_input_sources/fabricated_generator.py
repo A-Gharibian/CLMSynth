@@ -68,7 +68,7 @@ def generate_synthetic_data(
             "general-purpose fabrication mode."
         )
 
-    final_dfs_to_concat: list = [] if labels_only else [scaled_df]
+    final_dfs_to_concat: list[pd.DataFrame | pd.Series[Any]] = [] if labels_only else [scaled_df]
 
     if cat_config.get("enable", False):
         labels = cat_config.get("labels", ["Class_0", "Class_1"])

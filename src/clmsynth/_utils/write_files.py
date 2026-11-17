@@ -31,7 +31,8 @@ def write_then_replace(path: str | Path, write: Callable[[Path], object]) -> Non
     when `write` fails or is interrupted. A symlinked `path` is followed, so the
     link survives."""
     target = Path(path).resolve()
-    tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+    # A short name: the temporary path is no longer than nearly any path it stands for.
+    tmp = target.with_name(f".{uuid.uuid4().hex[:8]}.tmp")
     try:
         write(tmp)
         os.replace(tmp, target)

@@ -10,11 +10,24 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal
 
-from ..config_tree import default
+from .._input_sources import SUITE_SEED_MIN
+from ..config_tree import SETTINGS, choices, default
 from ..dataset_sources import SOURCES
 
 Kind = Literal["str", "int", "float", "bool", "choice",
                "int_list", "float_list", "str_list", "selection", "id", "ids"]
+
+
+def _lo(path: str, number: Callable[[float], float] = float) -> float | None:
+    """The run's lower bound for the setting at `path`; `number=int` for a whole one."""
+    bound = SETTINGS[path].lo
+    return None if bound is None else number(bound)
+
+
+def _hi(path: str, number: Callable[[float], float] = float) -> float | None:
+    """The run's upper bound for the setting at `path`; `number=int` for a whole one."""
+    bound = SETTINGS[path].hi
+    return None if bound is None else number(bound)
 
 
 @dataclass(frozen=True)
@@ -26,10 +39,14 @@ class Question:
     not itself written to the config use a ``_``-prefixed leaf (e.g.
     ``"clm_label.target_metric._enabled"``).
 
-    ``visible_when`` receives the ``clm_label`` sub-config as built so far and
-    returns whether the value is *live*. It is the same predicate three places
-    share: whether the wizard asks whether ``resolve_label_counts`` consumes the
-    value, and whether ``_validate_skew_cfg`` checks it.
+    ``visible_when`` receives the ``clm_label`` sub-config and returns whether the
+    run reads the value: what ``resolve_label_counts`` consumes and
+    ``_validate_skew_cfg`` checks. The tests read it; the wizard asks the skew
+    questions by its own flow.
+
+    ``lo`` and ``hi`` are the run's own bounds, read from its settings record, except
+    where the wizard is narrower on purpose: each such bound is a literal with a
+    comment.
     """
 
     key: str
@@ -41,19 +58,14 @@ class Question:
     hi: float | None = None            # UI upper bound (for ints: the maximum)
     lo_strict: bool = False            # UI rejects a value equal to lo
     choices: tuple[str, ...] | None = None
-    # The engine's own constraint on this value, where it has one. The agreement
-    # property probes just outside whichever side is not None.
-    engine_min: float | None = None
-    engine_max: float | None = None
-    engine_min_strict: bool = False    # engine rejects a value equal to engine_min
-    visible_when: Callable[[dict], bool] = field(default=lambda clm: True)
+    visible_when: Callable[[dict[str, Any]], bool] = field(default=lambda clm: True)
 
 
 # Skew parameters are only consumed when the split is unbalanced, no explicit
 # proportions were given, and the owning skew_rule is selected. This mirrors the
 # early return in _validate_skew_cfg exactly.
-def _skew_live(rule: str) -> Callable[[dict], bool]:
-    def pred(clm: dict) -> bool:
+def _skew_live(rule: str) -> Callable[[dict[str, Any]], bool]:
+    def pred(clm: dict[str, Any]) -> bool:
         return (clm.get("balance") == "unbalanced"
                 and not clm.get("proportions")
                 and clm.get("skew_rule") == rule)
@@ -73,7 +85,7 @@ _QUESTIONS: Final[Sequence[Question]] = [
         explain="Where results go. Usually just press Enter to keep 'OUTPUT';\n"
                 "each run still gets its own timestamped subfolder inside it.\n"
                 "(Pick a plain folder name, not the same name as a file.)",
-        default="OUTPUT"),
+        default=default("global_settings.output_dir")),
 
     # -- 1b. byoc suite -----------------------------------------------------
     Question(
@@ -92,11 +104,14 @@ _QUESTIONS: Final[Sequence[Question]] = [
     Question(
         "byoc_suite.tag_columns._enabled", "bool",
         "Carry any column through without it becoming a feature?",
-        explain="An outcome variable, a second labelling, an identifier: columns that\ntravel with the data but must not enter the geometry. They are copied\nto the output CSV untouched and need not be numeric.",
+        explain="An outcome variable, a second labelling, an identifier: columns that\n"
+                "travel with the data but must not enter the geometry. They are copied\n"
+                "to the output CSV untouched and need not be numeric.",
         default=False),
     Question(
         "byoc_suite.tag_columns", "str_list", "Column name(s) to carry through",
-        explain="Exact column names, as written in the CSV header. A name that is\nnot in the file is an error, and the cluster column cannot be one."),
+        explain="Exact column names, as written in the CSV header. A name that is\n"
+                "not in the file is an error, and the cluster column cannot be one."),
     Question(
         "byoc_suite.standardize", "bool", "Rescale features to 0..1 on import?",
         explain="Min-max standardization puts every feature on the same 0..1 scale.\n"
@@ -115,21 +130,25 @@ _QUESTIONS: Final[Sequence[Question]] = [
         default="all"),
     Question(
         "registry_suite.seed", "int", "Random seed",
-        explain="The data are generated from it: same seed -> same data.", default=42),
+        explain="The data are generated from it: same seed -> same data.", default=42,
+        lo=SUITE_SEED_MIN),
 
     # -- 2. Label generation ------------------------------------------------
+    # The floor of 1 is the wizard's: the run takes 0 or less and writes no label.
     Question(
         "label_generation.n_labels", "int", "How many synthetic labels to generate",
         explain="Each makes one Label_0, Label_1, ... column (a different random\n"
                 "seed each), so you can compare several labellings of the same data.",
-        default=1, lo=1),
+        default=default("label_generation.n_labels"), lo=1,
+        hi=_hi("label_generation.n_labels", int)),
     Question(
         "label_generation.source_labeling", "str", "Which ground-truth labeling to match",
         explain="Most datasets have 'labels0'. Leave as-is unless you "
                 "know there are more (e.g. 'labels1').",
-        default="labels0"),
+        default=default("label_generation.source_labeling")),
     Question(
-        "label_generation.seed", "int", "Random seed for label generation", default=42),
+        "label_generation.seed", "int", "Random seed for label generation",
+        default=default("label_generation.seed"), lo=_lo("label_generation.seed", int)),
 
     # -- 3. Cluster-label matching ------------------------------------------
     Question(
@@ -139,7 +158,7 @@ _QUESTIONS: Final[Sequence[Question]] = [
                 "they split into (e.g. 3 -> values 0, 1, 2), sized to your whole dataset.\n"
                 "At least 2: one label for everything has no matching to measure, and\n"
                 "some modes/skews are undefined at M=1.",
-        default=3, lo=2, hi=64, engine_max=64),  # floor of 2 is UI-only
+        default=3, lo=2, hi=_hi("clm_label.num_classes", int)),  # floor of 2 is UI-only
     Question(
         "clm_label.matching_mode", "choice", "Matching mode",
         explain="How should the new label relate to your clusters?\n"
@@ -149,7 +168,7 @@ _QUESTIONS: Final[Sequence[Question]] = [
                 "  random  : the label ignores the clusters completely (MCC ~ 0), a baseline.\n"
                 "  custom  : you write rules (send a share of a label into chosen clusters).\n"
                 "            Use for partial/realistic agreement, or to aim at a target score.",
-        default="custom", choices=("perfect", "single", "random", "custom")),
+        default="custom", choices=choices("clm_label.matching_mode")),
     Question(
         "clm_label.target_metric._enabled", "bool",
         "Aim for a specific agreement score instead of setting it by hand?",
@@ -165,13 +184,13 @@ _QUESTIONS: Final[Sequence[Question]] = [
         "clm_label.target_metric.type", "choice", "Target score",
         explain="Both measure agreement (1 = identical, 0 = unrelated);\n"
                 "either is fine, mcc is the more common choice here.",
-        default="mcc", choices=("mcc", "ari")),
+        default="mcc", choices=choices("clm_label.target_metric.type")),
     # UI-only floor at 0.0: a negative MCC/ARI target is meaningful but not
     # something the program promises to solve for, so it is guarded here and the
-    # engine is left untouched (hence no engine_min/engine_max).
+    # engine is left untouched.
     Question(
         "clm_label.target_metric.value", "float", "Target value (0..1)",
-        default=0.6, lo=0.0, hi=1.0),
+        default=0.6, lo=0.0, hi=_hi("clm_label.target_metric.value")),
     Question(
         "clm_label.target_metric.scope", "choice", "Measure that MCC on",
         explain="How much of the picture should the score judge?\n"
@@ -180,13 +199,17 @@ _QUESTIONS: Final[Sequence[Question]] = [
                 "  global : the whole set of labels against all the clusters at once\n"
                 "           (the standard multiclass MCC). Found by search; it can\n"
                 "           fall short if the value is impossible for your data.",
-        default="global", choices=("pair", "global")),
+        default=default("clm_label.target_metric.scope"),
+        choices=choices("clm_label.target_metric.scope")),
+    # The cap of 1 is the wizard's: the run takes any tolerance of 0 or more, and
+    # one above 1 lets most targets count as reached.
     Question(
         "clm_label.target_metric.tolerance", "float", "How close counts as 'reached'",
         explain="If the finished labelling lands further than this "
                 "from your target,\nthe run says so rather than "
                 "reporting the number you asked for.",
-        default=0.01, lo=0.0, hi=1.0),
+        default=default("clm_label.target_metric.tolerance"),
+        lo=_lo("clm_label.target_metric.tolerance"), hi=1.0),
 
     # single_match
     Question(
@@ -215,7 +238,7 @@ _QUESTIONS: Final[Sequence[Question]] = [
         "If a rule targets several clusters, how to split the label between them",
         explain="proportional_to_size : bigger clusters get more of the label (usual choice).\n"
                 "equal                : each targeted cluster gets the same amount.",
-        default="proportional_to_size", choices=("proportional_to_size", "equal")),
+        default=default("clm_label.split_rule"), choices=choices("clm_label.split_rule")),
 
     # spillover
     Question(
@@ -226,16 +249,16 @@ _QUESTIONS: Final[Sequence[Question]] = [
                 "  uniform                  : spread evenly, this CHANGES your proportions.\n"
                 "  concentrated             : dump all leftovers into one label, this also\n"
                 "                             CHANGES your proportions.",
-        default="proportional_to_marginal",
-        choices=("proportional_to_marginal", "uniform", "concentrated")),
-    # engine_max (each label < M) is dynamic in M, so the wizard applies it at
-    # the call site; only the static lower bound is declared here.
+        default=default("clm_label.spillover_rule"),
+        choices=choices("clm_label.spillover_rule")),
+    # The upper bound (each label < M) depends on M, so the wizard applies it at
+    # the call site; only the lower bound is declared here.
     Question(
         "clm_label.concentrated_labels", "int_list",
         "Which label value(s) should absorb the leftovers",
         explain="All leftover points go to these labels. Leave one value for the\n"
                 "usual case; the default without this is the single largest label.",
-        lo=0, engine_min=0),
+        lo=0),
 
     # competing noise
     Question(
@@ -261,14 +284,16 @@ _QUESTIONS: Final[Sequence[Question]] = [
     Question(
         "clm_label.competing_noise.share", "float",
         "    share of that cluster's LEFTOVER points to convert (0..1)",
-        default=1.0, lo=0.0, hi=1.0),
+        default=default("clm_label.competing_noise.share"),
+        lo=_lo("clm_label.competing_noise.share"), hi=_hi("clm_label.competing_noise.share")),
     Question(
         "clm_label.competing_noise.favors", "choice",
         "    where the competing label sits in the cluster",
         explain="boundary : the cluster's rim (the usual 'hard case').\n"
                 "core     : the cluster's center.\n"
                 "random   : anywhere in the cluster.",
-        default="boundary", choices=("boundary", "core", "random")),
+        default=default("clm_label.competing_noise.favors"),
+        choices=choices("clm_label.competing_noise.favors")),
     Question(
         "clm_label.competing_noise._add_another", "bool",
         "  Add another competing-noise entry?", default=False),
@@ -289,15 +314,19 @@ _QUESTIONS: Final[Sequence[Question]] = [
                 "              (tune with 'steepness').\n"
                 "step        : a hard cut, take the N nearest (or farthest),\n"
                 "              nothing in between.",
-        default="linear", choices=("linear", "exponential", "step")),
+        default=default("clm_label.centroid_dependence.profile"),
+        choices=choices("clm_label.centroid_dependence.profile")),
     Question(
         "clm_label.centroid_dependence.favors", "choice", "Put the labelled points at the",
         explain="core     : the center of each cluster.\n"
                 "boundary : the edge/rim of each cluster.",
-        default="core", choices=("core", "boundary")),
+        default=default("clm_label.centroid_dependence.favors"),
+        choices=choices("clm_label.centroid_dependence.favors")),
     Question(
         "clm_label.centroid_dependence.steepness", "float",
-        "Steepness (higher = more extreme; typical 2-8)", default=3.0, lo=0.0),
+        "Steepness (higher = more extreme; typical 2-8)",
+        default=default("clm_label.centroid_dependence.steepness"),
+        lo=_lo("clm_label.centroid_dependence.steepness")),
 
     # feature dependence
     Question(
@@ -325,7 +354,8 @@ _QUESTIONS: Final[Sequence[Question]] = [
         explain="high  : the highest values of the feature in each cluster.\n"
                 "low   : the lowest values of the feature in each cluster.\n"
                 "value : the values closest to a number you give next.",
-        default="high", choices=("high", "low", "value")),
+        default=default("clm_label.feature_dependence.favors"),
+        choices=choices("clm_label.feature_dependence.favors")),
     Question(
         "clm_label.feature_dependence.value", "float", "    the value to sit close to",
         explain="In the units of the feature as the output CSV shows it, so after the\n"
@@ -337,7 +367,8 @@ _QUESTIONS: Final[Sequence[Question]] = [
         explain="linear : gentle; on a single feature the effect is small, above all for\n"
                 "         'value', and one far-off point can erase it.\n"
                 "step   : a hard cut, take the N best points, nothing in between.",
-        default="linear", choices=("linear", "step")),
+        default=default("clm_label.feature_dependence.profile"),
+        choices=choices("clm_label.feature_dependence.profile")),
     Question(
         "clm_label.feature_dependence._add_another", "bool",
         "  Add another label that follows a feature?", default=False),
@@ -348,7 +379,7 @@ _QUESTIONS: Final[Sequence[Question]] = [
         explain="balanced   : every label is roughly the same size.\n"
                 "unbalanced : some labels are bigger than others (like real data,\n"
                 "             where one class is often much more common).",
-        default="balanced", choices=("balanced", "unbalanced")),
+        default=default("clm_label.balance"), choices=choices("clm_label.balance")),
     Question(
         "clm_label._explicit_proportions", "bool", "Type the exact sizes yourself?",
         explain="Yes: you give the fraction for each label (they must add up to 1).\n"
@@ -368,26 +399,34 @@ _QUESTIONS: Final[Sequence[Question]] = [
                 "  dirichlet         : sizes drawn at RANDOM but repeatable from the seed.\n"
                 "                      'alpha' sets how uneven: <1 = very lopsided,\n"
                 "                      >1 = nearly equal. Good for sampling many imbalances.",
-        default="geometric", choices=("geometric", "dominant_minority", "dirichlet")),
+        default="geometric", choices=choices("clm_label.skew_rule")),
+    # The cap of 1 is the wizard's: the run takes any ratio of 0 or more, and one
+    # above 1 makes each label larger than the one before.
     Question(
         "clm_label.skew_params.ratio", "float", "ratio (0..1; smaller = steeper drop-off)",
-        default=0.5, lo=0.0, hi=1.0, engine_min=0.0,
+        default=default("clm_label.skew_params.ratio"),
+        lo=_lo("clm_label.skew_params.ratio"), hi=1.0,
         visible_when=_skew_live("geometric")),
-    # engine_max (dominant_index < M) is dynamic in M, so the wizard applies it at
-    # the call site; only the static lower bound is declared here for the property.
+    # The upper bound (dominant_index < M) depends on M, so the wizard applies it at
+    # the call site; only the lower bound is declared here.
     Question(
         "clm_label.skew_params.dominant_index", "int", "which label is the big one (0..M-1)",
-        default=0, lo=0, engine_min=0,
+        default=default("clm_label.skew_params.dominant_index"),
+        lo=_lo("clm_label.skew_params.dominant_index", int),
         visible_when=_skew_live("dominant_minority")),
     Question(
         "clm_label.skew_params.dominant_share", "float", "its share of all points (0..1, e.g. 0.5)",
-        default=0.5, lo=0.0, hi=1.0, engine_min=0.0, engine_max=1.0,
+        default=default("clm_label.skew_params.dominant_share"),
+        lo=_lo("clm_label.skew_params.dominant_share"),
+        hi=_hi("clm_label.skew_params.dominant_share"),
         visible_when=_skew_live("dominant_minority")),
     # alpha > 0 strictly: the engine divides by the normalized draw, so exactly 0
     # is a divide-by-zero. lo_strict makes the wizard refuse 0.0 as the engine does.
     Question(
         "clm_label.skew_params.alpha", "float", "alpha (smaller = more lopsided; try 0.3 or 1.0)",
-        default=1.0, lo=0.0, lo_strict=True, engine_min=0.0, engine_min_strict=True,
+        default=default("clm_label.skew_params.alpha"),
+        lo=_lo("clm_label.skew_params.alpha"),
+        lo_strict=SETTINGS["clm_label.skew_params.alpha"].lo_strict,
         visible_when=_skew_live("dirichlet")),
 
     # -- 4. Save & run ------------------------------------------------------

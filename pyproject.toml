@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clmsynth"
-version = "0.7.7"
+version = "0.7.8"
 description = "Synthetic label generator with configurable cluster-label matching (CLM) against ground-truth clusters"
 readme = "README.md"
-requires-python = ">=3.12,<3.16"
+requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE.txt"]
 # Authorship (the method and the accompanying article) is shared; the program
@@ -30,19 +30,27 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "numpy>=2.0",
-    "pandas>=3.0",
-    "scipy>=1.13",
-    "scikit-learn>=1.4.2",
+    "numpy>=2.3.0",
+    "pandas>=2.3",
+    "scipy>=1.16.0",
+    "scikit-learn>=1.7.0",
 ]
 
 [project.optional-dependencies]
 # A config file other than .json is read and written with PyYAML.
 yaml = ["PyYAML>=6.0.1"]
 # The plots in png/. A single run draws them whenever matplotlib is installed.
-viz = ["matplotlib>=3.8.4"]
+viz = ["matplotlib>=3.11.0"]
 dev = ["pandas-stubs", "scipy-stubs", "ruff", "mypy", "bandit"]
-test = ["pytest>=9", "PyYAML>=6.0.1", "matplotlib>=3.8.4"]
+test = ["pytest>=9", "PyYAML>=6.0.1", "matplotlib>=3.11.0"]
+
+[dependency-groups]
+test = ["pytest>=9", "PyYAML>=6.0.1", "matplotlib>=3.11.0"]
+dev = [
+    { include-group = "test" },
+    "pandas-stubs", "scipy-stubs", "ruff", "mypy", "bandit",
+    "tox>=4", "pre-commit",
+]
 
 [project.urls]
 Homepage = "https://github.com/A-Gharibian/CLMSynth"
@@ -67,12 +75,13 @@ clmsynth = ["py.typed"]
 minversion = "9.0"
 testpaths = ["tests"]
 # Fail on an unregistered mark rather than silently treating it as a no-op.
-addopts = "--strict-markers --strict-config"
+addopts = "-ra --strict-markers --strict-config"
+log_level = "INFO"
+xfail_strict = true
+filterwarnings = ["error"]
 
 [tool.ruff]
-target-version = "py312"
 line-length = 100
-src = ["src"]
 
 [tool.ruff.lint]
 
@@ -118,14 +127,13 @@ banned-module-level-imports = ["matplotlib", "clmsynth._extras", "yaml"]
 "src/clmsynth/_extras/visualization.py" = ["TID253"]
 # Tests import the wizard and the plotter directly, on purpose.
 "tests/**" = ["TID251", "TID253"]
-# The guides import each other; the two old import paths re-export them until 0.7.8.
+# The guides import each other.
 "src/clmsynth/_config_gen/**" = ["TID251"]
-"src/clmsynth/generate_config.py" = ["TID251"]
-"src/clmsynth/config_template.py" = ["TID251"]
 # Repository tools, not shipped: they read YAML at the top.
 "tools/**" = ["TID253"]
 
 [tool.mypy]
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 ignore_missing_imports = true
 files = ["src/clmsynth", "tools", "tests"]
 check_untyped_defs = true
@@ -136,19 +144,33 @@ warn_unreachable = true
 strict_equality = true
 
 [tool.bandit]
-# Read with `bandit -c pyproject.toml -r src/clmsynth`. these five findings were traced by
+# Read with `bandit -c pyproject.toml -r src/clmsynth`. these seven findings were traced by
 # hand. The threat model throughout is a local single-user CLI and
 # library, no auth boundary, and no untrusted caller (see SECURITY.md). Every
 # input below is supplied by the user.
 #
-#   B101  Two asserts in clm_label_engine guard internal allocation invariants
+#   B101  Two asserts in spatial_placement guard internal allocation invariants
 #         that no configuration can reach, and one in the wizard guards the
 #         question schema's own shape; they are programmer errors, not user
 #         input validation, which is what the [CLM-###] codes are for. Their
 #         disappearance under -O is acceptable exactly because nothing user-facing depends on them.
 #   B404  The wizard imports subprocess to launch the run the user just
-#         finished configuring, at their explicit prompt.
-#   B603  That same call. The argument vector is built from sys.executable and
-#         a config path the wizard itself wrote; no shell, no user string
-#         reaching argv.
+#         finished configuring, at their explicit prompt. The batch runner
+#         imports it to start one clmsynth process per config.
+#   B603  Those two calls. Each argument vector is built from sys.executable,
+#         fixed flags and config paths, passed after "--": the one the wizard
+#         itself wrote, or the ones the batch's own command line named. No shell.
+#         tools/CLM_catalog_gen.py, outside this scan, does the same with the
+#         case files it writes.
 skips = ["B101", "B404", "B603"]
+
+[tool.codespell]
+# Data files and the troubleshooting catalog's recorded logs are not prose.
+skip = "*.csv,*.log"
+# The manual's \cna table macro and a numpy dtype-kind string, not words.
+ignore-regex = '\\cna|"fO"'
+
+[tool.repo-review]
+# Not used here: a formatter (PC110), a type-check hook (PC140: mypy runs in CI and
+# tox), rST checks (PC170), a Markdown formatter (PC180) and pre-commit.ci (PC901).
+ignore = ["PC110", "PC140", "PC170", "PC180", "PC901"]

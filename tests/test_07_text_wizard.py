@@ -5,12 +5,13 @@ program depends on. Four properties make it safe to keep and safe to throw
 away. This module pins the first two; ruff enforces the other two
 (TID253 and TID251 in pyproject.toml):
 
-* **Ranges agree with the engine.** Every bound the schema marks as engine-owned
-  is probed just outside; the engine must refuse it. A wizard bound *wider* than
-  the engine's is a config the wizard builds happily and the engine rejects,
-  which is the whole reason the wizard carries ranges at all.
+* **Ranges agree with the run.** Each bound of a question is the run's own, read
+  from its settings record, except the sides where the wizard is narrower on
+  purpose. A wizard bound *wider* than the run's is a config the wizard builds
+  happily and the engine rejects, which is the whole reason the wizard carries
+  ranges at all.
 * **The negative-target guard is wizard-only.** MCC/ARI targets floor at 0.0 in
-  the wizard while the engine is left exactly as it is (no engine bound), because
+  the wizard while the engine is left exactly as it is (it takes -1 to 1), because
   a negative target is meaningful but not something the program promises to solve.
 * **The wizard's import graph stays light.** Importing it (or the schema) does not
   pull matplotlib, so a future help command built on the schema pays for nothing
@@ -31,6 +32,7 @@ import clmsynth._config_gen.config_wizard as wizard
 from clmsynth import load_config
 from clmsynth._config_gen.questions import SCHEMA
 from clmsynth.clm_label_engine import generate_clm_labels
+from clmsynth.config_tree import SETTINGS
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -47,45 +49,6 @@ def geometry(sizes, seed=0):
         coords.append(rng.normal(centre, 1.0, size=(n, 2)))
         labels.append(np.full(n, k))
     return np.concatenate(labels), np.concatenate(coords)
-
-
-def live_clm(skew_rule, skew_params):
-    """A clm_label config in which skew_params are actually consumed: unbalanced,
-    no explicit proportions, and the matching valid custom bijection so
-    generate_clm_labels reaches _validate_skew_cfg."""
-    return {
-        "num_classes": 4,
-        "balance": "unbalanced",
-        "matching_mode": "custom",
-        "assignment_matrix": [
-            {"clusters": [i], "label": i, "recall_target": 0.2} for i in range(4)
-        ],
-        "split_rule": "proportional_to_size",
-        "spillover_rule": "proportional_to_marginal",
-        "skew_rule": skew_rule,
-        "skew_params": skew_params,
-        "centroid_dependence": {"enabled": False},
-    }
-
-
-# How each bounded question goes live.
-ENGINE_BOUNDED = {
-    "clm_label.skew_params.ratio": ("geometric", "[CLM-131]"),
-    "clm_label.skew_params.dominant_index": ("dominant_minority", "[CLM-131]"),
-    "clm_label.skew_params.dominant_share": ("dominant_minority", "[CLM-131]"),
-    "clm_label.skew_params.alpha": ("dirichlet", "[CLM-131]"),
-    "clm_label.num_classes": (None, "[CLM-126]"),
-    "clm_label.concentrated_labels": (None, "[CLM-128]"),
-}
-# Extra clm keys a bounded value needs before the engine consults it.
-LIVE_EXTRAS = {
-    "clm_label.concentrated_labels": {"spillover_rule": "concentrated"},
-}
-VALID_PARAMS = {
-    "geometric": {"ratio": 0.5},
-    "dominant_minority": {"dominant_index": 0, "dominant_share": 0.6},
-    "dirichlet": {"alpha": 1.0},
-}
 
 
 @pytest.fixture
@@ -117,66 +80,6 @@ def test_schema_keys_and_prompts_agree():
 
 
 # ---------------------------------------------------------------------------
-# The agreement property: a value outside an engine bound is refused by the engine
-# ---------------------------------------------------------------------------
-
-
-def _bad_values(q):
-    """Values just outside q's engine bound(s), which the engine must reject."""
-    integral = q.kind in ("int", "int_list")
-    vals = []
-    if q.engine_min is not None:
-        vals.append(int(q.engine_min) - 1 if integral else q.engine_min - 0.5)
-        if q.engine_min_strict:
-            vals.append(float(q.engine_min))  # the strict boundary itself
-    if q.engine_max is not None:
-        vals.append(int(q.engine_max) + 1 if integral else q.engine_max + 0.5)
-    return [[v] for v in vals] if q.kind == "int_list" else vals
-
-
-_CASES = [
-    (q.key, bad)
-    for q in SCHEMA.values()
-    if q.engine_min is not None or q.engine_max is not None
-    for bad in _bad_values(q)
-]
-
-
-def test_every_engine_bounded_question_is_handled():
-    """New engine bounds need deliberate handling."""
-    bounded = {
-        q.key for q in SCHEMA.values() if q.engine_min is not None or q.engine_max is not None
-    }
-    assert bounded == set(ENGINE_BOUNDED), (
-        f"unhandled engine-bounded questions: {bounded - set(ENGINE_BOUNDED)}"
-    )
-
-
-@pytest.mark.parametrize("key,bad", _CASES, ids=[f"{k.split('.')[-1]}={b}" for k, b in _CASES])
-def test_a_value_outside_a_declared_engine_bound_is_refused(key, bad):
-    """This fails precisely when a wizard bound is WIDER than the engine's, the
-    outcome the wizard exists to prevent. Each bound names its owning code.
-    """
-    q = SCHEMA[key]
-    rule, code = ENGINE_BOUNDED[key]
-    leaf = key.split(".")[-1]
-    if rule is None:
-        clm = live_clm("geometric", dict(VALID_PARAMS["geometric"]))
-        clm[leaf] = bad
-    else:
-        params = dict(VALID_PARAMS[rule])
-        params[leaf] = bad
-        clm = live_clm(rule, params)
-    clm.update(LIVE_EXTRAS.get(key, {}))
-    assert q.visible_when(clm), "the value must be live for the engine to consult it"
-
-    c, X = geometry([200, 200, 200, 200])
-    with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(c, X, clm, seed=1)
-    assert code in str(excinfo.value), f"got a different error: {excinfo.value}"
-
-
-# ---------------------------------------------------------------------------
 # The negative-target guard is wizard-only
 # ---------------------------------------------------------------------------
 
@@ -184,7 +87,7 @@ def test_a_value_outside_a_declared_engine_bound_is_refused(key, bad):
 def test_target_value_bound_is_the_wizard_only_floor():
     q = SCHEMA["clm_label.target_metric.value"]
     assert (q.lo, q.hi) == (0.0, 1.0), "the MCC/ARI target must floor at 0.0 in the wizard"
-    assert q.engine_min is None and q.engine_max is None, (
+    assert SETTINGS["clm_label.target_metric.value"].lo == -1, (
         "the target floor is deliberately wizard-only; the engine is left unchanged"
     )
 
@@ -209,6 +112,55 @@ def test_wizard_rejects_num_classes_above_the_engine_cap(stdin):
     stdin.extend(["65", "4"])
     assert wizard.ask_from("clm_label.num_classes") == 4
     assert not stdin
+
+
+@pytest.mark.parametrize(("key", "bad", "valid"), [
+    pytest.param("label_generation.seed", "-1", 0, id="negative-label-seed"),
+    pytest.param("registry_suite.seed", "-1", 0, id="negative-source-seed"),
+    pytest.param("label_generation.n_labels", "10001", 10000, id="too-many-labels"),
+])
+def test_an_answer_the_run_refuses_is_asked_again(stdin, key, bad, valid):
+    """A seed below 0 and `n_labels` above 10 000 went into a config the command
+    then refused. The answer at the bound itself is taken."""
+    stdin.extend([bad, str(valid)])
+    assert wizard.ask_from(key) == valid
+    assert not stdin, "the replacement answer must have been read"
+
+
+def test_several_ids_where_one_cluster_is_asked_are_asked_again(stdin):
+    """`1, 2` kept 1 without a word."""
+    stdin.extend(["1, 2", "2"])
+    assert wizard.ask_from("clm_label.single_match.cluster") == 2
+    assert not stdin, "the replacement answer must have been read"
+
+
+# The sides where the wizard asks within a narrower range than the run takes, on purpose.
+NARROWER_ON_PURPOSE = {
+    "label_generation.n_labels": "lo",
+    "clm_label.num_classes": "lo",
+    "clm_label.target_metric.value": "lo",
+    "clm_label.target_metric.tolerance": "hi",
+    "clm_label.skew_params.ratio": "hi",
+}
+
+
+def test_a_question_asks_within_the_run_s_own_bounds():
+    """Each bound of a question is the run's, from its settings record, but for the
+    sides named above, where the wizard is narrower and never wider."""
+    assert set(NARROWER_ON_PURPOSE) <= set(SCHEMA)
+    for key, q in SCHEMA.items():
+        record = SETTINGS.get(key)
+        if record is None or (record.lo is None and record.hi is None):
+            continue
+        narrower = NARROWER_ON_PURPOSE.get(key)
+        if narrower == "lo":
+            assert q.lo is not None and (record.lo is None or q.lo > record.lo), key
+        else:
+            assert (q.lo, q.lo_strict) == (record.lo, record.lo_strict), key
+        if narrower == "hi":
+            assert q.hi is not None and (record.hi is None or q.hi < record.hi), key
+        else:
+            assert q.hi == record.hi, key
 
 
 def test_proportions_prompt_re_asks_on_empty_input(stdin):

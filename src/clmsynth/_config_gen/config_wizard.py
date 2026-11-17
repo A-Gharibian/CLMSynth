@@ -21,6 +21,7 @@ from .._utils.compat import import_optional_dependency, is_installed
 from .._utils.write_files import resolved_for_report as _resolved_or_raw
 from .._utils.write_files import write_text_atomic
 from ..byoc_source import DEFAULT_INPUT_DIR
+from ..config_tree import applies
 from ..dataset_sources import SOURCE_DATASETS, SOURCE_METADATA, SOURCES, is_heavy
 from .questions import SCHEMA
 
@@ -28,7 +29,7 @@ from .questions import SCHEMA
 _MAX_PATH = 260
 
 
-def _save_config(config: dict, out: str) -> str:
+def _save_config(config: dict[str, Any], out: str) -> str:
     """Write the config, creating its folder: JSON for a .json path, else YAML."""
     if out.lower().endswith(".json"):
         text = json.dumps(config, indent=2, ensure_ascii=False) + "\n"
@@ -171,7 +172,7 @@ def _parse_ids(raw: str) -> list[int] | None:
         return None
 
 
-def ask_cluster_ids(prompt, explain=None) -> list:
+def ask_cluster_ids(prompt, explain=None) -> list[int]:
     """Asks for one or more cluster ids, re-asking on empty input.
     """
     _explain(explain)
@@ -184,8 +185,13 @@ def ask_cluster_ids(prompt, explain=None) -> list:
 
 
 def ask_cluster_id(prompt, explain=None):
-    """Asks for exactly ONE cluster id; extra ids are ignored."""
-    return ask_cluster_ids(prompt, explain)[0]
+    """Asks for exactly ONE cluster id, re-asking when several are given."""
+    while True:
+        ids = ask_cluster_ids(prompt, explain)
+        if len(ids) == 1:
+            return ids[0]
+        print("    (one cluster id is asked here)")
+        explain = None
 
 
 def ask_ints(prompt, explain=None, minv=None, maxv=None) -> list[int]:
@@ -576,9 +582,18 @@ def build_clm(known_k=None) -> dict[str, Any]:
         if prof == "exponential":
             cd["steepness"] = ask_from("clm_label.centroid_dependence.steepness")
         clm["centroid_dependence"] = cd
+    elif applies("clm_label.centroid_dependence.profile", clm):
+        print("\n  Your competing-noise entries at the core or boundary are placed by "
+              "distance\n  to the cluster center, with this profile:")
+        prof = ask_from("clm_label.centroid_dependence.profile")
+        cd = {"enabled": False, "profile": prof}
+        if prof == "exponential":
+            cd["steepness"] = ask_from("clm_label.centroid_dependence.steepness")
+        clm["centroid_dependence"] = cd
 
     # Not beside center/edge placement: every run would refuse the two ([CLM-141]).
-    if (mode in ("single", "custom") and "centroid_dependence" not in clm
+    if (mode in ("single", "custom")
+            and not (clm.get("centroid_dependence") or {}).get("enabled")
             and ask_from("clm_label.feature_dependence._enabled")):
         clm["feature_dependence"] = _build_follows(M)
 
@@ -644,7 +659,7 @@ def _build_rules(omit_recall, M):
     return rules
 
 
-def _named_twice(label, clusters: list, named: dict[tuple[Any, Any], int]) -> str | None:
+def _named_twice(label, clusters: list[int], named: dict[tuple[Any, Any], int]) -> str | None:
     """Why every run would refuse these clusters for `label` ([CLM-142]), or None."""
     seen = set()
     for k in clusters:
@@ -743,18 +758,20 @@ def _run() -> None:
         out = str(Path(out).with_name("config_" + Path(out).name))
     _save_config(config, out)
     print(f"\n  Wrote '{out}'.")
-    print(f"  Run it any time with:  clmsynth {out}")
+    # "--": a config name starting with "-" would be read as an option.
+    command = f"clmsynth -- {out}" if out.startswith("-") else f"clmsynth {out}"
+    print(f"  Run it any time with:  {command}")
     if ask_from("run.now"):
         flags = [] if not is_installed("matplotlib") or ask_from("run.plots") else ["--no-viz"]
         # check=False, deliberately: the pipeline reports its own failures with a
         # coded message, and a CalledProcessError traceback on top of that would
         # bury it.
-        result = subprocess.run([sys.executable, "-m", "clmsynth", out, *flags],
+        result = subprocess.run([sys.executable, "-m", "clmsynth", *flags, "--", out],
                                 check=False)
         if result.returncode != 0:
             print(f"\n  The run exited with code {result.returncode}; see the messages above. "
                   f"Your configuration is saved, so you can edit '{out}' and retry with:"
-                  f"\n      clmsynth {out}")
+                  f"\n      {command}")
 
 
 def main() -> None:

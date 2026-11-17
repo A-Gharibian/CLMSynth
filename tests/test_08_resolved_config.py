@@ -6,8 +6,9 @@ file it was given (`resolved_config.py`). What is checked, in order:
   reproduction     Running a resolved config again writes byte-identical CSVs,
                    across matching modes, skew rules, targets, competing noise,
                    placement, drawn seeds and a dataset the run skipped. It is
-                   also the guard for the engine defaults that resolved_config.py
-                   restates: one that drifts changes the labels and fails here.
+                   also the guard for the defaults that resolved_config.py writes
+                   out: one the engine does not use changes the labels and fails
+                   here.
   idempotence      Resolving a resolved config changes nothing.
   left out         Keys the run never reads, or reads and ignores ([CLM-301],
                    [CLM-302], [CLM-303], [CLM-311]), are not in it.
@@ -20,6 +21,8 @@ file it was given (`resolved_config.py`). What is checked, in order:
                    is given, and reads back the same in each.
   the CLI          `main` writes the resolved config in the format of its input,
                    and no copy of the input.
+  dataset cache    A run that reads its datasets from the cache writes the same
+                   CSVs and summaries as the run that fetched them.
 """
 
 import json
@@ -33,6 +36,7 @@ import pytest
 import clmsynth.__main__
 from clmsynth import run_pipeline
 from clmsynth.clm_label_engine import generate_clm_labels
+from clmsynth.config_tree import SETTINGS, applies
 from clmsynth.resolved_config import RESOLVED_CONFIG_NAME, TARGET_METRIC, resolve_config
 
 
@@ -300,7 +304,23 @@ def test_an_unknown_matching_mode_keeps_the_whole_block():
     assert resolved_label_generation(clm)["clm_label"] == clm
 
 
-def test_the_restated_search_defaults_are_the_engines(caplog):
+def test_a_setting_s_record_names_its_codes():
+    record = SETTINGS["clm_label.num_classes"]
+    assert (record.missing_code, record.invalid_code) == (201, 126)
+
+
+def test_a_setting_s_record_says_when_it_applies():
+    """The profile is read when centroid_dependence is enabled or a competing_noise
+    entry is placed by distance; the run, the saved config and the wizard ask this."""
+    profile = "clm_label.centroid_dependence.profile"
+    assert applies(profile, {"centroid_dependence": {"enabled": True}})
+    assert applies(profile, {"competing_noise": [{"cluster": 0, "label": 1, "favors": "core"}]})
+    assert not applies(profile, {"competing_noise": [{"cluster": 0, "label": 1,
+                                                      "favors": "random"}]})
+    assert not applies(profile, {})
+
+
+def test_the_search_defaults_are_the_engines(caplog):
     """A target above the size ceiling never converges, and [CLM-306] then
     reports the max_iter and tolerance the engine used."""
     clusters = np.repeat([0, 1, 2, 3], [100, 80, 60, 40])
@@ -405,3 +425,42 @@ def test_a_run_names_the_numpy_it_ran_on_in_its_log_only(tmp_path, monkeypatch, 
     log = (run_dir / "info" / f"{run_dir.name}.log").read_text(encoding="utf-8")
     assert f"numpy {np.__version__}" in log
     assert f"numpy {np.__version__}" not in caplog.text
+
+
+def test_a_dataset_read_back_gives_the_labels_a_fetched_one_gives(
+        cache_dir, network, tmp_path, caplog):
+    """End to end: the second run reads both datasets from the dataset cache, without
+    the network, and writes the same CSVs and summaries as the first. 40 points are
+    too few for the memory order of the features to move a label: that order is
+    checked frame by frame in
+    test_04_failure_modes::test_a_dataset_read_back_is_the_frame_the_source_gave."""
+    config: dict[str, Any] = {
+        "global_settings": {"data_source": "clustbench"},
+        "clustbench_suite": {"batteries": ["wut"], "datasets": ["x1", "x2"]},
+        "label_generation": {"n_labels": 2, "seed": 7, "clm_label": {
+            "num_classes": 3, "matching_mode": "custom",
+            "assignment_matrix": [{"clusters": [k], "label": k, "recall_target": 0.7}
+                                  for k in range(3)],
+            "centroid_dependence": {"enabled": True, "favors": "core"},
+        }},
+    }
+
+    def run(folder):
+        dirs = [folder / sub for sub in ("csv", "png", "txt")]
+        for d in dirs:
+            d.mkdir(parents=True)
+        n = run_pipeline("clustbench", config, dirs[0], dirs[1], dirs[2],
+                         render_plots=False, cache=True)
+        return n, dirs[0], dirs[2]
+
+    with caplog.at_level(logging.INFO, logger="clmsynth"):
+        first = run(tmp_path / "first")
+        requested = len(network)
+        second = run(tmp_path / "second")
+    assert first[0] == second[0] == 2
+    assert len(network) == requested
+    for stem in ("clustbench-wut-x1", "clustbench-wut-x2"):
+        assert (second[1] / f"{stem}.csv").read_bytes() == (first[1] / f"{stem}.csv").read_bytes()
+        assert (second[2] / f"{stem}.txt").read_text() == (first[2] / f"{stem}.txt").read_text()
+    assert f"Dataset cache: '{cache_dir}'" in caplog.text
+    assert caplog.text.count("read from the dataset cache") == 2

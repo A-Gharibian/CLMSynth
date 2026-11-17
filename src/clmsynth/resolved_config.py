@@ -13,7 +13,8 @@ from typing import Any, Final
 
 import numpy as np
 
-from .config_tree import choices, default
+from .config_tree import applies, choices, default, drop_empty
+from .config_validation import _is_int
 
 __all__ = [
     "BALANCE",
@@ -69,7 +70,7 @@ def resolve_config(config: Mapping[str, Any], source: str, batteries: list[str],
                    datasets_cfg: Any, jobs: list[tuple[str, str]], fetch_seed: int | None,
                    fetch_kwargs: Mapping[str, Any], label_seed: int) -> dict[str, Any]:
     global_settings = config.get("global_settings") or {}
-    output_dir = (global_settings.get("output_dir", OUTPUT_DIR)
+    output_dir = (_or_default(global_settings.get("output_dir"), OUTPUT_DIR)
                   if isinstance(global_settings, Mapping) else OUTPUT_DIR)
     ran = list(dict.fromkeys(dataset for _, dataset in jobs))
     suite: dict[str, Any] = {"batteries": list(batteries), "datasets": ran or datasets_cfg}
@@ -87,10 +88,10 @@ def resolve_config(config: Mapping[str, Any], source: str, batteries: list[str],
 
 
 def _resolve_label_generation(label_cfg: Mapping[str, Any], label_seed: int) -> dict[str, Any]:
-    n_labels = label_cfg.get("n_labels", N_LABELS)
+    n_labels = _or_default(label_cfg.get("n_labels"), N_LABELS)
     out: dict[str, Any] = {
         "n_labels": n_labels,
-        "source_labeling": label_cfg.get("source_labeling", SOURCE_LABELING),
+        "source_labeling": _or_default(label_cfg.get("source_labeling"), SOURCE_LABELING),
         "seed": label_seed,
     }
     # `noise` is accepted and never read. clm_label is read only to generate a
@@ -103,6 +104,7 @@ def _resolve_label_generation(label_cfg: Mapping[str, Any], label_seed: int) -> 
 
 def _resolve_clm(clm: Any) -> Any:
     """The clm_label block as generate_clm_labels reads it for its matching_mode."""
+    clm = drop_empty(clm)
     if not isinstance(clm, Mapping) or clm.get("matching_mode") not in _MATCHING_MODES:
         return clm          # refused as it stands: [CLM-141], [CLM-202] or [CLM-101]
     mode = clm["matching_mode"]
@@ -148,9 +150,8 @@ def _resolve_clm(clm: Any) -> Any:
             if noise_entries is not None else noise)
     if tm:
         out["target_metric"] = _resolve_target(tm) if mode != "perfect" else tm
-    noise_placed = any(e.get("favors", NOISE_ENTRY["favors"]) in ("core", "boundary")
-                       for e in noise_entries or [])
-    out["centroid_dependence"] = _resolve_centroid(clm.get("centroid_dependence"), noise_placed)
+    out["centroid_dependence"] = _resolve_centroid(
+        clm.get("centroid_dependence"), applies("clm_label.centroid_dependence.profile", clm))
     follows = clm.get("feature_dependence")
     if follows:
         entries = _mappings(follows)
@@ -218,7 +219,7 @@ def _resolve_target(tm: Any) -> Any:
     return out
 
 
-def _resolve_centroid(cd: Any, noise_placed: bool) -> Any:
+def _resolve_centroid(cd: Any, profile_read: bool) -> Any:
     """centroid_dependence: favors when enabled, the profile when anything is
     placed by distance, steepness for the exponential profile only."""
     if cd and not isinstance(cd, Mapping):
@@ -228,7 +229,7 @@ def _resolve_centroid(cd: Any, noise_placed: bool) -> Any:
     out: dict[str, Any] = {"enabled": enabled}
     if enabled:
         out["favors"] = cd.get("favors", CENTROID["favors"])
-    if enabled or noise_placed:
+    if profile_read:
         out["profile"] = cd.get("profile", CENTROID["profile"])
         if out["profile"] == "exponential":
             out["steepness"] = cd.get("steepness", CENTROID["steepness"])
@@ -245,6 +246,11 @@ def _resolve_follow(entry: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _or_default(value: Any, fallback: Any) -> Any:
+    """An empty setting is absent: it takes its default."""
+    return fallback if value is None else value
+
+
 def _present(block: Mapping[str, Any], *keys: str) -> dict[str, Any]:
     """The given keys that `block` has, in that order."""
     return {k: block[k] for k in keys if k in block}
@@ -255,10 +261,6 @@ def _mappings(value: Any) -> list[Mapping[str, Any]] | None:
     if isinstance(value, (list, tuple)) and all(isinstance(e, Mapping) for e in value):
         return list(value)
     return None
-
-
-def _is_int(value: Any) -> bool:
-    return isinstance(value, (int, np.integer)) and not isinstance(value, bool)
 
 
 def plain(value: Any) -> Any:

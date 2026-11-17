@@ -425,6 +425,8 @@ CASES = [
     # other mode this config is refused with [CLM-125].
     ("3xx", 311, "centroid_dependence under random",
      lambda: labels_only(matching_mode="random", assignment_matrix=None)),
+    ("3xx", 312, "concentrated_labels without spillover_rule concentrated",
+     lambda: c(concentrated_labels=[1])),
 ]
 
 

@@ -10,6 +10,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from .._input_sources import dataset_cache
 from .._utils.cli_logging import run_named_in
 from .._utils.signals import Terminated, sigterm_raises
 
@@ -75,10 +76,16 @@ def batch_configs(paths: list[str]) -> tuple[list[str], bool]:
 
 def _run_config(config: str, flags: list[str], env: dict[str, str]) -> tuple[int, str]:
     """One config as its own clmsynth process: its exit status and its output."""
-    # After "--", a config whose name starts with a dash is still a path.
-    proc = subprocess.run([sys.executable, "-m", "clmsynth", *flags, "--", config],
-                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                          env=env, check=False)
+    try:
+        # After "--", a config whose name starts with a dash is still a path. A byte
+        # outside the batch's encoding is shown escaped.
+        proc = subprocess.run([sys.executable, "-m", "clmsynth", *flags, "--", config],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                              errors="backslashreplace", env=env, check=False)
+    except Exception as e:
+        # Such as a process that cannot be started: this config failed, the batch goes on.
+        log.error(f"Could not run '{config}': {type(e).__name__}: {e}")
+        return 1, ""
     # A child killed by a signal reports -N; a shell reports it as 128 + N.
     code = proc.returncode if proc.returncode >= 0 else 128 - proc.returncode
     return code, proc.stdout
@@ -99,12 +106,13 @@ def _batch_status(codes: list[int]) -> int:
 
 
 def run_batch(configs: list[str], jobs: int, render_plots: bool = False,
-              keep_failed: bool = False) -> int:
+              keep_failed: bool = False, cache: bool = True) -> int:
     """Each config in its own clmsynth process, `jobs` at a time, so each run keeps
     its own folder, log and exit status. A run's output is printed whole when it
     ends. Returns the batch's exit status (`_batch_status`)."""
-    # Every run is told: a run started on its own draws plots by default.
-    flags = ["--viz" if render_plots else "--no-viz"]
+    # Every run is told: a run started on its own draws plots by default and does
+    # not cache.
+    flags = ["--viz" if render_plots else "--no-viz", "--cache" if cache else "--no-cache"]
     if keep_failed:
         flags.append("--keep-failed")
     env = dict(os.environ)
@@ -115,6 +123,12 @@ def run_batch(configs: list[str], jobs: int, render_plots: bool = False,
     n = len(configs)
     plots = "with plots" if render_plots else "without plots (--viz draws them)"
     log.info(f"Batch of {n} config(s), {min(jobs, n)} at a time, {plots}.")
+    if cache:
+        try:
+            log.info(f"Dataset cache: '{dataset_cache.cache_folder()}'; --no-cache fetches "
+                     "every dataset again.")
+        except RuntimeError as e:
+            log.warning(f"Dataset cache: {e}. Set {dataset_cache.ENV_VAR} to a folder.")
 
     results: dict[int, tuple[int, str]] = {}
 

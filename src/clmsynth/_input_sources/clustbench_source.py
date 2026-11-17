@@ -31,11 +31,13 @@ CLUSTBENCH_METADATA: Final[Mapping[str, Mapping[str, str]]] = {
         "examples": "smile, x1, x2, twonorm"
     },
     "sipu": {
-        "description": "SIPU datasets (Fränti & Sieranoja). Features varying densities, high dimensions, and large cluster numbers.",
+        "description": "SIPU datasets (Fränti & Sieranoja)."
+                       "Features varying densities, high dimensions, and large cluster numbers.",
         "examples": "a1, s1, unbalance, birch1"
     },
     "fcps": {
-        "description": "Fundamental Clustering Problem Suite (A. Ultsch). Classic 2D/3D datasets with distinct geometric challenges.",
+        "description": "Fundamental Clustering Problem Suite (A. Ultsch)."
+                       "Classic 2D/3D datasets with distinct geometric challenges.",
         "examples": "atom, chainlink, hepta, lsun"
     },
     "graves": {
@@ -120,7 +122,13 @@ def _loadtxt_url(url: str, **loadtxt_kwargs) -> np.ndarray:
         raise ValueError(
             f"clustbench: refusing to fetch {url!r}: only http(s) is fetched, "
             f"not {scheme!r}. Check clustbench_suite.base_url.")
-    with urllib.request.urlopen(url, timeout=CLUSTBENCH_TIMEOUT) as resp:  # nosec B310
+    try:
+        response = urllib.request.urlopen(url, timeout=CLUSTBENCH_TIMEOUT)  # nosec B310
+    except urllib.error.HTTPError as error:
+        # An HTTPError owns a response too, but is raised before the with below.
+        error.close()
+        raise
+    with response as resp:
         raw = resp.read()
     with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:
         return np.loadtxt(stream, **loadtxt_kwargs)
@@ -141,7 +149,9 @@ def fetch_clustbench_labelings(
     for i in range(max_labelings):
         label_name = f"labels{i}"
         try:
-            labeling[label_name] = _loadtxt_url(f"{target_path}.{label_name}.gz", dtype="int")
+            # ndmin: a one-point dataset's labeling is a list of one, not a bare number.
+            labeling[label_name] = _loadtxt_url(f"{target_path}.{label_name}.gz", dtype="int",
+                                                ndmin=1)
         except urllib.error.HTTPError as e:
             if e.code != 404:
                 failed.append(f"{label_name} ({e})")
@@ -177,6 +187,12 @@ def fetch_clustbench_data(
         return None
 
     labeling = fetch_clustbench_labelings(dataset_group, dataset_name, base_url)
+    dropped = [f"{n} ({len(labels)} values)" for n, labels in labeling.items()
+               if len(labels) != len(data)]
+    if dropped:
+        log.warning(f"{dataset_group}/{dataset_name}: dropped {', '.join(dropped)}, since the "
+                    f"data has {len(data)} rows; continuing with "
+                    f"{len(labeling) - len(dropped)} labeling(s).")
     labeling = {n: labels for n, labels in labeling.items() if len(labels) == len(data)}
     if "labels0" not in labeling:
         log.error(f"No usable labels0 for {dataset_group}/{dataset_name}.")
@@ -201,7 +217,7 @@ SOURCE: Final[Source] = Source(
     datasets=CLUSTBENCH_DATASETS,
     heavy=CLUSTBENCH_HEAVY,
     seeded=False,
-    suite_keys=("base_url",),
+    suite_keys={"base_url": "text"},
     fetch=lambda battery, dataset, seed, **kw: fetch_clustbench_data(
         dataset_group=battery, dataset_name=dataset, **kw),
     licence=("clustering-data-v1 v1.1.0: the repository is AGPL-3.0; its datasets are for "

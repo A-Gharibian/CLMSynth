@@ -66,11 +66,11 @@
     },
     "copyrightYear": 2026,
     "dateCreated": "2026-07-15",
-    "dateModified": "2026-11-11",
+    "dateModified": "2026-11-16",
     "datePublished": "2026-07-31",
     "description": "A synthetic dataset generator that decouples cluster formation from class labels to evaluate cluster-label matching algorithms and measures.",
     "developmentStatus": "https://www.repostatus.org/#active",
-    "downloadUrl": "https://github.com/A-Gharibian/CLMSynth/archive/refs/tags/v0.7.7.tar.gz",
+    "downloadUrl": "https://github.com/A-Gharibian/CLMSynth/archive/refs/tags/v0.7.8.tar.gz",
     "funder": {
         "type": "Organization",
         "name": "VSB - Technical University of Ostrava"
@@ -161,7 +161,7 @@
             "runtimePlatform": "Python 3",
             "sameAs": "https://pypi.org/project/numpy/",
             "license": "https://spdx.org/licenses/BSD-3-Clause",
-            "version": ">=2.0"
+            "version": ">=2.3.0"
         },
         {
             "type": "SoftwareApplication",
@@ -175,7 +175,7 @@
             "runtimePlatform": "Python 3",
             "sameAs": "https://pypi.org/project/pandas/",
             "license": "https://spdx.org/licenses/BSD-3-Clause",
-            "version": ">=3.0"
+            "version": ">=2.3"
         },
         {
             "type": "SoftwareApplication",
@@ -189,7 +189,7 @@
             "runtimePlatform": "Python 3",
             "sameAs": "https://pypi.org/project/scipy/",
             "license": "https://spdx.org/licenses/BSD-3-Clause",
-            "version": ">=1.13"
+            "version": ">=1.16.0"
         },
         {
             "type": "SoftwareApplication",
@@ -203,7 +203,7 @@
             "runtimePlatform": "Python 3",
             "sameAs": "https://pypi.org/project/scikit-learn/",
             "license": "https://spdx.org/licenses/BSD-3-Clause",
-            "version": ">=1.4.2"
+            "version": ">=1.7.0"
         }
     ],
     "softwareSuggestions": [
@@ -219,7 +219,7 @@
             "runtimePlatform": "Python 3",
             "sameAs": "https://pypi.org/project/matplotlib/",
             "license": "https://matplotlib.org/stable/project/license.html",
-            "version": ">=3.8.4",
+            "version": ">=3.11.0",
             "description": "Recommended, the extra 'viz'. Draws the plots in png/; without it a run writes everything else."
         },
         {
@@ -252,6 +252,6 @@
             "description": "Optional. Needed only for data_source 'mdcgen'. It is GPL-3.0, so CLMSynth never ships it: users install it themselves from its repository."
         }
     ],
-    "softwareVersion": "0.7.7",
-    "version": "0.7.7"
+    "softwareVersion": "0.7.8",
+    "version": "0.7.8"
 }

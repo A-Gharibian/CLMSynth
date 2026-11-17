@@ -5,6 +5,55 @@ label generator behavior are additionally explained in the user manual.
 
 ---
 
+## [0.7.8] — 2026-11-16 (TestPyPI)
+
+### Added
+
+- `[CLM-312]` warns for a setting given where nothing reads it.
+- A dataset cache for clustbench and mdcgen: on in a batch (`--no-cache`), off in a single
+  run (`--cache`); `CLMSYNTH_CACHE_DIR` sets its folder. A folder the run cannot write,
+  such as one filled on a login node, is only read.
+
+### Changed
+
+- The pandas minimum is 2.3 (was 3.0).
+- An empty optional setting takes its default, where it was refused or crashed.
+- An empty `num_classes`, `skew_rule` or `target_metric.value` reports `[CLM-201]`,
+  `[CLM-203]` or `[CLM-209]`.
+- A setting of the wrong type, `n_labels` above 10 000, or a
+  `fabricated_data_suite.n_samples` below 1 exits 2 before the run folder is made
+  (`n_samples: 0` exited 1). A direct `run_pipeline` call refuses the same settings
+  before any dataset is fetched and returns 0, a `global_settings` value among them.
+- `[CLM-311]` also covers `concentrated_labels` under `random`.
+- `[CLM-150]` advises the highest recall that runs.
+- clmsynth-config: `num_classes` falls back to 3 (was 4); a payload key it does not read
+  exits 2.
+- The wizard asks the profile of a `competing_noise` entry at the core or boundary.
+- The engine is three modules. The checks on a `clm_label` block are in
+  `clmsynth.config_validation`, and choosing the points of each cluster, with the checks
+  on the coordinates, in `clmsynth.spatial_placement`. Every public name stays importable
+  from `clmsynth.clm_label_engine`. `[CLM-302]`, `[CLM-303]`, `[CLM-311]` and `[CLM-312]`
+  are logged through `clmsynth.config_validation`, and `[CLM-305]` for a
+  `feature_dependence` entry through `clmsynth.spatial_placement`.
+
+### Fixed
+
+- A matplotlib that is installed but cannot be imported: the run skips the plots with
+  one error; `--viz` exits 1.
+- Dict configs: a read-only mapping in a nested block is accepted, and NumPy-array
+  `proportions` the run ignores no longer mark the dataset skipped.
+- The wizard asks again for a seed below 0, for `n_labels` above 10 000, and for
+  several ids where one cluster is asked, where it kept the first.
+- A clustbench download the server answers with an error closes its response, which
+  was left open.
+
+### Removed
+
+- The names deprecated in 0.7.6: `clmsynth.main`, `generate_config`, `config_template`,
+  `label_context`, `label_generator`; `dataset_sources.fetch_clustbench_data`,
+  `fetch_clustbench_labelings`, `fetch_mdcgen_data`, `fetch_fabricated_data`,
+  `CLUSTBENCH_TIMEOUT` and `_loadtxt_url`. Also `dataset_sources.resolved_for_report`.
+
 ## [0.7.7] — 2026-11-11
 
 ### Added
@@ -39,6 +88,14 @@ label generator behavior are additionally explained in the user manual.
 ### Fixed
 
 - Stricter input and config checks.
+- Labels differ from 0.7.6 only where a placement score spans below 1e-6 or above 1e150,
+  and where a config holds numpy float32 values, which now count as written.
+- The summary txt has a `Features: N` line, and says `k of n labels written` for a dataset
+  short of its labels.
+- A dataset named twice in a config runs once, with a warning.
+- A setting of the wrong type or shape is refused with a code instead of a traceback.
+- clmsynth-config creates its output folder and exits 2 for a payload it cannot read.
+- The wizard asks no seed for byoc and clustbench.
 
 ## [0.7.6] — 2026-11-04
 
@@ -81,7 +138,8 @@ label generator behavior are additionally explained in the user manual.
 - A folder of configs runs as a batch: the configs directly inside it, sorted, of one
   format. A folder holding run folders, both JSON and YAML configs, or no config exits 2.
 - The wizard asks whether its run draws the plots, when matplotlib is installed.
--  private `_extras/` folder, and the `_utils/`.
+- The batch and the plots move to the private `_extras/` folder, and the code they share
+  with the run to the private `_utils/`.
 - `main.py` is split: `__main__.py` reads the command line and hands the configs to a single
   run or a batch, and the private `_single_run.py` is the run. The `clmsynth` command, its
   options, output and exit statuses are unchanged.
@@ -710,7 +768,7 @@ Testing release on `test.pypi.org`.
 ### Removed
 
 - **Python 3.11.** `requires-python` is now `>=3.12`. numpy and scipy both moved
-  to `>=3.12` under SPEC 0, so `requirements.txt` could not be installed on 3.11.
+  to `>=3.12` under SPEC 0, so `ignore/requirements.txt` could not be installed on 3.11.
 
 ### Fixed
 

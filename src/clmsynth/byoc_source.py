@@ -18,6 +18,7 @@ Contract (mirrors the other fetchers, returns the standard frame or None):
 import csv
 import logging
 import re
+from collections import Counter
 from collections.abc import Iterable
 from collections.abc import Set as AbstractSet
 from pathlib import Path
@@ -29,6 +30,18 @@ import pandas as pd
 from ._input_sources import Source
 from ._utils.write_files import resolved_for_report
 from .clm_errors import clm_error
+
+__all__ = [
+    "DEFAULT_INPUT_DIR",
+    "MIN_CLUSTER_SIZE",
+    "RESERVED_EXACT",
+    "RESERVED_PATTERN",
+    "RESERVED_PREFIXES",
+    "TAG_PREFIX",
+    "as_tag_columns",
+    "fetch_byoc_data",
+    "validate_import",
+]
 
 log: logging.Logger = logging.getLogger(__name__)
 
@@ -92,7 +105,7 @@ def validate_import(df: pd.DataFrame, header: list[str], cluster_column: str,
             "a header alone is not a clustering")
         return problems                       # nothing below can say anything useful
 
-    duplicates = sorted({h for h in header if header.count(h) > 1})
+    duplicates = sorted(h for h, n in Counter(header).items() if n > 1)
     if duplicates:
         problems.append(
             f"duplicate column name(s) {duplicates}: pandas renames the second to "
@@ -189,6 +202,24 @@ def validate_import(df: pd.DataFrame, header: list[str], cluster_column: str,
     return problems
 
 
+def _overflowed(scaled: pd.DataFrame, span: pd.Series) -> bool:
+    """Whether min-max scaling overflowed: a column whose range does not fit its type
+    gives a span that is not positive or finite, or a value outside 0..1."""
+    spans = span.to_numpy(dtype=float)
+    values = scaled.to_numpy(dtype=float)
+    return bool((spans <= 0).any() or not np.isfinite(spans).all()
+                or not np.isfinite(values).all() or (values < 0).any() or (values > 1).any())
+
+
+def _scaled_by_halves(features: pd.DataFrame) -> pd.DataFrame:
+    """Min-max scaling of columns whose range does not fit their type: taken as
+    floats and halved first, so that no difference overflows."""
+    halves = features.astype(np.float64) / 2
+    lo = halves.min()
+    span = (halves.max() - lo).replace(0, 1.0)
+    return (halves - lo) / span
+
+
 def fetch_byoc_data(
         dataset_group: str = "local",
         dataset_name: str | None = None,
@@ -222,6 +253,11 @@ def fetch_byoc_data(
         log.error(f"byoc: CSV not found: '{path}'. List file stems (without .csv) in "
                   "byoc_suite.datasets and the folder in byoc_suite.input_dir.")
         return None
+    if name != dataset_name:
+        # Not text: YAML reads an unquoted 007 as the number 7, and yes as true.
+        log.warning(f"byoc: the dataset name {dataset_name!r} is not text, so '{path.name}' "
+                    "is read. Quote the name in byoc_suite.datasets if the file's stem is "
+                    "written differently, such as \"007\".")
 
     # --- exactly one cluster column, named explicitly ---
     if not cluster_column or not isinstance(cluster_column, str):
@@ -243,7 +279,12 @@ def fetch_byoc_data(
     # Every requirement is checked in one pass, so a file with several problems
     # reports all of them rather than one per attempt.
     tags = as_tag_columns(tag_columns)
-    problems = validate_import(df, _raw_header(path), cluster_column, tags)
+    try:
+        header = _raw_header(path)
+    except csv.Error as e:           # such as a header cell past the csv module's size limit
+        log.error(f"byoc: failed to read the header of '{path}': {e}")
+        return None
+    problems = validate_import(df, header, cluster_column, tags)
     if problems:
         log.error(f"byoc: '{path.name}' is not a usable import, {len(problems)} problem(s):")
         for problem in problems:
@@ -269,7 +310,8 @@ def fetch_byoc_data(
     if standardize:
         lo = features.min()
         span = (features.max() - lo).replace(0, 1.0)   # guard constant columns
-        features = (features - lo) / span
+        scaled = (features - lo) / span
+        features = _scaled_by_halves(features) if _overflowed(scaled, span) else scaled
         log.info(f"byoc: standardized {len(numeric)} feature(s) to [0, 1].")
 
     out = features
@@ -331,7 +373,8 @@ SOURCE: Final[Source] = Source(
     datasets={"local": []},
     heavy=frozenset(),
     seeded=False,
-    suite_keys=("input_dir", "cluster_column", "tag_columns", "standardize"),
+    suite_keys={"input_dir": "path", "cluster_column": "text", "tag_columns": "names",
+                "standardize": "flag"},
     fetch=lambda battery, dataset, seed, **kw: fetch_byoc_data(
         dataset_group=battery, dataset_name=dataset, seed=seed, **kw),
     licence=None,   # the user's own data

@@ -6,6 +6,7 @@ interface and re-exports these names."""
 
 import copy
 import logging
+import threading
 from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from typing import Any, Final
@@ -17,6 +18,10 @@ from .._utils.compat import import_optional_dependency
 from . import FEATURE_RECORD, Source
 
 log: logging.Logger = logging.getLogger(__name__)
+
+# mdcgenpy seeds numpy's global generator and draws from it: one generation at a time,
+# and the stream the caller had is put back afterwards.
+_GLOBAL_RNG: Final = threading.Lock()
 
 MDCGEN_METADATA: Final[Mapping[str, Mapping[str, str]]] = {
     "basic": {
@@ -200,8 +205,13 @@ def fetch_mdcgen_data(
 
     try:
         _per_cluster_functions(clusters, config)
-        cluster_gen = ClusterGenerator(**config)
-        data, labels = cluster_gen.generate_data()
+        with _GLOBAL_RNG:
+            state = np.random.get_state()  # noqa: NPY002  the global stream mdcgenpy uses
+            try:
+                cluster_gen = ClusterGenerator(**config)
+                data, labels = cluster_gen.generate_data()
+            finally:
+                np.random.set_state(state)  # noqa: NPY002
     except Exception as e:
         log.error(f"Failed to generate dataset using mdcgenpy: {e}")
         return None
