@@ -12,12 +12,19 @@ from typing import Any, Self
 import numpy as np
 import pandas as pd
 
-from .byoc_source import TAG_PREFIX
+from ._input_sources import GROUND_TRUTH_PREFIX, TAG_PREFIX, column_roles
 from .clm_errors import clm_missing
-from .clm_label_engine import _check_config, generate_clm_labels
+from .clm_label_engine import (
+    _base_seed,
+    _check_config,
+    _RngLike,
+    _seed_renamed,
+    _Unset,
+    generate_clm_labels,
+)
 from .config_tree import default
+from .config_validation import _FEATURE_COLUMNS
 from .metrics import clustering_ari, clustering_mcc
-from .spatial_placement import _FEATURE_COLUMNS
 
 __all__ = ["DatasetContext", "LabelGenerator", "build_context", "generate_additional_labels"]
 
@@ -171,15 +178,11 @@ def build_context(source: str, battery: str, dataset: str, df: pd.DataFrame) -> 
     DatasetContext
         With ``generated_labels`` still empty.
     """
-    # A name that is not text, as pd.DataFrame(X) gives its columns, carries no prefix.
-    columns: pd.Index[Any] = df.columns
-    gt_cols = [c for c in columns if isinstance(c, str) and c.startswith("GroundTruth_")]
-    tag_cols = [c for c in columns if isinstance(c, str) and c.startswith(TAG_PREFIX)]
-    feature_cols = [c for c in df.columns
-                    if c not in gt_cols and c not in tag_cols and c != "Cohort_Class"]
-    ground_truths = {c.removeprefix("GroundTruth_"): df[c] for c in gt_cols}
+    gt_cols, tag_cols, feature_cols = column_roles(df.columns)
+    ground_truths = {c.removeprefix(GROUND_TRUTH_PREFIX): df[c] for c in gt_cols}
     # The transport prefix comes off here, so the CSV shows the user's own name.
     tags = df[tag_cols].rename(columns=lambda c: c[len(TAG_PREFIX):])
+    # engine_features(df) is these columns as __post_init__ keeps them.
     return DatasetContext(battery, dataset, df[feature_cols], source=source,
                           ground_truths=ground_truths, tags=tags)
 
@@ -239,18 +242,21 @@ class LabelGenerator:
         for i in range(self.n_labels):
             report: dict[str, Any] = {}
             series = generate_clm_labels(cluster_labels, coords, clm_config,
-                                         seed=self.seed_for(i), report=report)
+                                         rng=self.seed_for(i), report=report)
             context.add_generated_label(context.next_generated_label_name(), series,
                                         report=report)
 
 
+@_seed_renamed(5)
 def generate_additional_labels(
         context: DatasetContext,
         n_labels: int = 1,
         source_labeling: str = "labels0",
         clm_config: dict[str, Any] | None = None,
         noise: float = 0.1,
-        seed: int = 42,
+        seed: int | _Unset | None = _Unset.UNSET,
+        *,
+        rng: _RngLike = None,
 ) -> None:
     """Attaches ``n_labels`` generated label columns to ``context``.
 
@@ -258,7 +264,7 @@ def generate_additional_labels(
     of ``context``, calls the engine once per requested label, and attaches each
     result back as ``Label_0``, ``Label_1``, ... No file is read or written.
     The same as ``LabelGenerator(clm_config, n_labels, source_labeling,
-    seed).apply(context)``.
+    seed).apply(context)``, with ``seed`` the base seed ``rng`` gives.
 
     Parameters
     ----------
@@ -276,9 +282,14 @@ def generate_additional_labels(
     noise : float, default 0.1
         Accepted for call-signature compatibility and unused; the noise fallback
         was retired in favor of the engine.
-    seed : int, default 42
-        Label ``i`` uses ``seed + i``, so the columns differ from one another
-        while the run as a whole stays reproducible.
+    seed : int or None, optional
+        The former name of ``rng``: it warns and goes in 0.8.0; not together with it.
+    rng : int, numpy.random.Generator or another seed numpy.random.default_rng takes, optional
+        Keyword only (Scientific Python SPEC 7). It gives one base seed: an int is
+        the base seed itself, any other value gives one drawn from
+        ``numpy.random.default_rng(rng)``, and None draws one from the operating
+        system. Label ``i`` uses base seed + ``i``, so the columns differ from one
+        another while a seeded call stays reproducible.
 
     Returns
     -------
@@ -299,7 +310,7 @@ def generate_additional_labels(
         cluster capacities, or ``target_metric.strict`` refuses a missed target.
     """
     LabelGenerator(clm_config, n_labels=n_labels, source_labeling=source_labeling,
-                   seed=seed).apply(context)
+                   seed=_base_seed(rng, seed)).apply(context)
 
 
 def _require_clm_config(clm_config: dict[str, Any] | None) -> dict[str, Any]:

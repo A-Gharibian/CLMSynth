@@ -19,7 +19,7 @@ import logging
 import os
 import re
 from collections.abc import Callable, Mapping
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Final
 
 import numpy as np
@@ -27,6 +27,7 @@ import pandas as pd
 
 from . import __version__
 from ._input_sources import FEATURE_RECORD, SUITE_SEED_MIN, Source, dataset_cache
+from ._run_folders import build_run_dir, discard_failed_run, make_subfolders
 from ._utils.cli_logging import LOG_FORMAT, SingleLineFilter, run_line
 from ._utils.compat import (
     import_failure,
@@ -34,21 +35,21 @@ from ._utils.compat import (
     is_installed,
     not_installed_message,
 )
+from ._utils.config_files import ConfigFileError, is_json, load_config
 from ._utils.signals import Terminated, sigterm_raises
 from ._utils.write_files import (
-    build_run_dir,
-    discard_failed_run,
     file_in_the_way,
     resolved_for_report,
+    write_all_then_replace,
     write_text_atomic,
-    write_then_replace,
 )
 from .clm_errors import InfeasibleAllocationError, MissingConfigKey
 from .clm_label_engine import pair_reachable_range
 from .config_tree import SETTINGS, Kind, default
-from .config_validation import _is_int, validate_matching_ids
+from .config_validation import _check_config_keys, _is_int, validate_matching_ids
 from .dataset_sources import (
     SOURCES,
+    _fetch_from,
     get_datasets_for_battery,
     is_heavy,
     print_battery_info,
@@ -61,8 +62,6 @@ __all__ = ["load_config", "run_pipeline", "run_single"]
 
 log: logging.Logger = logging.getLogger(__name__)
 
-FETCHERS: Final[Mapping[str, Callable[..., pd.DataFrame | None]]] = {
-    key: source.fetch for key, source in SOURCES.items()}
 # Sources whose data depend on the suite seed. clustbench downloads fixed data
 # and byoc reads a file, so the seed reaches neither.
 SEEDED_SOURCES = tuple(key for key, source in SOURCES.items() if source.seeded)
@@ -100,12 +99,11 @@ SOURCE_DISPLAY: Final[Mapping[str, str]] = {
     key: source.display for key, source in SOURCES.items()}
 
 
-def _write_summary_txt(path: Path, friendly: str, context: DatasetContext,
-                       generator: LabelGenerator, gt_col: str | None,
-                       label_results: list[dict[str, Any]], seed_lines: list[str],
-                       pair_lines: list[str] | None = None,
-                       feature_lines: list[str] | None = None) -> None:
-    """One txt per dataset: the configuration used, the seeds that reproduce it
+def _summary_txt(friendly: str, context: DatasetContext, generator: LabelGenerator,
+                 gt_col: str | None, label_results: list[dict[str, Any]],
+                 seed_lines: list[str], pair_lines: list[str] | None = None,
+                 feature_lines: list[str] | None = None) -> str:
+    """The text of the one txt per dataset: the configuration used, the seeds that reproduce it
     (a drawn seed is otherwise only in the log), which features carry cluster
     structure where the source records it, the reachable pair MCC under
     scope 'pair', the MCC/ARI shown on the plots, and per label what each
@@ -151,13 +149,10 @@ def _write_summary_txt(path: Path, friendly: str, context: DatasetContext,
         out += [f"    {line}" for line in _placed_lines(report)]
         if "type" in report:
             out += [f"    {line}" for line in _target_lines(report)]
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    write_text_atomic(path, "\n".join(out) + "\n")
-    log.info(f"Saved summary: {path}")
+    return "\n".join(out) + "\n"
 
 def _is_plain_name(name) -> bool:
-    """True when `name` is a bare name rather than anything path-shaped.
+    """Return whether `name` can be used as a single path component.
 
     Battery and dataset names are used to READ (byoc resolves
     `input_dir/<dataset>.csv`) and to WRITE (`csv/<source>-<battery>-<dataset>.csv`),
@@ -211,9 +206,7 @@ def precheck_byoc_matching_ids(jobs: list[tuple[str, str]], fetch_kwargs: dict[s
                                clm_config: dict[str, Any] | None) -> None:
     """Resolve [CLM-105] for every BYOC dataset before any work begins.
     [CLM-104] is checked once, before the loop.
-    Raises the first offending dataset's coded error, after logging every one of
-    them, so a batch with several mismatches is fixed in one pass rather than
-    one run at a time.
+    Log all mismatches, then raise the first mismatch's coded error.
     """
     _precheck_matching_ids(SOURCES["byoc"], jobs, fetch_kwargs, clm_config)
 
@@ -237,7 +230,7 @@ def _precheck_matching_ids(source: Source, jobs: list[tuple[str, str]],
     except (ValueError, TypeError) as e:
         # An uncoded one is reported by run_single, with its type.
         if getattr(e, "code", None) is not None:
-            log.critical(f"Configuration error, aborting run: {e}")
+            log.critical(f"Configuration error, aborting run: {e}", extra=_coded(e))
         raise
 
     failures = []
@@ -253,7 +246,7 @@ def _precheck_matching_ids(source: Source, jobs: list[tuple[str, str]],
     if not failures:
         return
     for tag, error in failures:
-        log.critical(f"{tag}: {error}")
+        log.critical(f"{tag}: {error}", extra=_coded(error))
     log.critical(
         f"{len(failures)} of {len(jobs)} {source.display} dataset(s) do not contain the cluster "
         "ids this configuration matches on. Aborting before any output is written; "
@@ -263,68 +256,11 @@ def _precheck_matching_ids(source: Source, jobs: list[tuple[str, str]],
 
 
 def _not_a_mapping(key: str, section: object, example: str) -> str | None:
-    """The message for a config section that is not a mapping, or None."""
-    if isinstance(section, Mapping):
+    """The message for a config section that is not a mapping, or None. A section
+    written with no value is absent; false, 0, "" and [] are not mappings."""
+    if section is None or isinstance(section, Mapping):
         return None
     return f"'{key}' must be a mapping of settings such as '{example}', got {section!r}."
-
-
-def _is_json(path: str | Path) -> bool:
-    """A .json config is read and written with the standard library, any other
-    with PyYAML, which is optional."""
-    return Path(path).suffix.lower() == ".json"
-
-
-class ConfigFileError(ValueError):
-    """A config file that is absent, malformed or empty."""
-
-
-def load_config(config_path: str) -> dict[str, Any]:
-    """Loads the pipeline config. ConfigFileError, a ValueError, if it is absent,
-    malformed or empty; ImportError if a YAML config finds no PyYAML."""
-    path = Path(config_path)
-    if not path.is_file():
-        raise ConfigFileError(f"Configuration file not found at '{config_path}'. "
-                              f"Run clmsynth-wizard or clmsynth-config first.")
-    # utf-8-sig drops a BOM (Notepad, PowerShell 5.1), as PyYAML does and json does not.
-    try:
-        text = path.read_text(encoding="utf-8-sig")
-    except UnicodeDecodeError as e:
-        # PowerShell 5.1's `>` writes UTF-16.
-        raise ConfigFileError(f"Configuration file '{config_path}' is not UTF-8 text "
-                              f"({e.reason} at byte {e.start}). Save it as UTF-8.") from None
-    # Each parser's message carries the line and column of the mistake.
-    if _is_json(path):
-        try:
-            config = json.loads(text) if text.strip() else None
-        except json.JSONDecodeError as e:
-            raise ConfigFileError(
-                f"Configuration file '{config_path}' is not valid JSON: {e}") from None
-        except (ValueError, RecursionError) as e:
-            # A number longer than Python converts, or nesting deeper than it follows.
-            raise ConfigFileError(
-                f"Configuration file '{config_path}' cannot be read as JSON: {e}") from None
-    else:
-        try:
-            yaml = import_optional_dependency("yaml", f"Reading {config_path!r}")
-        except ImportError as e:
-            raise ImportError(f"{e}. A .json config needs nothing more.") from None
-        try:
-            config = yaml.safe_load(text)
-        except yaml.YAMLError as e:
-            raise ConfigFileError(
-                f"Configuration file '{config_path}' is not valid YAML: {e}") from None
-        except (ValueError, TypeError, KeyError, AttributeError, RecursionError) as e:
-            # A value PyYAML cannot build, such as the date 2026-13-45, or nesting
-            # deeper than it follows.
-            raise ConfigFileError(
-                f"Configuration file '{config_path}' holds a value that cannot be read as "
-                f"YAML ({type(e).__name__}: {e}).") from None
-    # An empty file parses to None; anything non-mapping means run_single's config.get(...)
-    if not isinstance(config, dict):
-        raise ConfigFileError(f"Configuration file '{config_path}' is empty or not a mapping "
-                              "of settings.")
-    return config
 
 
 _RESOLVED_HEADER = (
@@ -340,7 +276,7 @@ def _write_resolved_config(path: Path, resolved: Mapping[str, Any]) -> None:
     reported and the run goes on."""
     try:
         data = plain(resolved)
-        if _is_json(path):
+        if is_json(path):
             text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
         else:
             yaml = import_optional_dependency("yaml", "Writing it")
@@ -355,6 +291,24 @@ def _write_resolved_config(path: Path, resolved: Mapping[str, Any]) -> None:
     log.info(f"Saved resolved config: {path}")
 
 
+def _file_key(job: tuple[Any, Any]) -> tuple[str, str]:
+    """The files a job reads and writes go by its names as text, and on Windows in
+    any case, as a batch compares configs."""
+    return os.path.normcase(str(job[0])), os.path.normcase(str(job[1]))
+
+
+def _one_job_per_file(jobs: list[tuple[Any, Any]]) -> list[tuple[Any, Any]]:
+    """Jobs spelled differently that name one file, such as byoc's 1 and "1": the
+    first runs, once."""
+    kept: dict[tuple[str, str], tuple[Any, Any]] = {}
+    for job in jobs:
+        first = kept.setdefault(_file_key(job), job)
+        if first is not job:
+            log.warning(f"{job[0]}/{job[1]!r} names the same file as "
+                        f"{first[0]}/{first[1]!r}; it runs once.")
+    return list(kept.values())
+
+
 def _resolve_jobs(source: str, batteries: list[str], datasets_cfg, fetch_kwargs: dict[str, Any]) -> list[tuple[Any, Any]]:
     """(battery, dataset) pairs to run."""
     if any(is_heavy(source, b) for b in batteries):
@@ -367,6 +321,8 @@ def _resolve_jobs(source: str, batteries: list[str], datasets_cfg, fetch_kwargs:
     for battery, dataset in jobs:
         if named.count((battery, dataset)) > 1:
             log.warning(f"'{battery}/{dataset}' is named more than once; it runs once.")
+    if len({_file_key(job) for job in jobs}) < len(jobs):
+        jobs = _one_job_per_file(jobs)
     log.info(f"Resolved {len(jobs)} dataset(s) across {len(batteries)} batter(y/ies) from source '{source}'.")
     if fetch_kwargs:
         log.info(f"Extra fetch kwargs forwarded to '{source}': {fetch_kwargs}")
@@ -387,7 +343,7 @@ def _precheck_clm_config(generator: LabelGenerator) -> None:
     except Exception as e:
         if getattr(e, "code", None) is None:
             return
-        log.critical(f"Configuration error, aborting run: {e}")
+        log.critical(f"Configuration error, aborting run: {e}", extra=_coded(e))
         raise
 
 
@@ -412,7 +368,7 @@ def _label_dataset(context: DatasetContext, generator: LabelGenerator) -> None:
     written = len(context.generated_labels)
     after = f" after {written} of {generator.n_labels} labels" if written else ""
     log.error(f"Skipping label generation for {context.battery}/{context.dataset}{after}: "
-              f"{error}")
+              f"{error}", extra=_coded(error))
 
 
 def _placed_lines(report: Mapping[str, Any]) -> list[str]:
@@ -487,37 +443,55 @@ def _pair_range_lines(clm_config, final_df: pd.DataFrame, gt_col: str | None) ->
     return ["===== Reachable pair MCC (target_metric scope: pair) =====", line]
 
 
+def _written_this_run(csv_path: Path, written: Mapping[Path, str]) -> str | None:
+    """The dataset this run wrote `csv_path` for, or None. Compared as files, not
+    names: on a case-insensitive disk two names spelled differently open one file."""
+    for path, job in written.items():
+        with contextlib.suppress(OSError):
+            if os.path.samefile(csv_path, path):
+                return job
+    return None
+
+
 def _write_dataset(context: DatasetContext, generator: LabelGenerator,
                    csv_dir: Path, png_dir: Path, txt_dir: Path,
                    render_plots: bool, seed_lines: list[str],
-                   feature_lines: list[str] | None = None) -> None:
-    """CSV, summary and plots for one dataset."""
-    final_df = context.to_dataframe()
+                   feature_lines: list[str] | None = None, *,
+                   written: dict[Path, str]) -> bool:
+    """CSV, summary and plots for one dataset; `written` maps the CSVs this run
+    wrote to their datasets. False, with the reason logged, when its CSV is one of
+    them."""
     source, battery, dataset = context.source, context.battery, context.dataset
     stem = f"{source}-{battery}-{dataset}"
     csv_path = csv_dir / f"{stem}.csv"
-    csv_dir.mkdir(parents=True, exist_ok=True)
-    # Stopped mid-write, a run leaves no partial CSV under the final name.
-    write_then_replace(csv_path, lambda tmp: final_df.to_csv(tmp, index=False))
-    log.info(f"Saved: {csv_path}")
+    txt_path = txt_dir / f"{stem}.txt"
+    # Never so in a fresh run folder.
+    if csv_path.exists():
+        earlier = _written_this_run(csv_path, written)
+        if earlier is not None:
+            log.error(f"Skipping {battery}/{dataset}: its CSV '{csv_path}' is the file this "
+                      f"run already wrote for {earlier}; writing it would replace that "
+                      "dataset's CSV and summary.")
+            return False
 
+    final_df = context.to_dataframe()
     friendly = SOURCE_DISPLAY.get(source, source)
     plot_title = f"{friendly}: {battery}/{dataset}"
     gt_col = context.gt_column(generator.source_labeling)
-
-    try:
-        label_results = context.scores(generator.source_labeling)
-
-        _write_summary_txt(txt_dir / f"{stem}.txt", friendly, context, generator, gt_col,
-                           label_results, seed_lines,
+    label_results = context.scores(generator.source_labeling)
+    summary = _summary_txt(friendly, context, generator, gt_col, label_results, seed_lines,
                            pair_lines=_pair_range_lines(generator.clm_config, final_df, gt_col),
                            feature_lines=feature_lines)
-    except BaseException:
-        # A dataset without its summary counts as skipped, and leaves no CSV.
-        with contextlib.suppress(OSError):
-            csv_path.unlink(missing_ok=True)
-            log.info(f"Removed: {csv_path} (its summary was not written)")
-        raise
+
+    csv_dir.mkdir(parents=True, exist_ok=True)
+    txt_dir.mkdir(parents=True, exist_ok=True)
+    # Both or neither: a dataset whose summary fails counts as skipped, and an earlier
+    # CSV and summary under these names stay as they were.
+    write_all_then_replace([(csv_path, lambda tmp: final_df.to_csv(tmp, index=False)),
+                            (txt_path, summary)])
+    written[csv_path] = f"{battery}/{dataset}"
+    log.info(f"Saved: {csv_path}")
+    log.info(f"Saved summary: {txt_path}")
 
     if render_plots:
         # Deferred so --no-viz never imports matplotlib.
@@ -526,16 +500,17 @@ def _write_dataset(context: DatasetContext, generator: LabelGenerator,
         render_dataset_plots(final_df, list(context.features.columns), png_dir, stem,
                              gt_col, generator.source_labeling, plot_title, label_results,
                              generator.clm_config)
+    return True
 
 
 def _aborts_run(e: ValueError, battery: str, dataset: str) -> bool:
     """Log the error; True for configuration-wide errors."""
     code = getattr(e, "code", None)
     if code in PER_DATASET_CODES:
-        log.error(f"Skipping {battery}/{dataset}: {e}")
+        log.error(f"Skipping {battery}/{dataset}: {e}", extra=_coded(e))
         return False
     if code is not None and not isinstance(e, InfeasibleAllocationError):
-        log.critical(f"Configuration error, aborting run: {e}")
+        log.critical(f"Configuration error, aborting run: {e}", extra=_coded(e))
         return True
     log.error(f"Skipping {battery}/{dataset}: unexpected {type(e).__name__}: {e}")
     return False
@@ -557,22 +532,23 @@ def _resolve_seed(block: Mapping[str, Any], name: str) -> tuple[int, str]:
     return seed, "set in the config"
 
 
-def _unknown_suite_keys(source: str, suite: Mapping[str, Any]) -> str | None:
-    """The refusal naming the `<source>_suite` keys the source does not take,
-    with the closest key it does take as a suggestion; None when there are none
-    or the source is unchecked."""
-    if source not in FETCHER_SUITE_KEYS:
-        return None
-    takes = (*SUITE_KEYS, *FETCHER_SUITE_KEYS[source])
-    unknown = []
-    for key in suite:
-        if key not in takes:
-            close = difflib.get_close_matches(str(key), takes, n=1)
-            unknown.append(f"'{key}'" + (f" (did you mean '{close[0]}'?)" if close else ""))
-    if not unknown:
-        return None
-    return (f"Unknown key(s) in '{source}_suite': {', '.join(unknown)}. "
-            f"'{source}_suite' takes: {', '.join(takes)}.")
+def _check_keys(config: Mapping[str, Any], source: str) -> None:
+    """[CLM-141] for a key the run does not read outside clm_label; `<source>_suite`'s
+    are checked when the source lists them, and by the source's own check when it
+    declares one."""
+    takes = (frozenset((*SUITE_KEYS, *FETCHER_SUITE_KEYS[source]))
+             if source in FETCHER_SUITE_KEYS else None)
+    _check_config_keys(config, f"{source}_suite", takes)
+    declared = SOURCES.get(source)
+    suite = config.get(f"{source}_suite")
+    if declared is not None and declared.suite_check is not None and isinstance(suite, Mapping):
+        declared.suite_check(suite)
+
+
+def _coded(e: BaseException) -> dict[str, int] | None:
+    """The `extra` that carries a coded exception's code onto its log record."""
+    code = getattr(e, "code", None)
+    return None if code is None else {"clm_code": code}
 
 
 def _wrong_type(where: str, value: Any, kind: Kind, lo: float | None = None,
@@ -590,10 +566,9 @@ def _wrong_type(where: str, value: Any, kind: Kind, lo: float | None = None,
 
 def _config_type_problems(config: Mapping[str, Any], source: str) -> list[str]:
     """The settings of the wrong kind or out of bounds: global_settings,
-    label_generation and the source's suite keys. The command checks them before it
-    makes a run folder, `run_pipeline` before it reads a dataset. The clm_label block
-    is the engine's to check, with its codes; a section that is not a mapping is
-    refused where it is read."""
+    label_generation and the source's suite keys. The clm_label block is the engine's
+    to check, with its codes; a section that is not a mapping is refused first, by
+    `_config_problems`."""
     found = []
     for section in ("global_settings", "label_generation"):
         block = config.get(section) or {}
@@ -610,6 +585,73 @@ def _config_type_problems(config: Mapping[str, Any], source: str) -> list[str]:
         found += [_wrong_type(f"{source}_suite.{key}", suite.get(key), kind)
                   for key, kind in (declared.suite_keys or {}).items()]
     return [problem for problem in found if problem is not None]
+
+
+def _config_problems(config: Mapping[str, Any], source: str) -> list[str]:
+    """What a run refuses in a config before it reads a dataset, checked once by
+    each entry point: the command before it makes a run folder, `run_pipeline`
+    before `_run_datasets`. A section the run reads that is not a mapping, then a
+    key it does not read ([CLM-141], raised), then a setting of the wrong kind or out
+    of its bounds. An unused suite of any shape still runs."""
+    shapes = [problem for key, example in (("global_settings", "data_source: byoc"),
+                                           (f"{source}_suite", "batteries: all"),
+                                           ("label_generation", "n_labels: 1"))
+              if (problem := _not_a_mapping(key, config.get(key), example))]
+    if shapes:
+        return shapes
+    _check_keys(config, source)
+    return _config_type_problems(config, source)
+
+
+def _announce_source(source: str) -> bool:
+    """Logs the source's batteries; False, with an error, for a source that is not
+    registered."""
+    if source not in SOURCES:
+        log.error(f"Unknown data_source '{source}'. Valid options: {list(SOURCES)}")
+        return False
+    print_battery_info(source)
+    return True
+
+
+# WSL serves its distributions' folders under these roots; they are not shares.
+_WSL_ROOTS: Final = ("\\\\wsl$\\", "\\\\wsl.localhost\\")
+
+
+def _names_a_share(value: str | os.PathLike[str]) -> bool:
+    """Whether a Windows path opens a network share. Parsed only, never opened."""
+    text = os.fspath(value).strip()
+    drive = PureWindowsPath(text).drive
+    if drive.endswith(":"):  # C:, \\?\C: and \\.\C: are local
+        return False
+    if drive:
+        return not drive.lower().startswith(_WSL_ROOTS)
+    # Windows hands a \??\ path to the system unchanged, so \??\UNC\ reaches a share;
+    # Python reads it as a folder on the current drive.
+    return text.replace("/", "\\").startswith("\\??\\")
+
+
+def _network_path_problems(config: Mapping[str, Any], source: str) -> list[str]:
+    """On Windows, the path settings that name a network share. Opening one signs
+    Windows in to its host as the user, so the command refuses them before it opens
+    anything."""
+    if os.name != "nt":
+        return []
+    global_settings = config.get("global_settings")
+    if not isinstance(global_settings, Mapping):
+        global_settings = {}   # absent, or refused as not a mapping
+    paths = [(path, global_settings.get(path.partition(".")[2]))
+             for path, s in SETTINGS.items()
+             if s.kind == "path" and path.startswith("global_settings.")]
+    declared = SOURCES.get(source)
+    suite = config.get(f"{source}_suite") or {}
+    if declared is not None and isinstance(suite, Mapping):
+        paths += [(f"{source}_suite.{key}", suite.get(key))
+                  for key, kind in (declared.suite_keys or {}).items() if kind == "path"]
+    return [f"'{where}' names a network share ('{value}'): opening it signs Windows in to "
+            "that host as you. Run with --allow-network-paths if you trust it, or map the "
+            "share to a drive letter and use that."
+            for where, value in paths
+            if isinstance(value, (str, os.PathLike)) and _names_a_share(value)]
 
 
 def _with_closest(names: list[Any], known: list[Any]) -> str:
@@ -701,32 +743,32 @@ def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: 
     when it is there and kept in it when fetched, as `dataset_sources.fetch` does; a
     cache folder the run cannot write is only read, and one it cannot make or read
     turns the cache off with one warning."""
-    if source not in FETCHERS:
-        log.error(f"Unknown data_source '{source}'. Valid options: {list(FETCHERS)}")
+    if not _announce_source(source):
         return 0
+    try:
+        problems = _config_problems(config, source)
+    except ValueError as e:
+        log.critical(f"Configuration error, aborting run: {e}", extra=_coded(e))
+        raise
+    for problem in problems:
+        log.error(problem)
+    if problems:
+        return 0
+    return _run_datasets(source, config, csv_dir, png_dir, txt_dir, render_plots,
+                         config_out, report, cache)
 
-    print_battery_info(source)
 
+def _run_datasets(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: Path,
+                  png_dir: Path, txt_dir: Path, render_plots: bool,
+                  config_out: Path | None, report: dict[str, int] | None,
+                  cache: bool) -> int:
+    """`run_pipeline` after its checks, for a registered source and a config
+    `_config_problems` passed; it checks neither again. Private: its two callers
+    check first, `run_pipeline` and the command's `run_single`."""
     # Read, never popped: the caller may reuse this config. Typed as a Mapping,
     # so a .pop() or assignment here is a mypy error.
     source_config = config.get(f"{source}_suite") or {}
     label_cfg = config.get("label_generation") or {}
-    # Only the sections this run reads: an unused suite of any shape still runs.
-    for key, section, example in ((f"{source}_suite", source_config, "batteries: all"),
-                                  ("label_generation", label_cfg, "n_labels: 1")):
-        problem = _not_a_mapping(key, section, example)
-        if problem:
-            log.error(problem)
-            return 0
-    problem = _unknown_suite_keys(source, source_config)
-    if problem:
-        log.error(problem)
-        return 0
-    wrong = _config_type_problems(config, source)
-    for problem in wrong:
-        log.error(problem)
-    if wrong:
-        return 0
 
     problem = _selection_problem(source, source_config)
     if problem:
@@ -772,20 +814,17 @@ def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: 
     if cache:
         cache = dataset_cache.ready(SOURCES[source])
 
-    fetcher = FETCHERS[source]
     n_full = 0
     n_short = 0
     n_refused = 0
+    written: dict[Path, str] = {}
 
     for i, (battery, dataset) in enumerate(jobs, 1):
         # Every line until the next header is this dataset's: the engine's do not
         # name it.
         log.info(f"Dataset {i} of {len(jobs)}: {battery}/{dataset}")
         try:
-            # The cache takes the suite keys as one mapping: an mdcgen key may be named
-            # like one of dataset_sources.fetch's parameters.
-            df = (dataset_cache.fetch(SOURCES[source], battery, dataset, fetch_seed, fetch_kwargs)
-                  if cache else fetcher(battery, dataset, fetch_seed, **fetch_kwargs))
+            df = _fetch_from(SOURCES[source], battery, dataset, fetch_seed, fetch_kwargs, cache)
             if df is None:
                 continue
 
@@ -795,15 +834,17 @@ def run_pipeline(source: str, config: Mapping[str, Mapping[str, Any]], csv_dir: 
             if generator.n_labels > 0:
                 _label_dataset(context, generator)
 
-            _write_dataset(context, generator, csv_dir, png_dir, txt_dir, render_plots,
-                           seed_lines, feature_lines=df.attrs.get(FEATURE_RECORD))
+            if not _write_dataset(context, generator, csv_dir, png_dir, txt_dir, render_plots,
+                                  seed_lines, feature_lines=df.attrs.get(FEATURE_RECORD),
+                                  written=written):
+                continue
             if len(context.generated_labels) < generator.n_labels:
                 n_short += 1
             else:
                 n_full += 1
         except MissingConfigKey as e:
             # A required key with no default: no dataset can be labelled.
-            log.critical(f"Configuration error, aborting run: {e}")
+            log.critical(f"Configuration error, aborting run: {e}", extra=_coded(e))
             raise
         except ValueError as e:
             if _aborts_run(e, battery, dataset):
@@ -837,10 +878,12 @@ def _exit_status(outcome: Mapping[str, int]) -> int:
 
 
 def run_single(config_path: str, render_plots: bool = True, keep_failed: bool = False,
-               cache: bool = False) -> int:
+               cache: bool = False, allow_network_paths: bool = False) -> int:
     """One config as one run folder. Returns the run's exit status: `_exit_status`,
     130 on Ctrl-C and 143 on SIGTERM. A run that wrote nothing leaves no folder,
-    unless `keep_failed`. `cache` is `run_pipeline`'s."""
+    unless `keep_failed`. `cache` is `run_pipeline`'s. On Windows, a path setting
+    that names a network share exits 2 before anything is opened, unless
+    `allow_network_paths`."""
     log.info("Starting Test Data Orchestrator...")
 
     try:
@@ -848,27 +891,35 @@ def run_single(config_path: str, render_plots: bool = True, keep_failed: bool = 
     except ConfigFileError as e:
         log.critical(str(e))
         return 2
+    except OSError as e:
+        # A file that exists and cannot be read, such as one without read access.
+        log.critical(f"Cannot read the configuration file '{config_path}': {e.strerror or e}.")
+        return 2
     except ImportError as e:
         log.critical(str(e))
         return 1
-    global_settings = config.get("global_settings") or {}
-    problem = _not_a_mapping("global_settings", global_settings, "data_source: byoc")
-    if problem:
-        # Status 2 before anything is created, like a config that cannot be loaded.
-        log.critical(f"Configuration file '{config_path}': {problem}")
-        return 2
+    global_settings = config.get("global_settings")
+    if not isinstance(global_settings, Mapping):
+        global_settings = {}   # absent, or refused below as not a mapping
     # An empty setting is absent.
     raw_source = global_settings.get("data_source")
     data_source = str(default("global_settings.data_source") if raw_source is None
                       else raw_source).lower()
-    problems = _config_type_problems(config, data_source)
+    # Status 2 before anything is created, like a config that cannot be loaded.
+    try:
+        problems = _config_problems(config, data_source)
+    except ValueError as e:
+        log.critical(f"Configuration file '{config_path}': {e}", extra=_coded(e))
+        return 2
+    if not allow_network_paths:
+        problems += _network_path_problems(config, data_source)
     if problems:
         for problem in problems:
             log.critical(f"Configuration file '{config_path}': {problem}")
         return 2
 
     raw_output_dir = global_settings.get("output_dir")
-    if raw_output_dir is None:
+    if raw_output_dir is None or raw_output_dir == "":
         raw_output_dir = default("global_settings.output_dir")
     try:
         base_dir = Path(raw_output_dir)
@@ -898,10 +949,8 @@ def run_single(config_path: str, render_plots: bool = True, keep_failed: bool = 
                 "that file, or set global_settings.output_dir to another folder."
             )
         return 1
-    csv_dir, png_dir, info_dir = run_dir / "csv", run_dir / "png", run_dir / "info"
     try:
-        for folder in (csv_dir, png_dir, info_dir):
-            folder.mkdir(exist_ok=True)
+        csv_dir, png_dir, info_dir = make_subfolders(run_dir)
         # The run's log and config sit in info/, named after the run folder.
         log_file = logging.FileHandler(info_dir / f"{run_dir.name}.log", encoding="utf-8")
     except OSError as e:
@@ -910,27 +959,31 @@ def run_single(config_path: str, render_plots: bool = True, keep_failed: bool = 
         return 1
     log_file.setFormatter(logging.Formatter(LOG_FORMAT))
     log_file.addFilter(SingleLineFilter())
-    logging.getLogger().addHandler(log_file)
-    # Ties the folder, named by time and source only, to the config that made it.
-    log.info(run_line(run_dir.name, resolved_for_report(config_path)))
-    # In the run's log only: the seeds reproduce on a numpy that draws the same
-    # stream, and the console's lines do not change with the numpy installed.
-    log_file.handle(log.makeRecord(log.name, logging.INFO, __file__, 0,
-                                   f"numpy {np.__version__}", (), None))
-    if not render_plots:
-        log.info("Plot rendering is off: png/ stays empty and matplotlib is never imported.")
 
     # Not a copy of the file: the config as the run read it, written by
-    # run_pipeline in the format of the file it was given, which is the user's
+    # _run_datasets in the format of the file it was given, which is the user's
     # to keep and share.
-    config_file = info_dir / f"{run_dir.name}{'.json' if _is_json(config_path) else '.yaml'}"
+    config_file = info_dir / f"{run_dir.name}{'.json' if is_json(config_path) else '.yaml'}"
 
     exit_code = 0
     outcome: dict[str, int] = {}
     with sigterm_raises():
         try:
-            n_ok = run_pipeline(data_source, config, csv_dir, png_dir, info_dir, render_plots,
-                                config_out=config_file, report=outcome, cache=cache)
+            # Added inside the try whose finally removes it.
+            logging.getLogger().addHandler(log_file)
+            # Ties the folder, named by time and source only, to the config that made it.
+            log.info(run_line(run_dir.name, resolved_for_report(config_path)))
+            # In the run's log only: the seeds reproduce on a numpy that draws the same
+            # stream, and the console's lines do not change with the numpy installed.
+            log_file.handle(log.makeRecord(log.name, logging.INFO, __file__, 0,
+                                           f"numpy {np.__version__}", (), None))
+            if not render_plots:
+                log.info("Plot rendering is off: png/ stays empty and matplotlib is "
+                         "never imported.")
+            # Checked above, before the folder: not again.
+            n_ok = (_run_datasets(data_source, config, csv_dir, png_dir, info_dir,
+                                  render_plots, config_file, outcome, cache)
+                    if _announce_source(data_source) else 0)
             exit_code = _exit_status(outcome)
             if n_ok == 0:
                 log.error("No datasets were successfully processed.")
@@ -939,7 +992,7 @@ def run_single(config_path: str, render_plots: bool = True, keep_failed: bool = 
                          f"Output folder: '{run_dir}'.")
         except (ValueError, TypeError, MissingConfigKey) as e:
             # A coded [CLM-1xx] or [CLM-2xx] configuration error was logged at
-            # CRITICAL where run_pipeline re-raised it. An uncoded one is a malformed
+            # CRITICAL where _run_datasets re-raised it. An uncoded one is a malformed
             # config value that reached an operator, and is reported here.
             if getattr(e, "code", None) is None:
                 log.critical(f"Configuration error, aborting run: {type(e).__name__}: {e}")

@@ -53,8 +53,8 @@ def geometry(sizes, seed=0):
 
 @pytest.fixture
 def stdin(monkeypatch):
-    """Queue of canned answers for the wizard's input() calls. Append to it, then
-    call the builders; an empty queue mid-run fails loudly rather than blocking."""
+    """Queue of predetermined answers for the wizard's `input()` calls.
+    Populate it before calling the builders. An empty queue raises `EOFError`."""
     queue: list[str] = []
 
     def fake_input(prompt=""):
@@ -75,6 +75,9 @@ def test_schema_keys_and_prompts_agree():
     assert SCHEMA, "SCHEMA is empty"
     src = Path(wizard.__file__).read_text(encoding="utf-8")
     asked = set(re.findall(r'ask_from\(\s*["\']([^"\']+)["\']', src))
+    # A family of questions asked in one loop over its SCHEMA prefix.
+    prefixes = tuple(re.findall(r'key\.startswith\(\s*["\']([^"\']+)["\']', src))
+    asked |= {key for key in SCHEMA if key.startswith(prefixes)}
     assert not asked - set(SCHEMA), f"prompts with no schema entry: {sorted(asked - set(SCHEMA))}"
     assert not set(SCHEMA) - asked, f"schema entries no prompt asks: {sorted(set(SCHEMA) - asked)}"
 
@@ -222,13 +225,13 @@ def test_canned_answers_build_an_engine_valid_config(stdin, yaml):
     assert clm["num_classes"] == 3 and clm["matching_mode"] == "custom"
 
     c, X = geometry([200, 200, 200])
-    out = np.asarray(generate_clm_labels(c, X, clm, seed=42))
+    out = np.asarray(generate_clm_labels(c, X, clm, rng=42))
     assert len(out) == len(c)
     assert set(np.unique(out)).issubset({0, 1, 2})
 
     # survives serialization: the wizard writes YAML, so what it built must reload.
     reloaded = yaml.safe_load(yaml.dump(config, sort_keys=False))["label_generation"]["clm_label"]
-    out2 = np.asarray(generate_clm_labels(c, X, reloaded, seed=42))
+    out2 = np.asarray(generate_clm_labels(c, X, reloaded, rng=42))
     assert np.array_equal(out, out2)
 
 

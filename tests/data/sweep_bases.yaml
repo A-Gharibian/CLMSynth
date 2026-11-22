@@ -1,0 +1,118 @@
+# The nine valid base configs of the 4b sweep (clm_label blocks).
+B1_perfect:
+  num_classes: 4
+  matching_mode: perfect
+B2_single:
+  num_classes: 4
+  matching_mode: single
+  single_match:
+    cluster: 0
+    label: 0
+  spillover_rule: uniform
+B3_custom:
+  num_classes: 4
+  matching_mode: custom
+  balance: unbalanced
+  proportions:
+  - 0.3
+  - 0.3
+  - 0.2
+  - 0.2
+  assignment_matrix:
+  - clusters:
+    - 0
+    label: 0
+    recall_target: 0.8
+  - clusters:
+    - 1
+    - 2
+    label: 1
+    recall_target: 0.6
+  split_rule: equal
+  spillover_rule: proportional_to_marginal
+B4_random:
+  num_classes: 3
+  matching_mode: random
+  balance: unbalanced
+  skew_rule: geometric
+  skew_params:
+    ratio: 0.5
+B5_target_global:
+  num_classes: 4
+  matching_mode: custom
+  assignment_matrix:
+  - clusters:
+    - 0
+    label: 0
+  - clusters:
+    - 1
+    label: 1
+  target_metric:
+    type: mcc
+    value: 0.5
+    scope: global
+    tolerance: 0.02
+    max_iter: 20
+B6_target_pair:
+  num_classes: 4
+  matching_mode: single
+  single_match:
+    cluster: 0
+    label: 0
+  target_metric:
+    type: mcc
+    value: 0.6
+    scope: pair
+    tolerance: 0.05
+B7_noise_centroid:
+  num_classes: 4
+  matching_mode: custom
+  assignment_matrix:
+  - clusters:
+    - 0
+    label: 0
+    recall_target: 0.7
+  competing_noise:
+  - cluster: 2
+    label: 3
+    share: 0.4
+    favors: boundary
+  centroid_dependence:
+    enabled: true
+    profile: exponential
+    favors: core
+    steepness: 4.0
+B8_skew_concentrated:
+  num_classes: 4
+  matching_mode: custom
+  balance: unbalanced
+  skew_rule: dominant_minority
+  skew_params:
+    dominant_index: 1
+    dominant_share: 0.4
+  assignment_matrix:
+  - clusters:
+    - 1
+    label: 1
+    recall_target: 0.5
+  spillover_rule: concentrated
+  concentrated_labels:
+  - 2
+  - 3
+B9_dirichlet_ari:
+  num_classes: 3
+  matching_mode: custom
+  balance: unbalanced
+  skew_rule: dirichlet
+  skew_params:
+    alpha: 2.0
+  assignment_matrix:
+  - clusters:
+    - 0
+    label: 0
+  - clusters:
+    - 3
+    label: 2
+  target_metric:
+    type: ari
+    value: 0.3

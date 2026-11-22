@@ -41,8 +41,8 @@ class Question:
 
     ``visible_when`` receives the ``clm_label`` sub-config and returns whether the
     run reads the value: what ``resolve_label_counts`` consumes and
-    ``_validate_skew_cfg`` checks. The tests read it; the wizard asks the skew
-    questions by its own flow.
+    ``_validate_skew_cfg`` checks. The wizard asks a skew parameter only when it
+    holds.
 
     ``lo`` and ``hi`` are the run's own bounds, read from its settings record, except
     where the wizard is narrower on purpose: each such bound is a literal with a

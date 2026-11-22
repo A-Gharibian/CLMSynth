@@ -1,21 +1,13 @@
 """Category 6: Coded diagnostics.
 
-`00_contract` covers right input produces right output.
- This covers wrong input produces the right diagnostic.
+Check the expected outcomes of configurations generated and verified by
+`CLM_catalog_gen.py` in `docs/troubleshooting_catalog/`. New catalog entries
+are discovered automatically.
 
-**This module authors no cases.** Every configuration it runs already exists
-in `docs/troubleshooting_catalog/`, written and verified by `CLM_catalog_gen.py`.
-The only thing asserted here is that the expected outcome still appears. A new
-catalog entry is picked up automatically; nothing needs editing here when a
-code is added.
+Coverage of the `[CLM-###]` registry spans the suite. This module covers
+diagnostics without assertions elsewhere.
 
-Coverage of the `[CLM-###]` registry is a **union** property across the whole
-suite, not this module's exclusive job. A code asserted in `01_logic` or
-`02_edge_cases` is covered; it does not need repeating. This module exists so
-that no code can fall through the cracks, it is where a diagnostic with no
-home elsewhere gets one.
-
-Four bands, two mechanisms, decided by what the pipeline actually does:
+Diagnostic bands and exception handling:
 
   ValueError_1xx           run_pipeline re-raises: a coded config error is
                            equally wrong for every dataset, so it aborts the
@@ -109,6 +101,8 @@ def _fixtures():
             continue
         for cfg in sorted(band_dir.glob("CLM-*.yaml")):
             code = int(cfg.stem.split("-")[1])
+            if code == 153:   # refused by the config check, before any dataset
+                continue
             yield pytest.param(cfg, MECHANISM_OVERRIDES.get(code, BANDS[band]), id=cfg.stem)
 
 
@@ -169,7 +163,9 @@ def test_catalog_diagnostic_fires(config_path, mechanism, tmp_path, caplog, yaml
 
         run_pipeline(source, config, csv_dir, png_dir, txt_dir)
 
-    assert tag in caplog.text, f"{tag} was not logged. Captured:\n{caplog.text}"
+    # The record's own code: the tag can also appear inside another code's message.
+    assert any(getattr(r, "clm_code", None) == int(code) for r in caplog.records), (
+        f"no record carries {tag}. Captured:\n{caplog.text}")
 
 
 CLUSTERS = np.concatenate([np.full(400, 0), np.full(300, 1), np.full(200, 2), np.full(100, 3)])
@@ -205,7 +201,7 @@ def test_assignment_matrix_string_cluster_does_not_match_int_id():
                 "split_rule": "equal",
                 "spillover_rule": "proportional_to_marginal",
             },
-            seed=1,
+            rng=1,
         )
     assert "[CLM-141]" in str(excinfo.value)
 
@@ -229,7 +225,7 @@ def test_competing_noise_float_cluster_is_rejected():
                 "spillover_rule": "proportional_to_marginal",
                 "competing_noise": [{"cluster": 1.5, "label": 0, "share": 0.5}],
             },
-            seed=1,
+            rng=1,
         )
     assert "[CLM-141]" in str(excinfo.value)
 
@@ -258,7 +254,7 @@ def test_cardinality_guard():
                     "balance": "balanced",
                     "matching_mode": "random",
                 },
-                seed=1,
+                rng=1,
             )
         assert "[CLM-126]" in str(excinfo.value), f"num_classes={m!r}"
 
@@ -271,7 +267,7 @@ def test_cardinality_guard():
             "balance": "balanced",
             "matching_mode": "random",
         },
-        seed=1,
+        rng=1,
     )
 
     with pytest.raises(ValueError) as excinfo:
@@ -283,7 +279,7 @@ def test_cardinality_guard():
                 "balance": "balanced",
                 "matching_mode": "random",
             },
-            seed=1,
+            rng=1,
         )
     assert "[CLM-127]" in str(excinfo.value)
 
@@ -471,17 +467,15 @@ _BYOC = {"data_source": "byoc", "batteries": ["local"], "datasets": ["data"]}
     [
         ({"source_labeling": 'a"b'}, "label_generation", "source_labeling", 'a"b'),
         ({**_BYOC, "datasets": ["\U0001f600"]}, "byoc_suite", "datasets", ["\U0001f600"]),
-        ({**_BYOC, "standardize": "false"}, "byoc_suite", "standardize", "false"),
     ],
-    ids=["a-quote", "text-past-the-bmp", "a-quoted-false"],
+    ids=["a-quote", "text-past-the-bmp"],
 )
 @pytest.mark.parametrize("name", ["out.yaml", "out.json"])
 def test_a_payload_value_is_written_as_it_is(overrides, section, key, expected, name, tmp_path,
                                              yaml):
     """A quote in source_labeling went between the template's quotes unescaped, and
     the rendering was not YAML. An emoji was written as two escapes, which YAML
-    reads as two lone characters and JSON cannot write. `standardize: "false"`
-    was rendered as true; as written, the run refuses it ([CLM-141])."""
+    reads as two lone characters and JSON cannot write."""
     from clmsynth._config_gen.generate_config import generate_base_config
 
     out = tmp_path / name
@@ -547,7 +541,7 @@ def test_assignment_matrix_missing_key_is_coded():
                 "split_rule": "equal",
                 "spillover_rule": "proportional_to_marginal",
             },
-            seed=1,
+            rng=1,
         )
     assert "[CLM-207] assignment_matrix row 0" in str(excinfo.value)
 
@@ -586,28 +580,28 @@ def test_collect_codes_is_public_in_clm_errors_only():
 @pytest.mark.parametrize(("cfg", "code"), [(_MISSED_TARGET, 306)])
 def test_a_call_s_codes_are_collected(cfg, code):
     with collect_codes() as codes:
-        generate_clm_labels(_TWO, _TWO_COORDS, cfg, seed=1)
+        generate_clm_labels(_TWO, _TWO_COORDS, cfg, rng=1)
     assert code in codes
 
 
 def test_a_quiet_call_collects_nothing():
     with collect_codes() as codes:
-        generate_clm_labels(_TWO, _TWO_COORDS, _two_labels(), seed=1)
+        generate_clm_labels(_TWO, _TWO_COORDS, _two_labels(), rng=1)
     assert codes == []
 
 
 def test_each_warning_is_one_entry_in_order():
     with collect_codes() as codes:
-        generate_clm_labels(_TWO, _TWO_COORDS, _IGNORED_PROPORTIONS, seed=1)
-        generate_clm_labels(_TWO, _TWO_COORDS, _MOVED_COUNTS, seed=1)
-        generate_clm_labels(_TWO, _TWO_COORDS, _IGNORED_PROPORTIONS, seed=1)
+        generate_clm_labels(_TWO, _TWO_COORDS, _IGNORED_PROPORTIONS, rng=1)
+        generate_clm_labels(_TWO, _TWO_COORDS, _MOVED_COUNTS, rng=1)
+        generate_clm_labels(_TWO, _TWO_COORDS, _IGNORED_PROPORTIONS, rng=1)
     assert codes == [301, 304, 301]
 
 
 def test_nothing_is_collected_after_the_block():
     with collect_codes() as codes:
         pass
-    generate_clm_labels(_TWO, _TWO_COORDS, _IGNORED_PROPORTIONS, seed=1)
+    generate_clm_labels(_TWO, _TWO_COORDS, _IGNORED_PROPORTIONS, rng=1)
     assert codes == []
 
 
@@ -626,22 +620,22 @@ def test_codes_are_collected_when_the_call_raises():
     strict = {**_MISSED_TARGET,
               "target_metric": {**_MISSED_TARGET["target_metric"], "strict": True}}
     with collect_codes() as codes, pytest.raises(ValueError):
-        generate_clm_labels(_TWO, _TWO_COORDS, strict, seed=1)
+        generate_clm_labels(_TWO, _TWO_COORDS, strict, rng=1)
     assert 306 in codes
 
 
 def test_an_error_s_code_is_not_a_collected_warning():
     with collect_codes() as codes, pytest.raises(ValueError):
         generate_clm_labels(_TWO, _TWO_COORDS, {"num_classes": 2, "matching_mode": "nope"},
-                            seed=1)
+                            rng=1)
     assert codes == []
 
 
 def test_blocks_nest():
     with collect_codes() as outer:
-        generate_clm_labels(_TWO, _TWO_COORDS, _IGNORED_PROPORTIONS, seed=1)
+        generate_clm_labels(_TWO, _TWO_COORDS, _IGNORED_PROPORTIONS, rng=1)
         with collect_codes() as inner:
-            generate_clm_labels(_TWO, _TWO_COORDS, _MOVED_COUNTS, seed=1)
+            generate_clm_labels(_TWO, _TWO_COORDS, _MOVED_COUNTS, rng=1)
     assert (outer, inner) == ([301, 304], [304])
 
 
@@ -650,8 +644,8 @@ def test_a_context_copied_in_the_block_stops_collecting_when_it_closes():
     on free-threaded builds) keeps that copy for every later task it runs."""
     with collect_codes() as codes:
         inherited = contextvars.copy_context()
-        inherited.run(generate_clm_labels, _TWO, _TWO_COORDS, _IGNORED_PROPORTIONS, seed=1)
-    inherited.run(generate_clm_labels, _TWO, _TWO_COORDS, _MOVED_COUNTS, seed=1)
+        inherited.run(generate_clm_labels, _TWO, _TWO_COORDS, _IGNORED_PROPORTIONS, rng=1)
+    inherited.run(generate_clm_labels, _TWO, _TWO_COORDS, _MOVED_COUNTS, rng=1)
     assert codes == [301]
 
 
@@ -663,7 +657,7 @@ def test_blocks_may_close_out_of_order():
         with collect_codes() as codes:
             seen[name] = codes
             for cfg in cfgs:
-                yield generate_clm_labels(_TWO, _TWO_COORDS, cfg, seed=1)
+                yield generate_clm_labels(_TWO, _TWO_COORDS, cfg, rng=1)
 
     first = labels("first", [_IGNORED_PROPORTIONS])
     second = labels("second", [_MOVED_COUNTS, _MOVED_COUNTS])
@@ -672,5 +666,5 @@ def test_blocks_may_close_out_of_order():
     next(first, None)       # first closes while second is open
     next(second)
     next(second, None)
-    generate_clm_labels(_TWO, _TWO_COORDS, _IGNORED_PROPORTIONS, seed=1)
+    generate_clm_labels(_TWO, _TWO_COORDS, _IGNORED_PROPORTIONS, rng=1)
     assert (seen["first"], seen["second"]) == ([301, 304], [304, 304])

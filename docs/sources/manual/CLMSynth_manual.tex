@@ -1,5 +1,5 @@
 % !CLMSynth-doc = manual
-% !CLMSynth-version = 0.7.8
+% !CLMSynth-version = 0.7.9
 % These two lines are a machine-readable marker, and checks the version above against the
 % package version so documentation cannot fall behind a release.
 
@@ -47,7 +47,7 @@
     tabsize=2
 }
 \lstset{style=mystyle}
-\title{CLMSynth v0.7.8}
+\title{CLMSynth v0.7.9}
 \author{Arootin Gharibian}
 \date{\today}
 
@@ -96,7 +96,7 @@ Currently, three CLM measures are available: \texttt{clustering\_mcc\_pair} is t
 
 \texttt{clustering\_ari} is solved for the adjusted Rand index (ARI): The ARI measures the agreement over \emph{pairs} of points rather than through any correspondence between the label and cluster identifiers, and is chance-corrected so that independent partitions score $0$. Because it is a function of the cell of the contingency table and the marginal pair counts alone, it does not need an alignment step: permuting the values of the generated label leaves it unchanged, it is symmetric in its two arguments, and it is defined for any $M$ and $K$.
     
-    \item \textbf{Spatial placement} Configures optionally, within each cluster, \emph{which} points receive each label is chosen by weighted sampling without replacement, with weights derived from normalized distance to the cluster centroid, with\texttt{profile}: \texttt{linear}/\texttt{step}/\texttt{exponential}; and \texttt{favors}: \texttt{steepness} for exponential or \texttt{core}/\texttt{boundary} for other profiles. The target CLM outcome is fixed by stages 2--5, so spatial structure can be varied at a constant metric value.\\
+    \item \textbf{Spatial placement} Configures optionally, within each cluster, \emph{which} points receive each label is chosen by weighted sampling without replacement, with weights derived from normalized distance to the cluster centroid, with \texttt{profile}: \texttt{linear}/\texttt{step}/\texttt{exponential}; and \texttt{favors}: \texttt{steepness} for exponential or \texttt{core}/\texttt{boundary} for other profiles. The target CLM outcome is fixed by stages 2--5, so spatial structure can be varied at a constant metric value.\\
     Spatial placement also includes feature-dependent placement, so a not only the labels can follow the coordinates of the features, but they can also follow the values of a specific single feature. For example, a label can be assigned to points where the specific feature has the highest values, or assigned to only tails of a distribution. Although spatial placements are independent of label allocations (number of labels inside a cluster stay the same), the spatial placement rules can collide and contradict if not properly configured.
     
 \end{enumerate}
@@ -160,6 +160,7 @@ clm_label:
       profile: linear | step
 \end{lstlisting}
 
+\textbf{Note:} "seed" is deprecated from v0.7.9 to follow SPEC7, "rng" will be used from v0.8.0 onward.
 
 \newpage
 \section{Usage}
@@ -231,13 +232,14 @@ D1 & single (cluster 1, $M{=}2$) & fills cluster exactly; MCC $\approx 1$ & MCC 
 \newpage
 \begin{versionhistory}
 Changes from after the published article, behavior, diagnostics and label allocation can diverge from the article, specifically, limitations are addressed. Up to publishing the package in conda-forge.
-  \vhEntry{0.7.3}{2026-10-11}{AG}{Reporting the target metric minimum and maximum, diagnostics and robustness.}
-  \vhEntry{0.7.4}{2026-10-16}{AG}{Python 3.15 and batch runs initial support, seaborn removed, PyYAML optional with JSON configs.}
-  \vhEntry{0.7.5rc1}{2026-10-29}{AG}{Better testing, deterministic exits and configs.}
-  \vhEntry{0.7.5}{2026-10-29}{AG}{Cumulative release in PyPI with pipeline support, parallel runs, structural ceiling and rounding limitations addressed.}
-  \vhEntry{0.7.6}{2026-11-04}{AG}{Data sources, optional matplotlib, folders of configs as batches.}
-  \vhEntry{0.7.7}{2026-11-11}{AG}{Labels that follow a feature (\texttt{feature\_dependence}), \texttt{mdcgen} presets with noise dimensions, \texttt{-{}-help} for config tools, stricter input and config checks.}
-  \vhEntry{0.7.8}{2026-11-17}{AG}{A dataset cache for \texttt{clustbench} and \texttt{mdcgen}, \texttt{[CLM-312]} ignores settings checked before the first dataset.}
+    \vhEntry{0.7.3}{2026-10-11}{AG}{Reporting the target metric minimum and maximum, diagnostics and robustness.}
+    \vhEntry{0.7.4}{2026-10-16}{AG}{Python 3.15 and batch runs initial support, seaborn removed, PyYAML optional with JSON configs.}
+    \vhEntry{0.7.5rc1}{2026-10-29}{AG}{Better testing, deterministic exits and configs.}
+    \vhEntry{0.7.5}{2026-10-29}{AG}{Cumulative release in PyPI with pipeline support, parallel runs, structural ceiling and rounding limitations addressed.}
+    \vhEntry{0.7.6}{2026-11-04}{AG}{Data sources, optional matplotlib, folders of configs as batches.}
+    \vhEntry{0.7.7}{2026-11-11}{AG}{Labels that follow a feature (\texttt{feature\_dependence}), \texttt{mdcgen} presets with noise dimensions, \texttt{-{}-help} for config tools, stricter input and config checks.}
+    \vhEntry{0.7.8}{2026-11-17}{AG}{A dataset cache for \texttt{clustbench} and \texttt{mdcgen}, \texttt{[CLM-312]} ignores settings checked before the first dataset.}
+    \vhEntry{0.7.9}{2026-11-22}{AG}{Patch release: This update is the final patch before conda distribution. For detailed changes, visit CHANGELOG.md in the software GitHub repository page. Release candidates for v0.8.0 follows below.}
 \end{versionhistory}
 \newpage
 \begin{versionhistory}

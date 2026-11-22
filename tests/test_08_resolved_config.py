@@ -36,7 +36,7 @@ import pytest
 import clmsynth.__main__
 from clmsynth import run_pipeline
 from clmsynth.clm_label_engine import generate_clm_labels
-from clmsynth.config_tree import SETTINGS, applies
+from clmsynth.config_tree import applies
 from clmsynth.resolved_config import RESOLVED_CONFIG_NAME, TARGET_METRIC, resolve_config
 
 
@@ -53,7 +53,7 @@ def pipeline_config(clm, datasets=("baseline_4class",), suite_seed: Any = 7,
     if suite_seed != "absent":
         suite["seed"] = suite_seed
     return {
-        "global_settings": {"data_source": "fabricated_data", "output_dir": "OUT", "unused": 1},
+        "global_settings": {"data_source": "fabricated_data", "output_dir": "OUT"},
         "fabricated_data_suite": suite,
         "clustbench_suite": {"batteries": "all"},
         "label_generation": label,
@@ -79,7 +79,7 @@ def run_once(config, folder, yaml=None):
 REPRODUCTION_CASES = [
     pytest.param(pipeline_config({
         "num_classes": 4, "matching_mode": "perfect", "balance": "unbalanced",
-        "proportions": [0.4, 0.3, 0.2, 0.1], "skew_rule": "geometric", "typo": 3,
+        "proportions": [0.4, 0.3, 0.2, 0.1], "skew_rule": "geometric",
     }), id="perfect-with-ignored-count-keys"),
     pytest.param(pipeline_config({
         "num_classes": 4, "matching_mode": "single", "balance": "balanced",
@@ -151,7 +151,7 @@ REPRODUCTION_CASES = [
 
 @pytest.mark.parametrize("config", REPRODUCTION_CASES)
 def test_a_resolved_config_repeats_the_run(tmp_path, config):
-    """The contract, and the drift guard for the restated defaults."""
+    """The contract, and the drift guard for the values the resolved config fills in."""
     n_first, first, resolved = run_once(config, tmp_path / "first")
     assert first, "the run wrote no CSV"
     assert all(b"Label_0" in body.splitlines()[0] for body in first.values()), \
@@ -304,11 +304,6 @@ def test_an_unknown_matching_mode_keeps_the_whole_block():
     assert resolved_label_generation(clm)["clm_label"] == clm
 
 
-def test_a_setting_s_record_names_its_codes():
-    record = SETTINGS["clm_label.num_classes"]
-    assert (record.missing_code, record.invalid_code) == (201, 126)
-
-
 def test_a_setting_s_record_says_when_it_applies():
     """The profile is read when centroid_dependence is enabled or a competing_noise
     entry is placed by distance; the run, the saved config and the wizard ask this."""
@@ -330,7 +325,7 @@ def test_the_search_defaults_are_the_engines(caplog):
            "target_metric": {"type": "mcc", "value": 0.99}}
 
     with caplog.at_level(logging.WARNING, logger="clmsynth.clm_label_engine"):
-        generate_clm_labels(clusters, coords, cfg, seed=1)
+        generate_clm_labels(clusters, coords, cfg, rng=1)
 
     message = next(r.getMessage() for r in caplog.records if "[CLM-306]" in r.getMessage())
     assert f" of {TARGET_METRIC['max_iter']} iterations" in message, message

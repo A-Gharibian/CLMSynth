@@ -2,7 +2,7 @@
 # resolved_config.py
 """The configuration a run used, as the run read it.
 
-`resolve_config` rebuilds the config a run was given into the one it acted on
+`resolve_config` rebuilds the config a run was given into the one it acted on.
 Only well-formed blocks are resolved. A missing required key stays missing and a
 malformed value stays as written.
 """
@@ -69,9 +69,14 @@ _SCOPES = choices("clm_label.target_metric.scope")
 def resolve_config(config: Mapping[str, Any], source: str, batteries: list[str],
                    datasets_cfg: Any, jobs: list[tuple[str, str]], fetch_seed: int | None,
                    fetch_kwargs: Mapping[str, Any], label_seed: int) -> dict[str, Any]:
+    if _holds_array(config):
+        config = _arrays_as_lists(config)
     global_settings = config.get("global_settings") or {}
-    output_dir = (_or_default(global_settings.get("output_dir"), OUTPUT_DIR)
-                  if isinstance(global_settings, Mapping) else OUTPUT_DIR)
+    output_dir = (global_settings.get("output_dir")
+                  if isinstance(global_settings, Mapping) else None)
+    # Empty text is absent here too, as the run reads it.
+    if output_dir is None or output_dir == "":
+        output_dir = OUTPUT_DIR
     ran = list(dict.fromkeys(dataset for _, dataset in jobs))
     suite: dict[str, Any] = {"batteries": list(batteries), "datasets": ran or datasets_cfg}
     if fetch_seed is not None:
@@ -145,7 +150,7 @@ def _resolve_clm(clm: Any) -> Any:
     if noise:
         out["competing_noise"] = (
             [{**_present(e, "cluster", "label"),
-              "share": e.get("share", NOISE_ENTRY["share"]),
+              "share": _as_written(e.get("share", NOISE_ENTRY["share"])),
               "favors": e.get("favors", NOISE_ENTRY["favors"])} for e in noise_entries]
             if noise_entries is not None else noise)
     if tm:
@@ -168,7 +173,7 @@ def _resolve_counts(clm: Mapping[str, Any]) -> dict[str, Any]:
     if balance == "balanced":
         return {"balance": balance}                          # proportions ignored: [CLM-301]
     if clm.get("proportions"):
-        return {"proportions": clm["proportions"], "balance": balance}
+        return {"proportions": _as_written(clm["proportions"]), "balance": balance}
     out: dict[str, Any] = {"balance": balance}
     params = clm.get("skew_params")
     params_ok = params is None or isinstance(params, dict)
@@ -181,7 +186,9 @@ def _resolve_counts(clm: Mapping[str, Any]) -> dict[str, Any]:
     out["skew_rule"] = rule
     if params_ok and isinstance(rule, str) and rule in SKEW_PARAMS:
         given = params or {}
-        out["skew_params"] = {k: given.get(k, v) for k, v in SKEW_PARAMS[rule].items()}
+        out["skew_params"] = {
+            k: _as_written(given[k]) if k in _READ_AS_WRITTEN and k in given else given.get(k, v)
+            for k, v in SKEW_PARAMS[rule].items()}
     elif "skew_params" in clm:
         out["skew_params"] = params                          # [CLM-131] or [CLM-107]
     return out
@@ -195,7 +202,9 @@ def _resolve_matrix(clm: Mapping[str, Any], solved: bool) -> dict[str, Any]:
     if rows is None:
         return {"assignment_matrix": clm["assignment_matrix"]}
     keys = ("clusters", "label") if solved else ("clusters", "label", "recall_target")
-    return {"assignment_matrix": [_present(row, *keys) for row in rows]}
+    return {"assignment_matrix": [{k: _as_written(v) if k == "recall_target" else v
+                                   for k, v in _present(row, *keys).items()}
+                                  for row in rows]}
 
 
 def _resolve_target(tm: Any) -> Any:
@@ -244,6 +253,47 @@ def _resolve_follow(entry: Mapping[str, Any]) -> dict[str, Any]:
         out.update(_present(entry, "value"))
     out["profile"] = entry.get("profile", _FOLLOW_ENTRY["profile"])
     return out
+
+
+def _holds_array(value: Any) -> bool:
+    """Whether a numpy array is anywhere in `value`, which only a Python caller can
+    pass: asked whether it is one of a setting's choices, an array of several values
+    has no single answer."""
+    if isinstance(value, np.ndarray):
+        return True
+    if isinstance(value, Mapping):
+        return any(_holds_array(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_holds_array(v) for v in value)
+    return False
+
+
+def _arrays_as_lists(value: Any) -> Any:
+    """`value` with each numpy array a list, as the record writes it. The engine
+    still gets the arrays, and refuses each where it reads it."""
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, Mapping):
+        return {k: _arrays_as_lists(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_arrays_as_lists(v) for v in value]
+    return value
+
+
+# The skew_params the engine counts from as written, as it does proportions,
+# recall_target and a competing_noise share.
+_READ_AS_WRITTEN: Final = frozenset({"ratio", "dominant_share"})
+
+
+def _as_written(value: Any) -> Any:
+    """A setting the engine counts from as written: a numpy float becomes the float
+    of its shortest decimal, 0.7 for np.float32(0.7) where `plain` would give
+    0.699999988, so the record replays the counts. A list item by item."""
+    if isinstance(value, np.floating):
+        return float(str(value))
+    if isinstance(value, (list, tuple)):
+        return [_as_written(v) for v in value]
+    return value
 
 
 def _or_default(value: Any, fallback: Any) -> Any:

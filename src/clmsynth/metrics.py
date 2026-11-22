@@ -3,10 +3,11 @@
 """Evaluation metrics for cluster-label agreement, and their ceilings given the group sizes.
 """
 from math import comb
+from typing import cast
 
 import numpy as np
 import pandas as pd
-from numpy.typing import ArrayLike
+from numpy.typing import ArrayLike, NDArray
 from pandas.api.types import infer_dtype
 from scipy.optimize import linear_sum_assignment
 from sklearn.metrics import adjusted_rand_score, matthews_corrcoef
@@ -173,7 +174,8 @@ def clustering_mcc(labels_true: ArrayLike, labels_pred: ArrayLike) -> float:
     n_true = int(true_codes.max()) + 1
     n_pred = int(pred_codes.max()) + 1
 
-    C = contingency_matrix(true_codes, pred_codes).astype(np.float64)
+    # Dense, as sparse=False is the default; scikit-learn-stubs types it as dense or sparse.
+    C = cast(NDArray[np.int64], contingency_matrix(true_codes, pred_codes)).astype(np.float64)
 
     # Assignment that maximizes R_K, not accuracy.
     W = C.sum() * C - np.outer(C.sum(axis=1), C.sum(axis=0))

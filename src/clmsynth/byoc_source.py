@@ -8,7 +8,7 @@ column, into the pipeline.
 
 Contract (mirrors the other fetchers, returns the standard frame or None):
     * the CSV path comes from the config (byoc_suite.datasets), never a prompt;
-    * exactly one cluster column, named by `cluster_column`; rejected otherwise;
+    * one cluster column, named by `cluster_column`; rejected otherwise;
     * every other column is a feature unless named in `tag_columns`, which are
       carried to the output CSV untouched and kept out of the geometry;
     * `standardize: true` min-max rescales the features to [0, 1] at import time
@@ -27,7 +27,7 @@ from typing import Any, Final
 import numpy as np
 import pandas as pd
 
-from ._input_sources import Source
+from ._input_sources import COHORT_COLUMN, GROUND_TRUTH_PREFIX, TAG_PREFIX, Source
 from ._utils.write_files import resolved_for_report
 from .clm_errors import clm_error
 
@@ -48,11 +48,10 @@ log: logging.Logger = logging.getLogger(__name__)
 # A user column sharing one is silently
 # consumed (Cohort_Class, GroundTruth_*) or produces a duplicate column in the
 # output CSV (Cluster_n, Label_n).
-RESERVED_EXACT: Final[AbstractSet[str]] = {"Cohort_Class"}
-# Transport prefix: tags travel to build_context under it and lose it again
-# in the output CSV, the way GroundTruth_* becomes Cluster_n.
-TAG_PREFIX = "TagColumn_"
-RESERVED_PREFIXES = ("GroundTruth_", TAG_PREFIX)
+RESERVED_EXACT: Final[AbstractSet[str]] = {COHORT_COLUMN}
+# TAG_PREFIX is the transport prefix: tags travel to build_context under it and lose
+# it again in the output CSV, the way GroundTruth_* becomes Cluster_n.
+RESERVED_PREFIXES = (GROUND_TRUTH_PREFIX, TAG_PREFIX)
 RESERVED_PATTERN = re.compile(r"^(Cluster|Label)_\d+$")
 
 # A cluster of one or two points is not a cluster any algorithm meant to
@@ -66,10 +65,9 @@ DEFAULT_INPUT_DIR: Final = "INPUT"
 def _raw_header(path: Path) -> list[str]:
     """The header exactly as written, before pandas renames duplicates.
 
-    `read_csv` mangles a repeated `f1` into `f1.1`, so by the time a frame
-    exists the collision is invisible. Read via csv.reader rather than splitting
-    on commas so a quoted field containing one does not read as two columns.
-    A BOM and blank lines before the header are skipped, as `read_csv` skips them.
+    `read_csv` renames duplicate columns (e.g. `f1` to `f1.1`). Use `csv.reader`
+    to preserve duplicates and handle quoted commas. Skip a leading BOM and blank
+    lines before the header, matching `read_csv`.
     """
     try:
         with open(path, newline="", encoding="utf-8-sig") as fh:
@@ -270,6 +268,13 @@ def fetch_byoc_data(
     except Exception as e:
         log.error(f"byoc: failed to read '{path}': {e}")
         return None
+    if not isinstance(df.index, pd.RangeIndex):
+        # pandas does this only when every row has more fields than the header.
+        log.error(f"byoc: every row of '{path.name}' has more fields than its header: the "
+                  "first column would be read as row names and each column would take the "
+                  "values of the next. Remove the extra field from the rows, or name it in "
+                  "the header.")
+        return None
 
     if cluster_column not in df.columns:
         log.error(f"byoc: cluster_column '{cluster_column}' not found in '{path.name}'. "
@@ -288,7 +293,8 @@ def fetch_byoc_data(
     if problems:
         log.error(f"byoc: '{path.name}' is not a usable import, {len(problems)} problem(s):")
         for problem in problems:
-            log.error(f"  - {problem}")
+            coded = re.match(r"\[CLM-(\d+)\]", problem)
+            log.error(f"  - {problem}", extra={"clm_code": int(coded[1])} if coded else None)
         return None
 
     # --- features = every OTHER column not declared a tag (names kept) ---
@@ -320,8 +326,8 @@ def fetch_byoc_data(
         for tag in written.columns:
             out[f"{TAG_PREFIX}{tag}"] = written[tag].to_numpy()
     # One cluster labeling -> GroundTruth_labels0 (surfaces as Cluster_0 downstream).
-    out["GroundTruth_labels0"] = df[cluster_column].to_numpy()
-    out["Cohort_Class"] = df[cluster_column].to_numpy()
+    out[f"{GROUND_TRUTH_PREFIX}labels0"] = df[cluster_column].to_numpy()
+    out[COHORT_COLUMN] = df[cluster_column].to_numpy()
 
     also = f", {len(set(tags))} tag column(s) {sorted(set(tags))}" if tags else ""
     log.info(f"byoc: loaded '{path.name}': {len(out)} rows, {len(numeric)} feature(s), "
@@ -342,13 +348,17 @@ def _has_dataset(battery: str, dataset: str, input_dir: str | None = None,
 def _cluster_ids(battery: str, dataset: str, input_dir: str | None = None,
                  cluster_column: str | None = None, **kwargs: Any) -> list[int] | None:
     """
-    Returns the cluster ids, or None when the file cannot be read or its ids are
-    not integers, which the import refuses ([CLM-133]).
+    Returns the cluster ids, or None when the file cannot be read, its rows are
+    longer than its header, or its ids are not integers, which the import refuses
+    ([CLM-133]).
     """
     if not isinstance(cluster_column, str):
         return None                  # fetch_byoc_data rejects a bad cluster_column itself
     path = Path(input_dir or DEFAULT_INPUT_DIR) / f"{dataset}.csv"
     try:
+        # pandas tells rows longer than the header from the first one.
+        if not isinstance(pd.read_csv(path, nrows=1).index, pd.RangeIndex):
+            return None
         column = pd.read_csv(path, usecols=[cluster_column])[cluster_column]
     except Exception:
         return None
@@ -377,7 +387,6 @@ SOURCE: Final[Source] = Source(
                 "standardize": "flag"},
     fetch=lambda battery, dataset, seed, **kw: fetch_byoc_data(
         dataset_group=battery, dataset_name=dataset, seed=seed, **kw),
-    licence=None,   # the user's own data
     describe=_describe,
     cluster_ids=_cluster_ids,
     has_dataset=_has_dataset,

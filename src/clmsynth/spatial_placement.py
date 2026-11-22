@@ -16,16 +16,11 @@ import numpy as np
 
 from .clm_errors import clm_error, clm_warn
 from .config_tree import _PLACED_BY_DISTANCE, default
-from .config_validation import _feature_entry, _placement
+from .config_validation import _FEATURE_COLUMNS, _feature_entry, _placement
 
 __all__ = ["assign_points_in_cluster"]
 
 log: logging.Logger = logging.getLogger(__name__)
-
-# The private clm_label key under which LabelGenerator.apply hands over the names of
-# the coords columns: the engine takes an array, and a feature_dependence entry names
-# its feature.
-_FEATURE_COLUMNS = "_feature_columns"
 
 
 def _ensure_coords(cfg: dict[str, Any], coords: np.ndarray | None, N: int) -> np.ndarray:
@@ -226,6 +221,15 @@ def assign_points_in_cluster(
     by its own score.
     """
     n = len(coords)
+    asked = sum(label_targets.values())
+    if asked > n:
+        raise ValueError(f"label_targets ask for {asked} points of a cluster of {n}. CLMSynth "
+                         "is meant to be run as documented, which never asks more of a cluster "
+                         "than it holds.")
+    if len(spillover_label_draws) != n - asked:
+        raise ValueError(f"{len(spillover_label_draws)} spillover draws for the {n - asked} "
+                         "point(s) label_targets leave. CLMSynth is meant to be run as "
+                         "documented, which passes one draw per point left.")
     out = np.full(n, -1, dtype=int)
     available = np.ones(n, dtype=bool)
 

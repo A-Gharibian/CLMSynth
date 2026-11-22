@@ -105,9 +105,8 @@ def ask_int(prompt, default=None, minv=None, maxv=None, explain=None) -> int:
 
 
 def ask_float(prompt, default=None, lo=None, hi=None, explain=None, lo_strict=False) -> float:
-    """Asks for a number, optionally bounded to [lo, hi]. With `lo_strict` the
-    lower bound is exclusive (value must be strictly greater than `lo`), which is
-    what the engine wants for a dirichlet `alpha` (exactly 0 divides by zero)."""
+    """Asks for a number with optional bounds. `lo_strict` makes the lower bound
+    exclusive, as required for Dirichlet `alpha` to avoid division by zero."""
     _explain(explain)
     while True:
         v = _read(prompt, default)
@@ -128,7 +127,7 @@ def ask_float(prompt, default=None, lo=None, hi=None, explain=None, lo_strict=Fa
 
 
 def _bound_text(lo, hi, lo_strict=False) -> str:
-    """Wording for whichever bounds are actually declared."""
+    """Format the supplied bounds."""
     over = "greater than" if lo_strict else "at least"
     if lo is not None and hi is not None:
         return f"between {lo} and {hi}" if not lo_strict else f"{over} {lo} and at most {hi}"
@@ -613,16 +612,14 @@ def _add_balance(clm, M):
                 clm["proportions"] = props
                 return
             print(f"    (need exactly {M} non-negative numbers that add up to 1.0)")
-    rule = ask_from("clm_label.skew_rule")
-    clm["skew_rule"] = rule
-    if rule == "geometric":
-        clm["skew_params"] = {"ratio": ask_from("clm_label.skew_params.ratio")}
-    elif rule == "dominant_minority":
-        clm["skew_params"] = {
-            "dominant_index": ask_from("clm_label.skew_params.dominant_index", maxv=M - 1),
-            "dominant_share": ask_from("clm_label.skew_params.dominant_share")}
-    else:
-        clm["skew_params"] = {"alpha": ask_from("clm_label.skew_params.alpha")}
+    clm["skew_rule"] = ask_from("clm_label.skew_rule")
+    # The skew_params questions whose visible_when says the run reads them, in the
+    # catalog's order; dominant_index is capped by the label count.
+    limits = {"clm_label.skew_params.dominant_index": {"maxv": M - 1}}
+    clm["skew_params"] = {key.rpartition(".")[2]: ask_from(key, **limits.get(key, {}))
+                          for key, question in SCHEMA.items()
+                          if key.startswith("clm_label.skew_params.")
+                          and question.visible_when(clm)}
 
 
 def _build_rules(omit_recall, M):

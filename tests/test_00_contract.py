@@ -1,12 +1,8 @@
 """Contract / invariant checks for the CLM label engine.
-If `00_contract` fails you know something is wrong.
-The diagnostic catalogue covers the failure half: wrong
-input produces the right error. The tests here covers the other half:
-RIGHT input produces RIGHT output. A sensitive test, it sweeps the valid
-configuration space broadly and asks whether the engine keeps its promises anywhere
-in it. The risk it targets is not a crash but silent incorrectness, a run that
-succeeds while delivering a labeling whose agreement with the clusters is not what
-the configuration asked for.
+
+These tests check that successful runs produce labelings with the configured
+agreement across a range of valid configurations. The diagnostic catalogue
+covers invalid inputs.
 
 Every check runs against the engine directly (generate_clm_labels), on synthetic
 geometry built here, so it needs no network, no data sources and no optional
@@ -80,7 +76,7 @@ def run(cfg, cluster_labels, coords, seed=42, report=None):
     prev = log.level
     log.setLevel(logging.DEBUG)
     try:
-        series = generate_clm_labels(cluster_labels, coords, cfg, seed=seed, report=report)
+        series = generate_clm_labels(cluster_labels, coords, cfg, rng=seed, report=report)
     finally:
         log.removeHandler(cap)
         log.setLevel(prev)
@@ -461,23 +457,19 @@ def check_placement_invariance():
 
 
 def check_concentrated_labels_guard():
-    """concentrated_labels is documented but unvalidated: an out-of-range value
-    reaches the written labeling with no error. Isolated here because it is a
-    known open item, so its failure is expected until the guard lands."""
+    """An out-of-range concentrated_labels is refused with [CLM-128]. Any other
+    error, or a labeling written at all, breaks the invariant."""
     c, X = geometry(GEOMETRIES["equal_4x200"])
     cfg = bijection(4, recall=0.5, spillover_rule="concentrated", concentrated_labels=[99])
     try:
         out, _ = run(cfg, c, X)
     except Exception as exc:  # broad by design: reporting
-        return [("concentrated_labels_rejected", True, f"raised {type(exc).__name__}")]
+        coded = getattr(exc, "code", None) == 128
+        detail = "" if coded else f"raised {type(exc).__name__} without [CLM-128]: {exc}"
+        return [("concentrated_labels_rejected", coded, detail)]
     bad = sorted({int(v) for v in np.unique(out) if not (0 <= v < 4)})
-    return [
-        (
-            "concentrated_labels_rejected",
-            not bad,
-            f"label 99 accepted; wrote out-of-range {bad} into the labeling" if bad else "",
-        )
-    ]
+    wrote = f"wrote out-of-range {bad} into the labeling" if bad else "the labeling stayed in range"
+    return [("concentrated_labels_rejected", False, f"label 99 accepted; {wrote}")]
 
 
 # ---------------------------------------------------------------------------
@@ -495,7 +487,7 @@ def _assert_all_hold(results, context):
 
 @pytest.mark.parametrize("name,gkey,cfg", CASES, ids=[c[0] for c in CASES])
 def test_configuration_keeps_its_contract(name, gkey, cfg):
-    """Right input produces right output, across the valid configuration space.
+    """Check the invariants for each valid configuration in the test matrix.
 
     One test per configuration rather than per (configuration, invariant):
     `check_case` already reports which invariant broke, and 41 named cases read

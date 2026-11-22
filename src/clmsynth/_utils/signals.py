@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: MIT
 # signals.py
-"""SIGTERM as an exception, so a run and a batch clean up when a scheduler
-cancels the job."""
+"""SIGTERM as an exception, so a run cleans up when a scheduler cancels the job."""
 
 import signal
 from collections.abc import Generator

@@ -15,8 +15,8 @@ concurrency:
 # release candidate (X.Y.ZrcN) is uploaded: testpypi or none. none builds and
 # verifies the tag only, its dist kept as this run's artifact.
 env:
-  FINAL_RELEASE_INDEX: testpypi
-  RC_RELEASE_INDEX: testpypi
+  FINAL_RELEASE_INDEX: none
+  RC_RELEASE_INDEX: none
 
 jobs:
   # --------------------------------------------------------------------------

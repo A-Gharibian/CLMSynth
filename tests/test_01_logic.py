@@ -39,6 +39,7 @@ from clmsynth.metrics import (
     clustering_mcc,
     clustering_mcc_pair,
 )
+from clmsynth.spatial_placement import assign_points_in_cluster
 
 # Fixture geometry: K=4, deliberately unequal (400/300/200/100) so that
 # capacity boundaries differ per cluster and a split rule has something to
@@ -105,7 +106,7 @@ def test_f1_null_target_metric_under_random_is_a_noop():
             "matching_mode": "random",
             "target_metric": None,
         },
-        seed=1,
+        rng=1,
     )
     assert_contingency_invariant(out.to_numpy(), 4)
 
@@ -136,7 +137,7 @@ def test_f2_pair_scope_validates_single_match_before_indexing(single_match, tag)
                 "single_match": single_match,
                 "target_metric": {"type": "mcc", "value": 0.5, "scope": "pair"},
             },
-            seed=1,
+            rng=1,
         )
     assert tag in str(excinfo.value)
 
@@ -162,7 +163,7 @@ def test_f6_pair_scope_with_the_only_other_label_at_zero():
             "single_match": {"cluster": 0, "label": 0},
             "target_metric": {"type": "mcc", "value": 0.5, "scope": "pair"},
         },
-        seed=1,
+        rng=1,
     )
     assert_contingency_invariant(out.to_numpy(), 2)
 
@@ -190,7 +191,7 @@ def test_centroid_placement_without_coords_is_coded(coords):
             base_custom_cfg(
                 centroid_dependence={"enabled": True, "profile": "linear", "favors": "core"},
             ),
-            seed=1,
+            rng=1,
         )
     assert "[CLM-125]" in str(excinfo.value)
 
@@ -202,7 +203,7 @@ def test_a_block_that_passes_the_check_before_the_first_dataset_can_still_be_ref
         assignment_matrix=[{"label": 0, "clusters": [3], "recall_target": 0.9}])
     LabelGenerator(cfg).check()
     with pytest.raises(InfeasibleAllocationError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1)
     assert getattr(excinfo.value, "code", None) == 150
 
 
@@ -216,7 +217,7 @@ def test_a_direct_call_meets_a_dataset_problem_before_a_config_problem():
         LabelGenerator(cfg).check()
     assert getattr(at_check.value, "code", None) == 141
     with pytest.raises(ValueError) as direct:
-        generate_clm_labels(CLUSTERS, None, cfg, seed=1)
+        generate_clm_labels(CLUSTERS, None, cfg, rng=1)
     assert getattr(direct.value, "code", None) == 125
 
 
@@ -224,7 +225,7 @@ def test_perfect_mode_cardinality_is_refused_at_the_entry_point():
     """M != K under `perfect` is refused early."""
     with pytest.raises(ValueError) as excinfo:
         generate_clm_labels(
-            CLUSTERS, COORDS, {"num_classes": 10, "matching_mode": "perfect"}, seed=1
+            CLUSTERS, COORDS, {"num_classes": 10, "matching_mode": "perfect"}, rng=1
         )
     assert "[CLM-102]" in str(excinfo.value)
 
@@ -281,7 +282,7 @@ def test_skew_guard_lives_at_the_entry_point_not_in_the_helper():
         resolve_label_counts(cfg, N, np.random.default_rng(0))
 
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1)
     assert getattr(excinfo.value, "code", None) == 131
 
 
@@ -309,7 +310,7 @@ def test_skew_params_are_unvalidated_when_they_are_never_read(overrides, why):
         assignment_matrix=[{"label": i, "clusters": [i], "recall_target": 0.4} for i in range(4)],
         **overrides,
     )
-    out = generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+    out = generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1)
     assert_contingency_invariant(out, 4)
 
 
@@ -333,7 +334,7 @@ def test_pair_scope_honours_the_requested_tolerance(tolerance, expect_warning, c
         "target_metric": {"type": "mcc", "value": 0.5, "scope": "pair", "tolerance": tolerance},
     }
     with caplog.at_level(logging.WARNING, logger="clmsynth"):
-        generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1)
     assert ("[CLM-310]" in caplog.text) is expect_warning, (
         f"tolerance={tolerance} should {'' if expect_warning else 'not '}have reported a miss"
     )
@@ -381,7 +382,7 @@ def test_balance_outside_its_two_values_is_refused(value, mode):
         matching_mode=mode, single_match={"cluster": 0, "label": 0}, balance=value
     )
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1)
     assert getattr(excinfo.value, "code", None) == 132
 
 
@@ -391,7 +392,7 @@ def test_balance_typo_without_proportions_is_not_blamed_on_skew_rule():
     wrong key."""
     cfg = {"num_classes": 4, "matching_mode": "random", "balance": None}
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1)
     assert getattr(excinfo.value, "code", None) == 132
 
 
@@ -589,7 +590,7 @@ def test_a_value_of_the_wrong_type_is_refused(overrides, code):
     """
     cfg = base_custom_cfg(**overrides)
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1)
     assert getattr(excinfo.value, "code", None) == code
 
 
@@ -598,7 +599,7 @@ def test_a_clm_label_that_is_not_a_mapping_is_refused(cfg):
     """None or a number crashed uncoded; a list or a string was reported as a
     missing num_classes ([CLM-201]), which writes the dataset unlabelled."""
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1)
     assert getattr(excinfo.value, "code", None) == 141
 
 
@@ -608,7 +609,7 @@ def test_proportions_in_an_array_are_ignored_under_balanced(caplog):
         balance="balanced", proportions=_ARRAY,
         assignment_matrix=[{"label": i, "clusters": [i], "recall_target": 0.3} for i in range(4)])
     with caplog.at_level(logging.WARNING):
-        assert_contingency_invariant(generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1), 4)
+        assert_contingency_invariant(generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1), 4)
     assert "[CLM-301]" in caplog.text
 
 
@@ -634,7 +635,7 @@ def test_a_read_only_mapping_is_accepted_as_a_block(overrides):
     before they existed, as the whole clm_label block and as a block inside it.
     A read-only skew_params was refused with [CLM-131] for not being a dict."""
     cfg: Any = MappingProxyType(base_custom_cfg(**overrides))
-    out = generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+    out = generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1)
     assert len(out) == N
 
 
@@ -644,7 +645,7 @@ def test_a_read_only_row_is_read_as_a_row(caplog):
     row = MappingProxyType({"clusters": [0], "label": 0, "recall_target": 0.8})
     with caplog.at_level(logging.WARNING, logger="clmsynth"):
         generate_clm_labels(CLUSTERS, COORDS,
-                            base_custom_cfg(assignment_matrix=[row], target_metric=_TM), seed=1)
+                            base_custom_cfg(assignment_matrix=[row], target_metric=_TM), rng=1)
     assert "[CLM-303]" in caplog.text
     unknown = MappingProxyType({"clusters": [9], "label": 0, "recall_target": 0.8})
     with pytest.raises(ValueError) as excinfo:
@@ -664,7 +665,7 @@ def test_proportions_given_as_a_mapping_are_refused():
             "proportions": proportions,
         }
         with pytest.raises(ValueError) as excinfo:
-            generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+            generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1)
         assert getattr(excinfo.value, "code", None) == 141
 
 
@@ -718,7 +719,7 @@ _EMPTY = {
 def test_an_empty_optional_setting_takes_its_default(cfg):
     """`key:` with no value in YAML, null in JSON (Settled, 2026-11-12). Each was
     refused as an unknown or malformed value."""
-    assert len(generate_clm_labels(_TWO, _TWO_COORDS, cfg, seed=1)) == len(_TWO)
+    assert len(generate_clm_labels(_TWO, _TWO_COORDS, cfg, rng=1)) == len(_TWO)
 
 
 @pytest.mark.parametrize(("cfg", "code"), [
@@ -729,7 +730,7 @@ def test_an_empty_optional_setting_takes_its_default(cfg):
 def test_an_empty_required_setting_reports_its_missing_key_code(cfg, code):
     """Settled 2026-11-12: no longer [CLM-126], [CLM-107] and [CLM-113]."""
     with pytest.raises(MissingConfigKey) as excinfo:
-        generate_clm_labels(_TWO, _TWO_COORDS, cfg, seed=1)
+        generate_clm_labels(_TWO, _TWO_COORDS, cfg, rng=1)
     assert getattr(excinfo.value, "code", None) == code
 
 
@@ -757,7 +758,7 @@ def test_a_setting_that_is_not_read_is_warned_about(cfg, key, code, caplog):
     """Only where clmsynth-config never writes the setting (Settled, 2026-11-11 and
     12); what its template writes whatever the mode stays silent."""
     with caplog.at_level(logging.WARNING, logger="clmsynth"):
-        generate_clm_labels(_TWO, _TWO_COORDS, cfg, seed=1)
+        generate_clm_labels(_TWO, _TWO_COORDS, cfg, rng=1)
     assert any(f"[CLM-{code}]" in r.getMessage() and key in r.getMessage()
                for r in caplog.records), caplog.text
 
@@ -767,7 +768,7 @@ def test_a_competing_noise_entry_without_a_cluster_names_the_key():
     per-dataset skip), now coded and naming the entry."""
     cfg = base_custom_cfg(competing_noise=[{"label": 1, "share": 0.5, "favors": "random"}])
     with pytest.raises(KeyError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1)
     assert getattr(excinfo.value, "code", None) == 207
     assert "competing_noise entry 0: 'cluster'" in str(excinfo.value)
 
@@ -797,7 +798,7 @@ def test_a_cluster_is_named_once_per_label(overrides, fix):
     the boundary. Two matrix rows added their points, and a row listing a cluster
     twice lost half of what it routed there."""
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, base_custom_cfg(**overrides), seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, base_custom_cfg(**overrides), rng=1)
     assert getattr(excinfo.value, "code", None) == 142, str(excinfo.value)
     assert fix in str(excinfo.value)
 
@@ -817,7 +818,7 @@ def test_a_cluster_named_twice_is_refused_whatever_the_dataset(overrides):
     [CLM-150] (label 0 needs 450 of cluster 0's 400 points), or under
     target_metric behind a search over levels."""
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, base_custom_cfg(**overrides), seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, base_custom_cfg(**overrides), rng=1)
     assert getattr(excinfo.value, "code", None) == 142, str(excinfo.value)
 
 
@@ -836,7 +837,7 @@ def test_noise_on_a_clusters_own_target_label_is_refused(cfg, source):
     """[CLM-144]. Competing noise places another label in a cluster; on the
     cluster's own target label, the entry's favors moved the target's points too."""
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1)
     assert getattr(excinfo.value, "code", None) == 144, str(excinfo.value)
     assert f"({source})" in str(excinfo.value)
 
@@ -852,7 +853,7 @@ def test_noise_on_a_clusters_own_target_label_is_refused(cfg, source):
 def test_one_entry_per_label_and_cluster_is_accepted(noise):
     """Another label in the same cluster, or the same label in another cluster:
     each cluster is still named once per label."""
-    out = generate_clm_labels(CLUSTERS, COORDS, base_custom_cfg(competing_noise=noise), seed=1)
+    out = generate_clm_labels(CLUSTERS, COORDS, base_custom_cfg(competing_noise=noise), rng=1)
     assert len(out) == N
 
 
@@ -865,7 +866,7 @@ def test_target_labels_pick_their_points_before_competing_noise():
         centroid_dependence={"enabled": True, "profile": "step", "favors": "core"},
         competing_noise=[{"cluster": 0, "label": 1, "share": 0.5, "favors": "core"}],
     )
-    out = generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1).to_numpy()
+    out = generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1).to_numpy()
     idx = np.where(CLUSTERS == 0)[0]
     rank = np.argsort(np.argsort(np.linalg.norm(COORDS[idx] - COORDS[idx].mean(axis=0), axis=1)))
     assert (out[idx][rank < 360] == 0).all(), "noise took points of cluster 0's core"
@@ -886,7 +887,7 @@ def test_target_labels_pick_their_points_before_competing_noise():
 def test_a_profile_typo_is_refused_even_when_nothing_is_placed(overrides):
     """[CLM-110] used to fire only when a label was actually placed by profile."""
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, base_custom_cfg(**overrides), seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, base_custom_cfg(**overrides), rng=1)
     assert getattr(excinfo.value, "code", None) == 110
 
 
@@ -931,7 +932,7 @@ def test_a_profile_typo_is_refused_even_when_nothing_is_placed(overrides):
 )
 def test_values_of_the_right_type_or_unread_keys_still_run(overrides):
     """The [CLM-141] checks refuse only what is read, and accept numpy scalars."""
-    out = generate_clm_labels(CLUSTERS, COORDS, base_custom_cfg(**overrides), seed=1)
+    out = generate_clm_labels(CLUSTERS, COORDS, base_custom_cfg(**overrides), rng=1)
     assert len(out) == N
 
 
@@ -967,7 +968,7 @@ def test_perfect_never_reads_the_sizing_keys(sizing, caplog):
     """
     cfg = {"num_classes": 4, "matching_mode": "perfect", **sizing}
     with caplog.at_level(logging.WARNING, logger="clmsynth"):
-        out = generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+        out = generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1)
     assert np.array_equal(np.asarray(out), CLUSTERS)
     assert "[CLM-302]" in caplog.text
 
@@ -978,19 +979,19 @@ def test_random_never_reads_centroid_dependence(caplog):
     unless it is switched off. Both used to be refused with [CLM-125], spatial
     competing_noise too, which is [CLM-115] under random."""
     cfg = {"num_classes": 4, "matching_mode": "random", "balance": "balanced"}
-    expected = generate_clm_labels(CLUSTERS, None, cfg, seed=1)
+    expected = generate_clm_labels(CLUSTERS, None, cfg, rng=1)
     for cd, warns in (({"enabled": True}, True), ({"enabled": "no", "favors": "x"}, True),
                       ("yes", True), ({"enabled": False, "favors": "x"}, False)):
         caplog.clear()
         with caplog.at_level(logging.WARNING, logger="clmsynth"):
             out = generate_clm_labels(CLUSTERS, None, {**cfg, "centroid_dependence": cd},
-                                      seed=1)
+                                      rng=1)
         assert out.equals(expected), cd
         assert ("[CLM-311]" in caplog.text) is warns, cd
 
     noise = {**cfg, "competing_noise": [{"cluster": 0, "label": 1, "favors": "core"}]}
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, None, noise, seed=1)
+        generate_clm_labels(CLUSTERS, None, noise, rng=1)
     assert getattr(excinfo.value, "code", None) == 115
 
 
@@ -1039,7 +1040,7 @@ def test_mode_errors_are_reported_before_sizing_errors(cfg, expected):
     ([CLM-101]).
     """
     with pytest.raises((ValueError, KeyError)) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1)
     assert getattr(excinfo.value, "code", None) == expected
 
 
@@ -1060,7 +1061,7 @@ def test_spillover_reports_a_broken_marginal(rule, deviates, caplog):
     """
     cfg = base_custom_cfg(spillover_rule=rule)
     with caplog.at_level(logging.WARNING, logger="clmsynth"):
-        out = generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+        out = generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1)
     counts = list(np.bincount(np.asarray(out), minlength=4))
     assert (counts != [400, 300, 200, 100]) is deviates, counts
     assert ("[CLM-304]" in caplog.text) is deviates, caplog.text
@@ -1095,7 +1096,7 @@ def test_competing_noise_takes_what_its_label_has_left(
     noise = [{"cluster": k, "label": 1, "share": s, "favors": "random"} for k, s in shares.items()]
     cfg = base_custom_cfg(assignment_matrix=matrix, competing_noise=noise)
     with caplog.at_level(logging.WARNING, logger="clmsynth"):
-        out = np.asarray(generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1))
+        out = np.asarray(generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1))
     assert list(np.bincount(out, minlength=4)) == [400, 300, 200, 100]
     assert "[CLM-304]" not in caplog.text, caplog.text
     assert ("[CLM-305]" in caplog.text) is (warned is not None), caplog.text
@@ -1184,7 +1185,7 @@ def test_a_target_with_no_feasible_level_names_what_blocked_the_levels(
     )
     with caplog.at_level(logging.WARNING, logger="clmsynth"):
         with pytest.raises(ValueError) as excinfo:
-            generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, seed=42)
+            generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, rng=42)
     assert not isinstance(excinfo.value, InfeasibleAllocationError), str(excinfo.value)
     assert getattr(excinfo.value, "code", None) == 120, str(excinfo.value)
     assert blocked_lines(caplog) == blocked, caplog.text
@@ -1214,7 +1215,7 @@ def test_the_search_finds_the_levels_that_fit_between_grid_levels(overrides, tar
     """
     cfg = equal_cfg(target_metric={"type": "mcc", "value": target}, **overrides)
     with caplog.at_level(logging.WARNING, logger="clmsynth"):
-        out = generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, seed=42).to_numpy()
+        out = generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, rng=42).to_numpy()
     assert clustering_mcc(EQUAL, out) == pytest.approx(target, abs=0.01)
     assert "[CLM-306]" not in caplog.text and "[CLM-120]" not in caplog.text, caplog.text
 
@@ -1229,7 +1230,7 @@ def test_over_claiming_noise_without_a_target_still_raises_152():
     """
     cfg = equal_cfg(competing_noise=over_claiming_noise())
     with pytest.raises(InfeasibleAllocationError) as excinfo:
-        generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, seed=42)
+        generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, rng=42)
     assert getattr(excinfo.value, "code", None) == 152, str(excinfo.value)
     assert "jointly claim 28 points but only 20" in str(excinfo.value), str(excinfo.value)
 
@@ -1249,7 +1250,7 @@ def test_the_gap_search_reaches_a_band_on_labels_of_five_points():
                                for j in (3, 4)],
            "target_metric": {"type": "mcc", "value": 0.2}}
     report: dict[str, Any] = {}
-    out = generate_clm_labels(truth, coords, cfg, seed=1, report=report)
+    out = generate_clm_labels(truth, coords, cfg, rng=1, report=report)
     assert 0.5 < report["alpha"] < 0.6
     assert abs(clustering_mcc(truth, out.to_numpy()) - 0.2) <= 0.01
 
@@ -1270,7 +1271,7 @@ def test_a_missed_target_delivers_the_closest_label_and_names_the_blocked_levels
         proportions=[0.97, 0.01, 0.01, 0.01], target_metric={"type": "mcc", "value": 0.5}
     )
     with caplog.at_level(logging.WARNING, logger="clmsynth"):
-        out = generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, seed=42).to_numpy()
+        out = generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, rng=42).to_numpy()
 
     assert blocked_lines(caplog) == [(150, 11, "0.259", "1.000")], caplog.text
     messages = [r.getMessage() for r in caplog.records]
@@ -1297,7 +1298,7 @@ def test_150_under_a_target_names_the_search_level_not_a_recall_target(caplog):
         proportions=[0.97, 0.01, 0.01, 0.01], target_metric={"type": "mcc", "value": 0.5}
     )
     with caplog.at_level(logging.WARNING, logger="clmsynth"):
-        generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, seed=42)
+        generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, rng=42)
 
     line = next(r.getMessage() for r in caplog.records if BLOCKED_LINE.match(r.getMessage()))
     assert "search's recall level alpha=0.259" in line, line
@@ -1327,7 +1328,7 @@ def test_309_reports_only_a_probe_seed_divergence(probe_seed, diverges, caplog):
     tm: dict[str, Any] = {"type": "mcc", "value": 0.5, "probe_seed": probe_seed}
     cfg = equal_cfg(proportions=[0.97, 0.01, 0.01, 0.01], target_metric=tm)
     with caplog.at_level(logging.WARNING, logger="clmsynth"):
-        out = generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, seed=42).to_numpy()
+        out = generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, rng=42).to_numpy()
 
     assert list(np.bincount(out, minlength=4)) == [776, 8, 8, 8]
     assert ("[CLM-309]" in caplog.text) is diverges, caplog.text
@@ -1349,7 +1350,7 @@ def test_305_is_not_warned_by_a_search_probe(caplog):
         target_metric={"type": "mcc", "value": 0.5, "tolerance": 0.05},
     )
     with caplog.at_level(logging.WARNING, logger="clmsynth"):
-        out = generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, seed=42).to_numpy()
+        out = generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, rng=42).to_numpy()
     assert "[CLM-305]" not in caplog.text, caplog.text
     assert int(np.sum(out[EQUAL == 0] == 1)) >= 50, "the entry placed nothing in cluster 0"
 
@@ -1371,7 +1372,7 @@ def test_305_is_still_warned_when_the_delivered_alpha_fills_the_cluster(caplog):
         target_metric={"type": "mcc", "value": 0.5},
     )
     with caplog.at_level(logging.WARNING, logger="clmsynth"):
-        out = generate_clm_labels(clusters, EQUAL_COORDS[:200], cfg, seed=42).to_numpy()
+        out = generate_clm_labels(clusters, EQUAL_COORDS[:200], cfg, rng=42).to_numpy()
     assert re.search(r"\[CLM-306\].*alpha=1\.0000", caplog.text), caplog.text
     assert caplog.text.count("[CLM-305]") == 2, caplog.text
     assert set(out[clusters == 0].tolist()) == {0}
@@ -1417,8 +1418,8 @@ def test_rk_ceiling_is_the_highest_mcc_any_labeling_with_the_counts_scores(sizes
     ceiling, never more and never less. ari_bound is only a bound: no labeling
     exceeds it, and some counts never reach it.
     """
-    best_mcc: dict[tuple, float] = {}
-    best_ari: dict[tuple, float] = {}
+    best_mcc: dict[tuple[int, ...], float] = {}
+    best_ari: dict[tuple[int, ...], float] = {}
     for clusters, labeling, counts in every_labeling(sizes, M):
         best_mcc[counts] = max(best_mcc.get(counts, -1.0), clustering_mcc(clusters, labeling))
         best_ari[counts] = max(best_ari.get(counts, -1.0), clustering_ari(clusters, labeling))
@@ -1435,6 +1436,22 @@ def test_a_ceiling_takes_counts_only(ceiling, sizes):
     back."""
     with pytest.raises(ValueError, match="lists of counts"):
         ceiling(sizes, [1, 2])
+
+
+@pytest.mark.parametrize("draws", [[1], [1, 1, 0, 1, 0]], ids=["one-for-three", "five-for-three"])
+def test_placement_takes_one_spillover_draw_per_point_left(draws):
+    """Called directly, one draw was spread over the three points the targets leave,
+    and of five draws two were dropped. A run passes one draw per point left."""
+    coords = np.arange(10, dtype=float).reshape(5, 2)
+    with pytest.raises(ValueError, match="spillover draws"):
+        assign_points_in_cluster(coords, {0: 2}, draws, {}, np.random.default_rng(0))
+
+
+def test_placement_refuses_more_demand_than_the_cluster_holds():
+    """Eight points of label 0 asked of a cluster of five came back as five."""
+    coords = np.arange(10, dtype=float).reshape(5, 2)
+    with pytest.raises(ValueError, match="ask for 8 points of a cluster of 5"):
+        assign_points_in_cluster(coords, {0: 8}, [], {}, np.random.default_rng(0))
 
 
 def test_the_size_ceiling_follows_the_label_counts_not_m_and_k():
@@ -1466,7 +1483,7 @@ def test_a_missed_target_names_the_size_ceiling(kind, name, ceiling, caplog):
     """
     cfg = three_label_cfg(target_metric={"type": kind, "value": 0.99, "tolerance": 0.001})
     with caplog.at_level(logging.WARNING, logger="clmsynth"):
-        generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, seed=42)
+        generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, rng=42)
     value = ceiling([200] * 4, [272, 264, 264])
     line = next(r.getMessage() for r in caplog.records if "[CLM-306]" in r.getMessage())
     assert line.endswith(
@@ -1487,7 +1504,7 @@ def test_a_negative_mcc_target_is_named_as_unreachable(overrides, ceiling, caplo
     """
     cfg = three_label_cfg(target_metric={"type": "mcc", "value": -0.3}, **overrides)
     with caplog.at_level(logging.WARNING, logger="clmsynth"):
-        out = generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, seed=42).to_numpy()
+        out = generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, rng=42).to_numpy()
     line = next(r.getMessage() for r in caplog.records if "[CLM-306]" in r.getMessage())
     assert line.endswith(" mcc is never below 0, so no labeling reaches the target."), line
     assert ("Size ceiling" in line) is ceiling, line
@@ -1505,7 +1522,7 @@ def test_the_report_names_the_request_the_delivery_the_highest_and_the_ceiling(c
     cfg = three_label_cfg(target_metric={"type": "mcc", "value": 0.5})
     report: dict[str, Any] = {}
     with caplog.at_level(logging.INFO, logger="clmsynth"):
-        out = generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, seed=42, report=report).to_numpy()
+        out = generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, rng=42, report=report).to_numpy()
 
     assert report["scope"] == "global" and report["type"] == "mcc"
     assert report["requested"] == 0.5
@@ -1520,7 +1537,7 @@ def test_the_report_names_the_request_the_delivery_the_highest_and_the_ceiling(c
     assert "highest mcc the search found is 0.6594 (alpha=0.7000); size ceiling 0.7071" in (
         caplog.text
     ), caplog.text
-    assert np.array_equal(out, generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, seed=42).to_numpy())
+    assert np.array_equal(out, generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, rng=42).to_numpy())
 
 
 @pytest.mark.parametrize(
@@ -1543,7 +1560,7 @@ def test_no_size_ceiling_is_reported_when_the_counts_can_move(overrides, cause, 
     cfg = three_label_cfg(target_metric={"type": "mcc", "value": 0.99}, **overrides)
     report: dict[str, Any] = {}
     with caplog.at_level(logging.INFO, logger="clmsynth"):
-        generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, seed=42, report=report)
+        generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, rng=42, report=report)
     assert report["ceiling"] is None
     assert f"no size ceiling, since {cause} can move the label counts" in caplog.text, caplog.text
     assert "[CLM-306]" in caplog.text and "Size ceiling" not in caplog.text, caplog.text
@@ -1565,7 +1582,7 @@ def test_moved_counts_can_score_above_the_ceiling_of_their_targets():
         "target_metric": {"type": "mcc", "value": 1.0},
     }
     report: dict[str, Any] = {}
-    out = generate_clm_labels(CLUSTERS, COORDS, cfg, seed=42, report=report).to_numpy()
+    out = generate_clm_labels(CLUSTERS, COORDS, cfg, rng=42, report=report).to_numpy()
     assert list(np.bincount(out)) == [400, 600]
     assert report["achieved"] == pytest.approx(0.6211, abs=1e-4)
     assert report["achieved"] > MetricCeilings.rk_ceiling([400, 300, 200, 100], [500, 500]) + 0.02
@@ -1584,7 +1601,7 @@ def test_the_target_keys_are_filled_only_under_a_target():
         "single_match": {"cluster": 0, "label": 0},
         "target_metric": {"type": "mcc", "value": 0.6, "scope": "pair"},
     }
-    out = generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, seed=42, report=pair).to_numpy()
+    out = generate_clm_labels(EQUAL, EQUAL_COORDS, cfg, rng=42, report=pair).to_numpy()
     assert pair == {
         "scope": "pair",
         "type": "mcc",
@@ -1593,12 +1610,12 @@ def test_the_target_keys_are_filled_only_under_a_target():
     }
 
     no_target: dict[str, Any] = {}
-    generate_clm_labels(EQUAL, EQUAL_COORDS, equal_cfg(), seed=42, report=no_target)
+    generate_clm_labels(EQUAL, EQUAL_COORDS, equal_cfg(), rng=42, report=no_target)
     assert list(no_target) == ["assignment_matrix"]
 
 
 def test_a_seedless_call_runs_on_one_drawn_seed(monkeypatch):
-    """seed=None draws one seed for the call. Passed on as None, every probe of the
+    """rng=None draws one seed for the call. Passed on as None, every probe of the
     target search and the delivery drew a stream of their own, so the search scored
     labelings it never delivered ([CLM-309])."""
     seeds = []
@@ -1610,9 +1627,11 @@ def test_a_seedless_call_runs_on_one_drawn_seed(monkeypatch):
 
     monkeypatch.setattr(np.random, "default_rng", spy)
     tm = {"type": "mcc", "value": 0.5}
-    generate_clm_labels(EQUAL, EQUAL_COORDS, three_label_cfg(target_metric=tm), seed=None)
+    generate_clm_labels(EQUAL, EQUAL_COORDS, three_label_cfg(target_metric=tm), rng=None)
     assert seeds.count(None) == 1
-    assert len({s for s in seeds if s is not None}) == 1
+    # A Generator passed on comes back as it is: it starts no stream of its own.
+    started = [s for s in seeds if s is not None and not isinstance(s, np.random.Generator)]
+    assert len(set(started)) == 1, seeds
 
 
 def test_strict_refuses_a_delivered_value_outside_the_tolerance():
@@ -1623,15 +1642,15 @@ def test_strict_refuses_a_delivered_value_outside_the_tolerance():
     from clmsynth.resolved_config import _resolve_target
 
     tm = {"type": "mcc", "value": 0.5, "tolerance": 0.01}
-    plain = generate_clm_labels(EQUAL, EQUAL_COORDS, three_label_cfg(target_metric=tm), seed=42)
+    plain = generate_clm_labels(EQUAL, EQUAL_COORDS, three_label_cfg(target_metric=tm), rng=42)
     strict = generate_clm_labels(EQUAL, EQUAL_COORDS,
-                                 three_label_cfg(target_metric={**tm, "strict": True}), seed=42)
+                                 three_label_cfg(target_metric={**tm, "strict": True}), rng=42)
     assert np.array_equal(plain.to_numpy(), strict.to_numpy())
 
     exact = {"type": "mcc", "value": 0.5, "strict": True}
     report: dict[str, Any] = {}
     with pytest.raises(InfeasibleAllocationError, match=r"\[CLM-154\].*\(tolerance 0\.0\)"):
-        generate_clm_labels(EQUAL, EQUAL_COORDS, three_label_cfg(target_metric=exact), seed=42,
+        generate_clm_labels(EQUAL, EQUAL_COORDS, three_label_cfg(target_metric=exact), rng=42,
                             report=report)
     assert report["achieved"] != 0.5 and report["ceiling"] is not None
     assert _resolve_target(exact)["tolerance"] == 0.0
@@ -1639,10 +1658,11 @@ def test_strict_refuses_a_delivered_value_outside_the_tolerance():
     pair = {"num_classes": 4, "balance": "balanced", "matching_mode": "single",
             "single_match": {"cluster": 0, "label": 0}}
     pair_tm = {"type": "mcc", "scope": "pair", "strict": True}
-    generate_clm_labels(EQUAL, EQUAL_COORDS, {**pair, "target_metric": {**pair_tm, "value": 1.0}})
+    generate_clm_labels(EQUAL, EQUAL_COORDS, {**pair, "target_metric": {**pair_tm, "value": 1.0}},
+                        rng=42)
     with pytest.raises(InfeasibleAllocationError, match=r"\[CLM-154\].*pair mcc"):
         generate_clm_labels(EQUAL, EQUAL_COORDS,
-                            {**pair, "target_metric": {**pair_tm, "value": 0.6}})
+                            {**pair, "target_metric": {**pair_tm, "value": 0.6}}, rng=42)
 
 
 @pytest.mark.parametrize(
@@ -1698,7 +1718,7 @@ def test_strict_refuses_a_delivered_value_outside_the_tolerance():
 )
 def test_incompatible_mode_combinations_are_rejected(cfg, tag):
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1)
     assert tag in str(excinfo.value)
 
 
@@ -1756,7 +1776,7 @@ def test_pair_scope_outside_single_mode_is_rejected():
             CLUSTERS,
             COORDS,
             base_custom_cfg(target_metric={"type": "mcc", "value": 0.5, "scope": "pair"}),
-            seed=1,
+            rng=1,
         )
     assert "[CLM-124]" in str(excinfo.value)
 
@@ -1793,7 +1813,7 @@ def test_pair_scope_outside_single_mode_is_rejected():
 )
 def test_unknown_rule_names_are_rejected(cfg, tag):
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1)
     assert tag in str(excinfo.value)
 
 
@@ -1807,7 +1827,7 @@ def test_split_rule_is_validated_wherever_custom_reads_it():
     reads it. Under the other modes it is still not read, so still not checked.
     """
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, base_custom_cfg(split_rule="bogus"), seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, base_custom_cfg(split_rule="bogus"), rng=1)
     assert "[CLM-108]" in str(excinfo.value)
 
     single = {
@@ -1817,7 +1837,7 @@ def test_split_rule_is_validated_wherever_custom_reads_it():
         "single_match": {"cluster": 0, "label": 0},
         "split_rule": "bogus",
     }
-    out = generate_clm_labels(CLUSTERS, COORDS, single, seed=1)
+    out = generate_clm_labels(CLUSTERS, COORDS, single, rng=1)
     assert_contingency_invariant(out.to_numpy(), 4)
 
 
@@ -1841,7 +1861,7 @@ def test_allocation_exceeding_capacity_by_one_point_is_infeasible():
                 "split_rule": "equal",
                 "spillover_rule": "proportional_to_marginal",
             },
-            seed=1,
+            rng=1,
         )
     assert "[CLM-150]" in str(excinfo.value)
     assert "proportions[0] = 0.101" in str(excinfo.value)
@@ -1884,9 +1904,9 @@ def test_counts_take_any_rounding_that_fits(sizes, proportions, rows, split_rule
     }
     if isinstance(expected, str):
         with pytest.raises(InfeasibleAllocationError, match=re.escape(expected)):
-            generate_clm_labels(clusters, None, cfg, seed=1)
+            generate_clm_labels(clusters, None, cfg, rng=1)
         return
-    out = generate_clm_labels(clusters, None, cfg, seed=1).to_numpy()
+    out = generate_clm_labels(clusters, None, cfg, rng=1).to_numpy()
     table = [np.bincount(out[clusters == k], minlength=len(proportions)).tolist()
              for k in range(len(sizes))]
     assert table == expected
@@ -1908,7 +1928,7 @@ def test_infeasible_single_blames_the_label_size_not_recall_target():
         "spillover_rule": "proportional_to_marginal",
     }
     with pytest.raises(InfeasibleAllocationError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1)
     message = str(excinfo.value)
     assert "[CLM-150]" in message
     assert "recall_target" not in message
@@ -1933,15 +1953,15 @@ def test_infeasible_advice_is_itself_feasible():
         "spillover_rule": "proportional_to_marginal",
     }
     with pytest.raises(InfeasibleAllocationError) as excinfo:
-        generate_clm_labels(clusters, None, cfg, seed=1)
+        generate_clm_labels(clusters, None, cfg, rng=1)
     assert "feasible up to 0.666" in str(excinfo.value), str(excinfo.value)
     cfg["assignment_matrix"][0]["recall_target"] = 0.666
-    generate_clm_labels(clusters, None, cfg, seed=1)
+    generate_clm_labels(clusters, None, cfg, rng=1)
 
     over_one = base_custom_cfg()
     over_one["assignment_matrix"][3]["recall_target"] = 80
     with pytest.raises(InfeasibleAllocationError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, over_one, seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, over_one, rng=1)
     assert "must be at most 1.0" in str(excinfo.value), str(excinfo.value)
 
 
@@ -1959,23 +1979,17 @@ def test_solver_grid_endpoints_are_evaluable(value):
         base_custom_cfg(
             target_metric={"type": "mcc", "value": value, "tolerance": 0.05, "max_iter": 20}
         ),
-        seed=1,
+        rng=1,
     )
     assert_contingency_invariant(out.to_numpy(), 4)
 
 
 def test_dirichlet_alpha_controls_concentration():
-    """`alpha` must actually shape the draw, not just be accepted.
+    """Verify that `alpha` controls Dirichlet concentration.
 
-    This is the defining property of the parameter: small alpha concentrates
-    almost all mass on one label, large alpha approaches a uniform split. The
-    gap it guards is that nothing else in the suite would notice `skew_params`
-    being ignored -- `00_contract` runs one dirichlet case at alpha=1.0 and
-    asserts the generic invariants, all of which hold just as well if the
-    engine silently drew a fixed alpha every time.
-
-    Compared across several seeds rather than one, so the assertion rests on
-    the distribution's behavior and not on a single lucky draw.
+    Small `alpha` concentrates mass on one label. Large `alpha` approaches a
+    uniform split. The general invariants at `alpha=1.0` do not detect a
+    fixed `alpha`. Comparing several seeds reduces sensitivity to any one draw.
     """
 
     def spread(alpha, seed):

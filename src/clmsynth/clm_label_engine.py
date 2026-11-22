@@ -7,9 +7,12 @@ inputs from upstream, this module only decides which label each point
 gets, per the clm_label config schema.
 """
 
+import enum
+import functools
 import itertools
 import logging
 import math
+import warnings
 from collections import deque
 from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
 from fractions import Fraction
@@ -27,32 +30,27 @@ from .clm_errors import (
     clm_missing,
     clm_warn,
 )
-from .config_tree import default, drop_empty
+from .config_tree import _PLACED_BY_DISTANCE, default
 from .config_validation import (
     BALANCE_VALUES,
     MATCHING_MODES,
     MAX_CARDINALITY,
     Rule,
-    _check_classes_and_mode,
-    _check_mapping,
+    _check_matching_cfg,
     _check_random_cfg,
+    _check_recall_sums,
+    _check_sizing_cfg,
+    _checked_block,
+    _exact,
     _is_finite_real,
     _is_int,
     _noise_entry,
+    _Number,
     _placement,
     _rules,
     _spillover_rule,
     _tolerance,
-    _validate_balance_cfg,
-    _validate_centroid_cfg,
-    _validate_competing_noise_cfg,
-    _validate_feature_dependence_cfg,
-    _validate_skew_cfg,
-    _validate_spillover_cfg,
-    _validate_split_cfg,
-    _validate_target_metric_cfg,
     _warn_recall_targets_ignored,
-    _warn_unread,
     build_rules,
     validate_matching_ids,
 )
@@ -92,23 +90,6 @@ log: logging.Logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Label totals: proportions / balance / skew_rule -> exact m_c per label
 # ---------------------------------------------------------------------------
-
-_Number = Fraction | float | int
-
-
-def _exact(x: _Number) -> Fraction:
-    """A number as written: a float is its shortest decimal, so 0.7 is 7/10, not
-    the float nearest it. Counts are rounded from these, so 0.7 and 0.3 of 1435
-    points (1004.5 and 430.5) tie, and the tie rule decides, not float noise."""
-    if isinstance(x, Fraction):
-        return x
-    if isinstance(x, (int, np.integer)):
-        return Fraction(int(x))
-    # A numpy float prints the shortest decimal of its own precision: float() would
-    # widen np.float32(0.6) to 0.6000000238418579.
-    written: Any = x
-    return Fraction(str(written if isinstance(written, np.floating) else float(written)))
-
 
 def _shown(v: Fraction) -> int | float:
     """An exact value for a message: 10.4, not 10.399999999999999 or 10."""
@@ -153,7 +134,7 @@ def _largest_remainder_by_group(keys: Sequence[Hashable], quotas: Sequence[_Numb
 
 
 def _skewed_proportions(M: int, skew_rule: str, params: dict[str, Any],
-                         rng: np.random.Generator | None = None) -> list[Fraction]:
+                         rng: np.random.Generator) -> list[Fraction]:
     """The label shares, exact from the written settings: dominant_share 0.7 of
     two labels leaves 3/10, not 0.30000000000000004."""
     if skew_rule == "geometric":
@@ -171,7 +152,6 @@ def _skewed_proportions(M: int, skew_rule: str, params: dict[str, Any],
         # Allows batch benchmarks to sample many imbalance scenarios by seed
         # instead of hand-picking proportion vectors.
         alpha = params.get("alpha", default("clm_label.skew_params.alpha"))
-        rng = rng if rng is not None else np.random.default_rng(0)
         raw = [_exact(x) for x in rng.dirichlet([alpha] * M)]
     else:
         raise clm_error(107, skew_rule=skew_rule)
@@ -185,11 +165,14 @@ def resolve_label_counts(cfg: dict[str, Any], N: int,
     a warning is logged). Anything else -> explicit `proportions` take
     precedence, and `skew_rule` is the fallback when no proportions are given.
     generate_clm_labels refuses a balance outside BALANCE_VALUES before calling
-    this ([CLM-132]), and does not call it under 'perfect'."""
-    return np.array(_largest_remainder_counts(_label_shares(cfg, rng), N))
+    this ([CLM-132]), and does not call it under 'perfect'. `rng` goes through
+    np.random.default_rng: a Generator is used as it is, None draws from the
+    operating system; only a dirichlet skew draws."""
+    return np.array(_largest_remainder_counts(
+        _label_shares(cfg, np.random.default_rng(rng)), N))
 
 
-def _label_shares(cfg: dict[str, Any], rng: np.random.Generator | None = None,
+def _label_shares(cfg: dict[str, Any], rng: np.random.Generator,
                   warn: bool = True) -> Sequence[_Number]:
     """The label shares resolve_label_counts rounds, with its checks."""
     M = cfg["num_classes"]
@@ -713,6 +696,37 @@ def _competing_demand(cfg: dict[str, Any], remaining_capacity: dict[int, int], m
     return extra, overrides, placed
 
 
+def _warn_noise_placed_after(cfg: dict[str, Any], targets: Mapping[Any, list[Any]],
+                             placed: list[dict[str, Any]]) -> None:
+    """[CLM-305] for a competing_noise entry placed by distance that does not get the
+    part of its cluster it favors: an enabled centroid_dependence with the same favors
+    places the cluster's target labels there first, or another entry with the same
+    favors in the cluster is placed first. A cluster's entries are placed by how many
+    points they place, most first, the earlier on a tie (assign_points_in_cluster)."""
+    cd = cfg.get("centroid_dependence") or {}
+    cd_favors = (cd.get("favors", default("clm_label.centroid_dependence.favors"))
+                 if cd.get("enabled") else None)
+    first: dict[tuple[Any, str], int] = {}
+    for i in sorted(range(len(placed)), key=lambda i: -placed[i]["placed"]):
+        entry = cfg["competing_noise"][i]
+        favors = entry.get("favors", default("clm_label.competing_noise.favors"))
+        k, count = placed[i]["cluster"], placed[i]["placed"]
+        if count == 0 or favors not in _PLACED_BY_DISTANCE:
+            continue
+        effect = f"does not get the {favors} of cluster {k}"
+        if favors == cd_favors and targets.get(k):
+            clm_warn(log, 305, where="competing_noise", entry=entry, effect=effect,
+                     cause=f"centroid_dependence favors '{favors}' places the target "
+                           f"label(s) {targets[k]} there first")
+        elif (k, favors) in first:
+            j = first[(k, favors)]
+            more = "more" if placed[j]["placed"] > count else "as many"
+            clm_warn(log, 305, where="competing_noise", entry=entry, effect=effect,
+                     cause=f"competing_noise entry {j} also favors '{favors}' there and is "
+                           f"placed first, as it places {more} points")
+        first.setdefault((k, favors), i)
+
+
 # ---------------------------------------------------------------------------
 # Shared allocation pipeline (used both by the probe search and the final commit)
 # ---------------------------------------------------------------------------
@@ -756,8 +770,13 @@ def _run_allocation_pipeline(cluster_labels, coords, cfg, rules, cluster_ids,
     # is identical to the base engine.
     favors_overrides: dict[int, dict[int, str]] = {}
     if noise:
+        targets = {k: sorted(label for label, count in per_label.items() if count > 0)
+                   for k, per_label in demand.items()}
         extra, favors_overrides, entries = _competing_demand(cfg, remaining_capacity, m_counts,
                                                               used_per_label, warn=warn)
+        if warn and any(e.get("favors", default("clm_label.competing_noise.favors"))
+                        in _PLACED_BY_DISTANCE for e in noise):
+            _warn_noise_placed_after(cfg, targets, entries)
         if placed is not None:
             placed["competing_noise"] = entries
         for k, per_label in extra.items():
@@ -1106,35 +1125,29 @@ def _check_config(cfg: Any, warn: bool = True) -> None:
     its warnings, without a dataset; `warn=False` leaves the warnings to the
     labelling that follows. Left out: what needs the cluster ids, their count,
     their sizes or the coordinates ([CLM-102], [CLM-105], [CLM-119], [CLM-120],
-    [CLM-125], [CLM-127], [CLM-133], K in [CLM-103] and [CLM-111], the 15x codes)
-    and the warnings about the delivered labels. A block that passes may still not
-    fit a dataset, and its counts or its target may still not be met: both are
-    judged when a dataset is labelled."""
-    _check_mapping(cfg, "clm_label", "{num_classes: 4, matching_mode: perfect}")
-    cfg = drop_empty(cfg)
-    _check_classes_and_mode(cfg)
+    [CLM-125], [CLM-127], [CLM-133], K in [CLM-103] and [CLM-111], the 15x codes
+    but [CLM-153], which reads the recall_target values only) and the warnings
+    about the delivered labels. A block that passes may still not fit a dataset,
+    and its counts or its target may still not be met: both are judged when a
+    dataset is labelled."""
+    cfg = _checked_block(cfg)
     _placement(cfg)
     if cfg["matching_mode"] != "perfect":
-        _validate_balance_cfg(cfg)
-        _validate_skew_cfg(cfg)
-        _label_shares(cfg, warn=warn)
+        _check_sizing_cfg(cfg)
+        # Only a dirichlet skew draws here, and any draw gives the same verdict.
+        _label_shares(cfg, np.random.default_rng(0), warn=warn)
     if cfg["matching_mode"] == "random":
         _check_random_cfg(cfg, warn=warn)
         return
-    _validate_spillover_cfg(cfg)
-    _validate_centroid_cfg(cfg)
-    _validate_target_metric_cfg(cfg, None)
-    _validate_split_cfg(cfg)
-    _validate_competing_noise_cfg(cfg)
-    _validate_feature_dependence_cfg(cfg)
-    if warn:
-        _warn_unread(cfg)
+    _check_matching_cfg(cfg, None, warn=warn)
     tm = cfg.get("target_metric")
     if tm and warn:
         _warn_recall_targets_ignored(cfg)
     # Under target_metric the run hands every rule the solved level, so no rule
     # reads its own recall_target.
-    _rules(cfg, None, recall_target_override=1.0 if tm else None, warn=warn)
+    rules = _rules(cfg, None, recall_target_override=1.0 if tm else None, warn=warn)
+    if not tm:
+        _check_recall_sums(rules)
 
 
 def _drawn_seed() -> int:
@@ -1143,20 +1156,72 @@ def _drawn_seed() -> int:
     return int(np.random.default_rng().integers(2**31))
 
 
+# What `rng` takes (SPEC 7): whatever np.random.default_rng takes.
+_RngLike = (int | np.integer[Any] | Sequence[int] | np.random.SeedSequence
+            | np.random.BitGenerator | np.random.Generator | None)
+
+
+class _Unset(enum.Enum):
+    """`seed`'s default, so a call passing seed=None is told from one passing none."""
+    UNSET = enum.auto()
+
+
+def _base_seed(rng: _RngLike, seed: int | _Unset | None) -> int:
+    """The one seed a call's streams start from (SPEC 7). An int `rng` is that seed,
+    so rng=42 labels as seed=42 did; another `rng` gives one seed drawn from
+    np.random.default_rng(rng), which advances a Generator passed in; None draws one
+    from the operating system. `seed` is the former name of `rng`."""
+    if seed is not _Unset.UNSET:
+        if rng is not None:
+            raise TypeError("Pass rng or seed, not both: seed is the former name of rng.")
+        rng = seed
+    if rng is None:
+        return _drawn_seed()
+    if isinstance(rng, (int, np.integer)):
+        return int(rng)
+    return int(np.random.default_rng(rng).integers(2**31))
+
+
+def _seed_renamed[**P, T](position: int) -> Callable[[Callable[P, T]], Callable[P, T]]:
+    """Warns a call that passes `seed`, the former name of `rng`, which goes in 0.8.0
+    (SPEC 7): a FutureWarning when it comes by position (index `position`), else a
+    DeprecationWarning."""
+    def decorate(func: Callable[P, T]) -> Callable[P, T]:
+        @functools.wraps(func)
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+            if len(args) > position:
+                warnings.warn(f"{func.__name__}: a seed passed by position goes in 0.8.0. "
+                              "Pass it as rng=, which gives the same labels for the same "
+                              "int.", FutureWarning, stacklevel=2)
+            elif "seed" in kwargs:
+                warnings.warn(f"{func.__name__}: seed= goes in 0.8.0. Pass rng= instead, "
+                              "which gives the same labels for the same int.",
+                              DeprecationWarning, stacklevel=2)
+            return func(*args, **kwargs)
+        return wrapper
+    return decorate
+
+
+@_seed_renamed(3)
 def generate_clm_labels(cluster_labels: np.ndarray | pd.Series | Sequence[int],
                         coords: np.ndarray | None,
-                        cfg: dict[str, Any], seed: int | None = 42,
-                        report: dict[str, Any] | None = None) -> pd.Series:
+                        cfg: dict[str, Any], seed: int | _Unset | None = _Unset.UNSET,
+                        report: dict[str, Any] | None = None, *,
+                        rng: _RngLike = None) -> pd.Series:
     """Generates one synthetic label column for an existing clustering.
+
+    ``rng`` seeds the call (Scientific Python SPEC 7). None draws a seed from the
+    operating system, so two calls differ; an int is the seed itself; any other
+    value goes to ``numpy.random.default_rng`` and one seed is drawn from the
+    Generator it gives. The label counts, the target search and the placement start
+    their streams from that seed. ``seed`` is the former name of ``rng``: it warns
+    and goes in 0.8.0; passing both raises TypeError.
     """
-    _check_mapping(cfg, "clm_label", "{num_classes: 4, matching_mode: perfect}")
-    cfg = drop_empty(cfg)
-    if seed is None:
-        seed = _drawn_seed()
+    seed = _base_seed(rng, seed)
+    cfg = _checked_block(cfg)
     rng = np.random.default_rng(seed)
     N = len(cluster_labels)
     original_index = cluster_labels.index if isinstance(cluster_labels, pd.Series) else None
-    _check_classes_and_mode(cfg)
     if not isinstance(cfg["num_classes"], int):
         # A numpy integer keeps its width in the counts, where an int8 overflows.
         cfg = {**cfg, "num_classes": int(cfg["num_classes"])}
@@ -1184,8 +1249,7 @@ def generate_clm_labels(cluster_labels: np.ndarray | pd.Series | Sequence[int],
         # without objecting: it reads any balance but 'balanced' as 'unbalanced'
         # ([CLM-132]), and turns an out-of-range skew_params into negative label
         # counts that still sum to N ([CLM-131]).
-        _validate_balance_cfg(cfg)
-        _validate_skew_cfg(cfg)
+        _check_sizing_cfg(cfg)
         m_counts = resolve_label_counts(cfg, N, rng)
 
     if cfg["matching_mode"] == "random":
@@ -1196,13 +1260,7 @@ def generate_clm_labels(cluster_labels: np.ndarray | pd.Series | Sequence[int],
 
     # These run before the target-metric solver: a config error must surface as
     # itself, not as a solved score computed over an invalid labeling.
-    _validate_spillover_cfg(cfg)
-    _validate_centroid_cfg(cfg)
-    _validate_target_metric_cfg(cfg, cluster_ids)
-    _validate_split_cfg(cfg)
-    _validate_competing_noise_cfg(cfg)
-    _validate_feature_dependence_cfg(cfg)
-    _warn_unread(cfg)
+    _check_matching_cfg(cfg, cluster_ids)
     follows = _followed_features(cfg, coords)   # [CLM-125] a feature this dataset lacks
     mover = _count_mover(cfg)
 

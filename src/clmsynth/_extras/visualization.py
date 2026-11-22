@@ -19,6 +19,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 
+from .._run_folders import subfolders
 from .._utils.write_files import write_then_replace
 from ..config_tree import default
 from ..metrics import clustering_ari, clustering_mcc
@@ -37,7 +38,7 @@ _RENDER_LOCK = threading.Lock()
 
 
 def _max_path_hint(output_path: str | None) -> str:
-    """Name MAX_PATH when a plot failure is most likely really a path-length one.
+    """Return a MAX_PATH hint when path length may have caused a plot failure.
     """
     if not output_path or os.name != "nt":
         return ""
@@ -272,11 +273,11 @@ _SUMMARY_CONFIG = "===== CLM label configuration =====\n"
 def plot_run_folder(run_dir: str | Path) -> int:
     """Draws a finished run's plots into its png/ as the run would have, e.g. after
     --no-viz, from csv/ and the summaries in info/. Returns the datasets plotted."""
-    run_dir = Path(run_dir)
+    csv_dir, png_dir, info_dir = subfolders(Path(run_dir))
     n = 0
-    for csv_path in sorted((run_dir / "csv").glob("*.csv")):
+    for csv_path in sorted(csv_dir.glob("*.csv")):
         stem = csv_path.stem
-        txt = run_dir / "info" / f"{stem}.txt"
+        txt = info_dir / f"{stem}.txt"
         if not txt.is_file():
             log.warning(f"'{stem}' has no summary '{txt}'; skipping its plots.")
             continue
@@ -309,6 +310,6 @@ def plot_run_folder(run_dir: str | Path) -> int:
                 ari = float(clustering_ari(df[gt_col], df[label]))
             label_results.append({"name": label, "mcc": mcc, "ari": ari})
 
-        n += render_dataset_plots(df, features, run_dir / "png", stem, gt_col,
+        n += render_dataset_plots(df, features, png_dir, stem, gt_col,
                                   source_labeling, title, label_results, clm_config)
     return n

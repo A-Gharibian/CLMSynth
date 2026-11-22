@@ -9,12 +9,12 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 # Before the imports: _single_run reads it.
-__version__ = "0.7.8"
+__version__ = "0.7.9"
 
 # Each public name imports its module on first use (PEP 562), so importing the
 # package alone loads no numpy, pandas, scipy or scikit-learn.
 _LAZY: dict[str, str] = {
-    "load_config": "._single_run",
+    "load_config": "._utils.config_files",
     "run_pipeline": "._single_run",
     "InfeasibleAllocationError": ".clm_errors",
     "MissingConfigKey": ".clm_errors",
@@ -30,7 +30,8 @@ _LAZY: dict[str, str] = {
 # mypy reads these imports; a module-level __getattr__ visible to it would type
 # every attribute of the package as Any.
 if TYPE_CHECKING:
-    from ._single_run import load_config, run_pipeline
+    from ._single_run import run_pipeline
+    from ._utils.config_files import load_config
     from .clm_errors import InfeasibleAllocationError, MissingConfigKey
     from .clm_label_engine import generate_clm_labels
     from .labeling import DatasetContext, build_context, generate_additional_labels

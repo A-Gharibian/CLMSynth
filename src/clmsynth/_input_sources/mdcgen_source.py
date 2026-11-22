@@ -15,7 +15,8 @@ import numpy as np
 import pandas as pd
 
 from .._utils.compat import import_optional_dependency
-from . import FEATURE_RECORD, Source
+from ..clm_errors import clm_error
+from . import COHORT_COLUMN, FEATURE_RECORD, GROUND_TRUTH_PREFIX, Source
 
 log: logging.Logger = logging.getLogger(__name__)
 
@@ -219,8 +220,8 @@ def fetch_mdcgen_data(
     labels = np.asarray(labels).ravel()
     feature_cols = [f"Feature_{i + 1}" for i in range(data.shape[1])]
     df = pd.DataFrame(data, columns=feature_cols)
-    df["GroundTruth_labels0"] = labels
-    df["Cohort_Class"] = labels
+    df[f"{GROUND_TRUTH_PREFIX}labels0"] = labels
+    df[COHORT_COLUMN] = labels
     n_clusters = len(k) if isinstance(k, (list, tuple)) else int(np.sum(np.unique(labels) >= 0))
     df.attrs[FEATURE_RECORD] = _feature_record(feature_cols, n_noise, n_clusters)
 
@@ -230,6 +231,16 @@ def fetch_mdcgen_data(
     log.info(f"Generated '{dataset_group}/{dataset_name}' (seed={seed}): {df.shape[0]} rows"
              f"{outliers}, {len(feature_cols)} features, 1 labeling(s).")
     return df
+
+
+def _refuse_keys_not_text(suite: Mapping[Any, Any]) -> None:
+    """[CLM-141] for a mdcgen_suite key that is not text: each key the run does not
+    read goes on to mdcgenpy as a keyword argument, which must be text."""
+    for key in suite:
+        if not isinstance(key, str):
+            raise clm_error(141, key="a key of mdcgen_suite",
+                            expected="text, since mdcgen passes it on to mdcgenpy by name",
+                            value=key)
 
 
 SOURCE: Final[Source] = Source(
@@ -243,8 +254,6 @@ SOURCE: Final[Source] = Source(
     suite_keys=None,   # every other key goes on to mdcgenpy
     fetch=lambda battery, dataset, seed, **kw: fetch_mdcgen_data(
         dataset_group=battery, dataset_name=dataset, seed=seed, **kw),
-    licence=("mdcgenpy is GPL-3.0, installed by the user and never shipped. Cite Iglesias et "
-             "al. (2019), MDCGen, Journal of Classification 36, 599-618, "
-             "doi:10.1007/s00357-019-9312-3."),
     needs="mdcgenpy",
+    suite_check=_refuse_keys_not_text,
 )

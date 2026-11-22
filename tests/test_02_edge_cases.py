@@ -45,7 +45,7 @@ def test_empty_dataset_under_random_mode_returns_an_empty_series():
             "balance": "balanced",
             "matching_mode": "random",
         },
-        seed=1,
+        rng=1,
     )
     assert len(out) == 0
 
@@ -62,7 +62,7 @@ def test_empty_dataset_under_custom_mode_rejects_the_referenced_cluster():
                 "matching_mode": "custom",
                 "assignment_matrix": [{"label": 0, "clusters": [0], "recall_target": 0.5}],
             },
-            seed=1,
+            rng=1,
         )
     assert "[CLM-105]" in str(excinfo.value)
 
@@ -106,7 +106,7 @@ def test_proportions_length_mismatch_is_rejected():
                 "proportions": [0.5, 0.5],
                 "matching_mode": "random",
             },
-            seed=1,
+            rng=1,
         )
     assert "[CLM-121]" in str(excinfo.value)
 
@@ -123,7 +123,7 @@ def test_empty_assignment_matrix_leaves_spillover_to_cover_everything():
             "assignment_matrix": [],
             "spillover_rule": "proportional_to_marginal",
         },
-        seed=1,
+        rng=1,
     ).to_numpy()
     assert len(out) == N
     assert out.min() >= 0
@@ -362,7 +362,7 @@ def test_single_point_dataset():
         np.array([0]),
         np.array([[0.0, 0.0]]),
         {"num_classes": 1, "matching_mode": "perfect"},
-        seed=1,
+        rng=1,
     )
     assert list(out.to_numpy()) == [0]
 
@@ -403,7 +403,7 @@ def test_large_dataset_preserves_the_invariant():
                 "steepness": 4.0,
             },
         },
-        seed=1,
+        rng=1,
     ).to_numpy()
 
     assert len(out) == big_n
@@ -555,7 +555,7 @@ def test_out_of_range_skew_params_are_coded(num_classes, skew_rule, params, was)
     downstream objecting. The rest crashed, but uncoded.
     """
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, _skew_cfg(skew_rule, params, num_classes), seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, _skew_cfg(skew_rule, params, num_classes), rng=1)
     assert getattr(excinfo.value, "code", None) == 131, (
         f"expected [CLM-131] where the engine previously gave: {was}"
     )
@@ -577,11 +577,14 @@ def test_legal_extremes_are_not_swept_up_by_the_guard(skew_rule, params):
 
     `[CLM-131]` rejects `ratio < 0`, not `<= 0`, and `alpha <= 0`, not `< 1`.
     A guard that over-reaches here would break the degenerate-but-legal
-    configurations asserted directly above.
+    configurations asserted directly above. Through a full labelling call too, whose
+    entry guard is the one a run meets.
     """
     counts = resolve_label_counts(_skew_cfg(skew_rule, params), N, np.random.default_rng(0))
     assert sum(counts) == N
     assert min(counts) >= 0, f"negative count survived: {list(counts)}"
+    labels = generate_clm_labels(CLUSTERS, COORDS, _skew_cfg(skew_rule, params), rng=1)
+    assert len(labels) == N
 
 
 def test_bare_null_skew_params_takes_the_documented_defaults():
@@ -600,7 +603,7 @@ def test_bare_null_skew_params_takes_the_documented_defaults():
             "skew_params": None,
             "matching_mode": "random",
         },
-        seed=1,
+        rng=1,
     )
     assert len(out) == N
 
@@ -627,7 +630,7 @@ def test_bare_null_centroid_dependence_is_treated_as_disabled():
             "spillover_rule": "proportional_to_marginal",
             "centroid_dependence": None,
         },
-        seed=1,
+        rng=1,
     )
     assert len(out) == N
 
@@ -661,7 +664,7 @@ def test_unreachable_tolerance_reports_non_convergence(caplog):
                     "max_iter": 15,
                 },
             },
-            seed=1,
+            rng=1,
         )
     assert any(getattr(r, "clm_code", None) == 306 and r.levelno == logging.WARNING
                for r in caplog.records)
@@ -1046,7 +1049,7 @@ def test_config_value_with_trailing_space_is_rejected():
                 "num_classes": 4,
                 "matching_mode": "custom ",
             },
-            seed=1,
+            rng=1,
         )
     assert "[CLM-101]" in str(excinfo.value)
 
@@ -1092,7 +1095,7 @@ def test_unusable_dataset_input_is_refused(cluster_labels, coords, problem, mode
         "spillover_rule": "proportional_to_marginal",
     }
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(cluster_labels, coords, cfg, seed=1)
+        generate_clm_labels(cluster_labels, coords, cfg, rng=1)
     assert getattr(excinfo.value, "code", None) == 133
     assert problem in str(excinfo.value)
 
@@ -1114,12 +1117,12 @@ def test_coordinates_that_placement_reads_must_be_finite(bad, profile):
         "centroid_dependence": {"enabled": True, "favors": "core", "profile": profile},
     }
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, coords, cfg, seed=1)
+        generate_clm_labels(CLUSTERS, coords, cfg, rng=1)
     assert getattr(excinfo.value, "code", None) == 133
     assert "1 value(s) in coords are NaN or infinite" in str(excinfo.value)
 
     del cfg["centroid_dependence"]
-    assert len(generate_clm_labels(CLUSTERS, coords, cfg, seed=1)) == len(CLUSTERS)
+    assert len(generate_clm_labels(CLUSTERS, coords, cfg, rng=1)) == len(CLUSTERS)
 
 
 @pytest.mark.parametrize("profile", ["step", "linear", "exponential"])
@@ -1141,12 +1144,12 @@ def test_coordinates_too_large_for_a_distance_are_refused(scale, dtype, profile)
         "centroid_dependence": {"enabled": True, "favors": "core", "profile": profile},
     }
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, coords, cfg, seed=1)
+        generate_clm_labels(CLUSTERS, coords, cfg, rng=1)
     assert getattr(excinfo.value, "code", None) == 133
     assert "Standardize or rescale the features" in str(excinfo.value)
 
     del cfg["centroid_dependence"]
-    assert len(generate_clm_labels(CLUSTERS, coords, cfg, seed=1)) == len(CLUSTERS)
+    assert len(generate_clm_labels(CLUSTERS, coords, cfg, rng=1)) == len(CLUSTERS)
 
 
 @pytest.mark.parametrize("coords", [COORDS.astype(object), COORDS.astype(str)],
@@ -1163,12 +1166,12 @@ def test_coordinates_that_are_not_numbers_are_refused(coords):
         "centroid_dependence": {"enabled": True, "favors": "core", "profile": "linear"},
     }
     with pytest.raises(ValueError) as excinfo:
-        generate_clm_labels(CLUSTERS, coords, cfg, seed=1)
+        generate_clm_labels(CLUSTERS, coords, cfg, rng=1)
     assert getattr(excinfo.value, "code", None) == 133
     assert "not numbers" in str(excinfo.value)
 
     del cfg["centroid_dependence"]
-    assert len(generate_clm_labels(CLUSTERS, coords, cfg, seed=1)) == len(CLUSTERS)
+    assert len(generate_clm_labels(CLUSTERS, coords, cfg, rng=1)) == len(CLUSTERS)
 
 
 # ---------------------------------------------------------------------------
@@ -1198,8 +1201,8 @@ def test_placement_does_not_depend_on_the_units(profile, scale):
     absolute 1e-9 and divides by span + 1e-12, so a score whose span is below 1e-6
     is rescaled to 0..1 first; any other score takes the pick as it is."""
     cfg = placed_by_centroid(profile)
-    plain = generate_clm_labels(TWO, TWO_COORDS, cfg, seed=1).to_numpy()
-    small = generate_clm_labels(TWO, TWO_COORDS * scale, cfg, seed=1).to_numpy()
+    plain = generate_clm_labels(TWO, TWO_COORDS, cfg, rng=1).to_numpy()
+    small = generate_clm_labels(TWO, TWO_COORDS * scale, cfg, rng=1).to_numpy()
     assert (plain == small).mean() > 0.99
 
 
@@ -1209,15 +1212,15 @@ def test_a_constant_cluster_in_float16_is_placed():
     coords = np.ones((200, 2), dtype=np.float16)
     cfg = placed_by_centroid("linear")
     pd.testing.assert_series_equal(
-        generate_clm_labels(TWO, coords, cfg, seed=1),
-        generate_clm_labels(TWO, coords.astype(float), cfg, seed=1))
+        generate_clm_labels(TWO, coords, cfg, rng=1),
+        generate_clm_labels(TWO, coords.astype(float), cfg, rng=1))
 
 
 @pytest.mark.parametrize("mode", ["custom", "random"])
 def test_a_series_input_keeps_its_index(mode):
     """The labels of a Series carry its index, so they align on the caller's frame."""
     truth = pd.Series(TWO, index=np.arange(200) + 1000)
-    labels = generate_clm_labels(truth, TWO_COORDS, two_labels(matching_mode=mode), seed=1)
+    labels = generate_clm_labels(truth, TWO_COORDS, two_labels(matching_mode=mode), rng=1)
     assert labels.index.equals(truth.index)
 
 
@@ -1228,8 +1231,8 @@ def test_a_numpy_num_classes_gives_the_labels_of_an_int(kind, per_cluster):
     overflowed: "Python integer 200 out of bounds for int8"."""
     truth = np.repeat([0, 1], per_cluster)
     pd.testing.assert_series_equal(
-        generate_clm_labels(truth, None, two_labels(num_classes=kind(2)), seed=1),
-        generate_clm_labels(truth, None, two_labels(), seed=1))
+        generate_clm_labels(truth, None, two_labels(num_classes=kind(2)), rng=1),
+        generate_clm_labels(truth, None, two_labels(), rng=1))
 
 
 def recall_in_two_rows(kind):
@@ -1259,8 +1262,8 @@ def test_float32_values_count_as_written(build, truth):
     """np.float32(0.6) is 0.6 as written, not the 0.6000000238 float() widens it
     to: 0.6 + 0.4 passed 1 ([CLM-153], [CLM-152]) and a 1004.5 tie was lost."""
     pd.testing.assert_series_equal(
-        generate_clm_labels(truth, None, build(np.float32), seed=1),
-        generate_clm_labels(truth, None, build(float), seed=1))
+        generate_clm_labels(truth, None, build(np.float32), rng=1),
+        generate_clm_labels(truth, None, build(float), rng=1))
 
 
 def test_a_search_budget_past_a_c_int_is_not_a_smaller_search():
@@ -1270,13 +1273,13 @@ def test_a_search_budget_past_a_c_int_is_not_a_smaller_search():
     coords = np.random.default_rng(0).normal(size=(120, 2))
 
     def achieved(max_iter):
-        report: dict = {}
+        report: dict[str, object] = {}
         cfg = {"num_classes": 3, "balance": "balanced", "matching_mode": "custom",
                "assignment_matrix": [{"label": i, "clusters": [i], "recall_target": 0.8}
                                      for i in range(3)],
                "target_metric": {"type": "mcc", "value": 0.54, "tolerance": 0.005,
                                  "max_iter": max_iter}}
-        generate_clm_labels(truth, coords, cfg, seed=1, report=report)
+        generate_clm_labels(truth, coords, cfg, rng=1, report=report)
         return report["achieved"]
 
     assert achieved(2**31) == achieved(40)
@@ -1299,8 +1302,8 @@ def test_ids_as_a_list_or_tuple_give_the_array_labels(cfg, container):
     """Integer ids passed as a list or tuple give the labels they give as an
     array. Every mode but random read each cluster as empty: perfect crashed, and
     single and custom were refused as if the cluster held no points."""
-    out = generate_clm_labels(container(CLUSTERS.tolist()), COORDS, cfg, seed=1)
-    pd.testing.assert_series_equal(out, generate_clm_labels(CLUSTERS, COORDS, cfg, seed=1))
+    out = generate_clm_labels(container(CLUSTERS.tolist()), COORDS, cfg, rng=1)
+    pd.testing.assert_series_equal(out, generate_clm_labels(CLUSTERS, COORDS, cfg, rng=1))
 
 
 def test_valueless_assignment_matrix_with_a_target_is_a_missing_key():
@@ -1316,9 +1319,9 @@ def test_valueless_assignment_matrix_with_a_target_is_a_missing_key():
         "target_metric": target,
     }
     with pytest.raises(KeyError) as excinfo:
-        generate_clm_labels(CLUSTERS, COORDS, custom, seed=1)
+        generate_clm_labels(CLUSTERS, COORDS, custom, rng=1)
     assert getattr(excinfo.value, "code", None) == 206
 
     single = dict(custom, matching_mode="single", single_match={"cluster": 0, "label": 0})
-    out = generate_clm_labels(CLUSTERS, COORDS, single, seed=1)
+    out = generate_clm_labels(CLUSTERS, COORDS, single, rng=1)
     assert len(out) == N

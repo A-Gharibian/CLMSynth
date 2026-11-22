@@ -1,5 +1,5 @@
 % !CLMSynth-doc = configuration-troubleshooting
-% !CLMSynth-version = 0.7.8
+% !CLMSynth-version = 0.7.9
 
 \documentclass[a4paper,11pt]{article}
 \usepackage[T1]{fontenc}
@@ -46,7 +46,7 @@
 
 \title{\textbf{Configuration Troubleshooting Reference}}
 % Names the release documented, not the candidate. Banner above tracks the build.
-\author{CLMSynth v0.7.8}
+\author{CLMSynth v0.7.9}
 \date{\today}
 
 \begin{document}
@@ -234,7 +234,7 @@ per-row \texttt{recall\_target} & \texttt{target\_metric} is set & Overridden by
 \vcode{122} & \texttt{target\_metric.scope} not \texttt{pair}/\texttt{global} & Unrecognized scope string & Use \texttt{pair} or \texttt{global}. \\
 \vcode{123} & \texttt{scope: pair} with \texttt{type: ari} & Only the single-pair MCC has a closed-form inverse & Use \texttt{type: mcc}, or \texttt{scope: global}. \\
 \vcode{124}& \texttt{scope: pair} outside \texttt{single} mode & The pair is defined by \texttt{single\_match} & Use \texttt{matching\_mode: single}, or \texttt{scope: global}. \\
-\vcode{125} & placement requested without feature vectors, or with one feature per point; a \texttt{feature\_dependence} entry whose feature the dataset lacks & Centroid distances need $(N,d)$ coordinates, $d \ge 2$, and an entry needs its column & Pass \texttt{coords}, or disable \texttt{centroid\_dependence}, \texttt{feature\_dependence} and spatial \texttt{competing\_noise}. \\
+\vcode{125} & placement requested without feature vectors, or with one feature per point; a \texttt{feature\_dependence} entry missing & Centroid distances need $(N,d)$ coordinates, $d \ge 2$, and an entry needs its column & Pass \texttt{coords}, or disable \texttt{centroid\_dependence}, \texttt{feature\_dependence} and spatial \texttt{competing\_noise}. \\
 \vcode{126} & \texttt{num\_classes} not an integer, or outside $[1,64]$ & Not an integer & Use an unquoted integer in $[1,64]$. \\
 \vcode{127} & the dataset's cluster count $K > 64$ & Same backstop, applied to the data rather than the config & Regroup or subsample clusters to $K\leq64$. \\
 \vcode{128} & \texttt{concentrated\_labels} is not a list of integers in $0..M{-}1$ & A bare number is read as a \emph{range} (scattering the remainder over that many labels). & Give a list of existing label IDs, e.g. \texttt{[0]}. Checked before the \texttt{target\_metric} solver. \\
@@ -245,7 +245,7 @@ per-row \texttt{recall\_target} & \texttt{target\_metric} is set & Overridden by
 \vcode{132} & \texttt{balance} not exactly \texttt{balanced}/\texttt{unbalanced} & Matched exactly and case-sensitively. & Use lowercase \texttt{balanced} or \texttt{unbalanced}, or omit the key. \\
 \vcode{133} & A missing or infinite id, an id that is not an integer, or a \texttt{coords} row count different from $N$ & numpy merged missing ids into one cluster that counted no points, and a Python list holding \texttt{1} and \texttt{"1"} into one cluster & Give every point one integer cluster id (\texttt{1}, not \texttt{1.0}, \texttt{"1"} or \texttt{true}), and one feature row.\\
 \hline
-\vcode{141} & a value of the wrong type (\texttt{null} included), or a block of the wrong shape & Values are not converted correctly. & Write the value unquoted and a cluster id as one integer. \\
+\vcode{141} & a value of the wrong type (\texttt{null} included), a block of the wrong shape, or a key the run does not read & Values are not converted correctly; a misspelt key would run on its default. & Write the value unquoted and a cluster id as one integer; write the key the message suggests, or remove it. \\
 \vcode{142} & A cluster named more than once for one label in two \texttt{assignment\_matrix} or two \texttt{competing\_noise} entries & One entry states how much of a label a cluster holds. & Name each cluster once per label: keep it in one row; for noise, choose one placement, or write one entry with the summed \texttt{share}. \\
 \vcode{144} & A \texttt{competing\_noise} entry whose label is a target of that cluster (its \texttt{single\_match} or an \texttt{assignment\_matrix}) & Competing noise places another label in a cluster; on the cluster's own target label the entry's \texttt{favors} moved the target's points too. & Use a different label, or remove the entry. \\
 \bottomrule
@@ -256,6 +256,7 @@ per-row \texttt{recall\_target} & \texttt{target\_metric} is set & Overridden by
 \newpage
 
 \subsection{Infeasible Allocation Error \texorpdfstring{\vcode{15x}}{15x} }
+Under \texttt{target\_metric}, codes \vcode{150}/\vcode{151}/\vcode{152}/\vcode{153} are caught per probe and treated as ``this $\alpha$ is infeasible''. When the target is missed, each code is logged once as a warning naming the levels it blocked, before \wcode{306}, or before \vcode{120} when no $\alpha$ works at all. \vcode{154} is only with \texttt{target\_metric.strict}; the dataset is written without that label.
 \begin{longtable}{@{}L{1.0cm} L{4.3cm} L{4.2cm} L{5.0cm}@{}}
 \toprule
 \headrow \hc{Code} & \hc{Trigger} & \hc{Reason} & \hc{Mitigation} \\
@@ -269,7 +270,7 @@ per-row \texttt{recall\_target} & \texttt{target\_metric} is set & Overridden by
 \vcode{153}\footnote{Not exit status 153 (file-size limit).} & Several \texttt{assignment\_matrix} rules name the same label and their \texttt{recall\_target} values add up to more than $1$ & A rule's \texttt{recall\_target} is a fraction of the label's \emph{whole} budget, so repeating a label across rules adds those fractions. & Let \texttt{split\_rule} divide the budget.\\
 \vcode{154} & \texttt{target\_metric} with \texttt{strict: true}, and the delivered value lies outside \texttt{value}~$\pm$~\texttt{tolerance} & Strict refuses the closest value rather than writing it. & Choose a target below the ceiling or inside the range, give a \texttt{tolerance}, or omit \texttt{strict} to keep the closest label.\\
 \bottomrule
-\caption{Infeasible Allocation Error, \noindent\emph{Under \texttt{target\_metric}}, codes \vcode{150}/\vcode{151}/\vcode{152}/\vcode{153} are caught per probe and treated as ``this $\alpha$ is infeasible''. When the target is missed, each code is logged once as a warning naming the levels it blocked, before \wcode{306}, or before \vcode{120} when no $\alpha$ works at all. \vcode{154} is only with \texttt{target\_metric.strict}; the dataset is written without that label.}
+\caption{Infeasible Allocation Errors}
 \label{IAE}
 \end{longtable}
 % Under target_metric, the per-code warning quotes a [CLM-15x] tag that was not

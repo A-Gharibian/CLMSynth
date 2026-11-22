@@ -10,9 +10,10 @@
 [![Project status: active](https://img.shields.io/badge/repo%20status-active-brightgreen)](https://www.repostatus.org/#active)
 [![Cite](https://img.shields.io/badge/cite-CITATION.cff-blueviolet)](https://github.com/A-Gharibian/CLMSynth/blob/main/CITATION.cff)
 
-CLMSynth generates synthetic label columns on top of existing or generated clusters,
-with mathematically controlled agreement (recall, class balance, spatial placement, or a solved target metric)
-against the ground-truth clusters.
+CLMSynth is a synthetic dataset and label generator for benchmarking semi-supervised
+learning, algorithms and cluster–label matching metrics. It enables researchers to generate
+class labels with a specified target (Adjusted Rand Index or MCC) relative to cluster
+assignments, including scenarios with different numbers of classes and clusters.
 
 A generated dataset carries the original features, the ground-truth cluster IDs, and one or more synthetic
 labels whose relationship to those clusters is characterized by user-defined configuration.
@@ -43,14 +44,14 @@ Working on CLMSynth itself, from a clone:
 pip install -e ".[test]"
 ```
 
-[//]: # (Or as a conda environment:)
+<!--
+Or as a conda environment:
 
-[//]: # ()
-[//]: # (```bash)
+```bash
+conda env create -f environment.yml
 
-[//]: # (conda env create -f environment.yml)
-
-[//]: # (conda activate clmsynth)
+conda activate clmsynth
+-->
 
 
 Optional, depending on which source/utility you use:
@@ -84,7 +85,7 @@ cfg = {
 
 for target in (0.2, 0.4, 0.6, 0.8):
     cfg["target_metric"]["value"] = target
-    labels = generate_clm_labels(clusters, X, cfg, seed=42)   # pandas.Series, one entry per point
+    labels = generate_clm_labels(clusters, X, cfg, rng=42)    # pandas.Series, one entry per point
     achieved = clustering_mcc(clusters, labels)               # 0.1925, 0.4025, 0.6075, 0.8025
     ...                                                       # pass the dataset to an algorithm.
 ```
@@ -154,6 +155,7 @@ CLMSynth is fully functional from a config file; the wizard helps to *create* on
    clmsynth a.json b.json c.yaml --jobs 2  # a batch: each config in its own process
    clmsynth sweep/ --jobs 2 --viz          # a folder's configs as a batch, with plots
    clmsynth my_config.yaml --cache         # keep its datasets for the next run (a batch does)
+   clmsynth my_config.yaml --allow-network-paths   # Windows: output or input on a \\server\share
    ```
    `python -m clmsynth` runs the same command. A tool that can only run a script *file*, not
    `-m`, cannot use the installed `__main__.py`;
@@ -195,6 +197,11 @@ OUTPUT/{YYYYMMDD}_{HHMMSS}_{Source}/
 - `{Source}` is the display name: `clustbench` → **Clustbench**, `mdcgen` → **MDCGen**,
   `fabricated_data` → **Fabricated**, `byoc` → **BYOC**, Bring Your Own Clusters.
 - The base folder is `global_settings.output_dir` (default `OUTPUT`).
+- On Windows, a network share (`\\server\share\...`) in `output_dir` or
+  `byoc_suite.input_dir` exits 2 unless the run is given `--allow-network-paths`:
+  opening a share signs Windows in to that server as you, so a shared config could
+  collect your credentials. A share mapped to a drive letter runs; so do WSL folders
+  (`\\wsl.localhost\...`).
 - A run that fails before writing a dataset removes its folder. `--keep-failed`
   keeps it, with the config and the log of why it failed.
 - **Exit status:**
@@ -223,11 +230,10 @@ OUTPUT/{YYYYMMDD}_{HHMMSS}_{Source}/
   [[1]](#references), downloaded when a run uses this source from the framework's data repository
   (`clustering-data-v1`, v1.1.0). CLMSynth neither ships nor imports any of it; the source key is named after the
   framework's own Python package, `clustbench`. Every available reference labeling (`labels0`, `labels1`, …) is
-  fetched. The data repository is AGPL-3.0, and its datasets are provided for research purposes only unless their
-  description says otherwise: cite [[1]](#references), the suite version and each dataset's own references.
+  fetched. Cite [[1]](#references), the suite version and each dataset's own references.
 - **`mdcgen`**, fully synthetic geometries via `mdcgenpy` [[2]](#references).
-  Use when specific properties (dimensionality, overlap, outliers) are needed that the clustering-benchmarks datasets
-  may not cover. Its presets, by battery:
+  Use when specific properties (dimensionality, overlap, outliers) are needed that the clustering-benchmarks
+  datasets may not cover. Its presets, by battery:
 
   | Battery       | Datasets                                                                                                                                                                   |
   |---------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -253,7 +259,7 @@ OUTPUT/{YYYYMMDD}_{HHMMSS}_{Source}/
 A batch keeps each `clustbench` and `mdcgen` dataset it fetches and reads it back the next
 time, so a sweep downloads or generates each dataset once, apart from runs that start
 together and fetch the same one; `--no-cache` turns this off. A single run uses the cache
-only with `--cache`. A fetch that warned, such as a download short of a labeling, is not kept. The run's log says which datasets were read
+only with `--cache`. A fetch that warned, such as a download short of a labeling, is not kept.
 from the cache. An entry belongs to its source, battery, dataset, `<source>_suite` keys (a
 clustbench `base_url`, an mdcgen key) and, for `mdcgen`, the seed; one kept by another
 version of clmsynth, numpy, pandas or mdcgenpy is fetched again. `byoc` and
@@ -368,7 +374,7 @@ the exact value.
 > check one label's precision and recall (rather than its specificity). If you are
 > only interested in a single target label and cluster, prefer
 > `matching_mode: single` with `scope: pair` over a custom distribution coupled
-> with a binary MCC solver [[3]](#References).
+> with a binary MCC solver [[3]](#references).
 
 ### Labels that follow a feature
 
@@ -404,7 +410,7 @@ clm_label:
 If you use this software as a benchmark, you can export the citation file from the
 project information panel and cite the software itself. Sharing the results in Zenodo
 and linking it to the software repository there is encouraged, so that results from
-different studies can be compared. The software description has been published in SoftwareX [[5]](#References); 
+different studies can be compared. The software description has been published in SoftwareX [[5]](#references); 
 cite the [paper](https://doi.org/10.1016/j.softx.2026.103077) only if you discuss CLM, target-metric solution,
 or general benchmarking solution in clustering and classification, and CLMSynth is relevant
 to your discussion.

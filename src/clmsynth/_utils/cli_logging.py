@@ -9,8 +9,10 @@ import re
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
 
 # From the start of a record, so the same words inside another message do not match.
-_RUN_LINE = re.compile(
-    r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} - INFO - Run (\S+) from config ", re.MULTILINE)
+_INFO_RECORD = r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} - INFO - "
+_RUN_LINE = re.compile(_INFO_RECORD + r"Run (\S+) from config ", re.MULTILINE)
+_REMOVED_LINE = re.compile(_INFO_RECORD + r"The failed run's folder '.*' was removed\.",
+                           re.MULTILINE)
 
 # Every character str.splitlines() breaks on, and the other C0 and C1 controls but tab.
 _BREAKS_AND_CONTROLS = re.compile(r"[\x00-\x08\x0a-\x1f\x7f-\x9f\u2028\u2029]")
@@ -29,6 +31,16 @@ def run_named_in(output: str) -> str | None:
     """The run folder named by `run_line` in a run's captured output, if it made one."""
     found = _RUN_LINE.search(output)
     return found.group(1) if found else None
+
+
+def removed_line(run_dir: object) -> str:
+    """The log line of a run that removed its folder after failing."""
+    return f"The failed run's folder '{run_dir}' was removed."
+
+
+def run_removed_in(output: str) -> bool:
+    """Whether a run's captured output says, by `removed_line`, that its folder is gone."""
+    return _REMOVED_LINE.search(output) is not None
 
 
 class SingleLineFilter(logging.Filter):

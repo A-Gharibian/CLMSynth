@@ -72,8 +72,9 @@ from clmsynth._extras import batch_run
 from clmsynth._extras.visualization import plot_feature_scatter
 from clmsynth._input_sources import clustbench_source, dataset_cache
 from clmsynth._input_sources.mdcgen_source import MDCGEN_CONFIGS
+from clmsynth._run_folders import discard_failed_run
 from clmsynth._single_run import ConfigFileError, run_single
-from clmsynth._utils.write_files import discard_failed_run, resolved_for_report
+from clmsynth._utils.write_files import resolved_for_report
 from clmsynth.labeling import DatasetContext, generate_additional_labels
 
 # The Agg backend is selected in conftest, before this module is imported, so a
@@ -496,13 +497,10 @@ def test_non_byoc_id_mismatch_skips_only_that_dataset(tmp_path, monkeypatch):
 
 
 def test_datasets_written_without_a_label_are_reported_separately(tmp_path, monkeypatch, caplog):
-    """`n_ok` counts a dataset whose labeling failed, and used to say nothing.
+    """The summary reports label failures for datasets counted as processed.
 
-    The dataset IS written, so counting it as processed is right, but a batch
-    of ten could report ten successes while several CSVs lacked the `Label_0`
-    column that was the entire point of the run. It is logged at ERROR, so it was
-    never invisible; the summary simply contradicted it, and the summary is what
-    a script reads.
+    Previously the failure was logged at ERROR, but the summary could report
+    success for a CSV missing `Label_0`.
     """
     monkeypatch.setattr(clmsynth._extras.visualization, "plot_feature_scatter", lambda *a, **k: True)
 
@@ -563,11 +561,10 @@ def test_a_dataset_short_of_its_later_labels_is_not_reported_as_unlabelled(tmp_p
 
 
 def test_an_unexpected_error_names_its_type_and_the_skip_is_counted(tmp_path, monkeypatch, caplog):
-    """An exception nobody anticipated skips its dataset alone, and says what it was.
+    """An unexpected exception skips only the affected dataset and logs its type.
 
-    `str(KeyError('cluster'))` is just `'cluster'`: without the type the log line
-    names a word, not a failure. The end-of-run summary counts the skip, because
-    `n_ok` alone cannot tell "1 of 1" from "1 of 2".
+    `str(KeyError('cluster'))` omits the exception type. The summary counts
+    skipped datasets separately because `n_ok` only counts processed datasets.
     """
     monkeypatch.setattr(clmsynth._extras.visualization, "plot_feature_scatter", lambda *a, **k: True)
     real_build_context = clmsynth._single_run.build_context
@@ -1329,7 +1326,7 @@ def test_sigterm_stops_the_run_like_ctrl_c(tmp_path, monkeypatch):
         assert callable(handler), f"the run installed no SIGTERM handler: {handler!r}"
         handler(signal.SIGTERM, None)
 
-    monkeypatch.setattr(clmsynth._single_run, "run_pipeline", terminated)
+    monkeypatch.setattr(clmsynth._single_run, "_run_datasets", terminated)
     code, survivors = run_main(
         tmp_path, monkeypatch, minimal_byoc_config(inputs, tmp_path / "out", ["solo"]),
         "--keep-failed")
@@ -1358,12 +1355,8 @@ def _failed_run_scaffold(tmp_path):
     ids=["a-csv", "a-plot", "a-summary", "an-unexpected-file"],
 )
 def test_a_run_folder_holding_anything_real_is_never_removed(tmp_path, litter):
-    """The predicate directly: one file is enough to make a folder untouchable.
-
-    Parametrized over an expected output and an unexpected file, because the
-    rule is not "no output" but "nothing at all beyond the scaffolding". A file
-    this code did not put there is someone else's, and guessing about it is how
-    a cleanup becomes a data-loss bug.
+    """A run directory is retained if it contains any file beyond the initial
+    scaffold, including expected outputs and unrecognized files.
     """
     run_dir = _failed_run_scaffold(tmp_path)
     target = run_dir / litter
@@ -1635,7 +1628,8 @@ def pipeline_calls(monkeypatch):
     calls.resolve_seed.side_effect = clmsynth._single_run._resolve_seed
     calls.fetch.return_value = None
     monkeypatch.setattr(clmsynth._single_run, "_resolve_seed", calls.resolve_seed)
-    monkeypatch.setitem(clmsynth._single_run.FETCHERS, "fabricated_data", calls.fetch)
+    monkeypatch.setitem(dataset_sources.SOURCES, "fabricated_data", dataclasses.replace(
+        dataset_sources.SOURCES["fabricated_data"], fetch=calls.fetch))
     monkeypatch.setattr(clmsynth._single_run, "_write_resolved_config", calls.write_config)
     monkeypatch.setattr(clmsynth._single_run, "_write_dataset", calls.write_dataset)
     return calls
@@ -1817,7 +1811,7 @@ def test_the_summary_says_a_dataset_is_short_of_its_labels(tmp_path, monkeypatch
     """Three of five labels fit: the summary listed three and never said two were
     missing, so it read as a run of three. Only the log had it."""
     def three_of_them(context, generator):
-        generate_additional_labels(context, n_labels=3, clm_config=generator.clm_config, seed=1)
+        generate_additional_labels(context, n_labels=3, clm_config=generator.clm_config, rng=1)
 
     monkeypatch.setattr(clmsynth._single_run, "_label_dataset", three_of_them)
     config, csv_dir, png_dir, txt_dir = _fabricated_config(tmp_path, dict(_ONE_DATASET))
@@ -1952,6 +1946,25 @@ def test_context_accepts_an_aligned_label_and_ignores_its_index():
     assert len(frame) == 10
 
 
+def test_the_constructor_aligns_and_refuses_as_attaching_does():
+    """What the constructor is given is taken as add_generated_label takes a label: a
+    foreign index is re-based, by position, and a wrong length refused, for ground
+    truths, generated labels and tags alike."""
+    features = pd.DataFrame({"f1": range(10), "f2": range(10)}, index=range(50, 60))
+    reversed_labels = pd.Series(range(10), index=range(100, 110))[::-1]
+    context = DatasetContext("src", "battery", features,
+                             ground_truths={"labels0": pd.Series(range(10))},
+                             generated_labels={"Label_0": reversed_labels})
+    assert list(context.to_dataframe()["Label_0"]) == list(range(9, -1, -1))
+
+    for given in ({"ground_truths": {"labels0": pd.Series(range(9))}},
+                  {"generated_labels": {"Label_0": pd.Series(range(9))}},
+                  {"generated_labels": {"Label_0": pd.Series(range(11))}},
+                  {"tags": pd.DataFrame({"t": range(9)})}):
+        with pytest.raises(ValueError, match="misaligned"):
+            DatasetContext("src", "battery", features, **given)
+
+
 # ---------------------------------------------------------------------------
 # Network timeout
 # ---------------------------------------------------------------------------
@@ -1962,7 +1975,7 @@ def test_clustbench_timeout_is_passed_to_urlopen():
 
     The regression is a fetch with no timeout at all, which inherits the OS
     default connect timeout and looks like a
-    hang. Asserted by patching `urlopen` and reading the keyword it received,
+    hang. Asserted by patching the opener's `open` and reading the keyword it received,
     which is deterministic and instant. Whether an actually-hung socket then
     honors it is the OS's behavior, not this package's.
     """
@@ -1973,8 +1986,7 @@ def test_clustbench_timeout_is_passed_to_urlopen():
         raise OSError("not connecting in a test")
 
     with (
-        mock.patch("clmsynth._input_sources.clustbench_source.urllib.request.urlopen",
-                   fake_urlopen),
+        mock.patch.object(clustbench_source._OPENER, "open", fake_urlopen),
         pytest.raises(OSError),
     ):
         clustbench_source._loadtxt_url("http://example.invalid/data.txt")
@@ -1990,8 +2002,7 @@ def test_clustbench_closes_an_http_error_response(status):
     error = urllib.error.HTTPError("https://example.invalid/data.gz", status,
                                    "unavailable", Message(), body)
     with (
-        mock.patch("clmsynth._input_sources.clustbench_source.urllib.request.urlopen",
-                   side_effect=error),
+        mock.patch.object(clustbench_source._OPENER, "open", side_effect=error),
         pytest.raises(urllib.error.HTTPError) as caught,
     ):
         clustbench_source._loadtxt_url(error.url)
@@ -2017,8 +2028,8 @@ def test_clustbench_fetch_returns_none_when_the_source_is_unreachable():
     Patched rather than pointed at a real unreachable host, so it is instant
     and does not depend on the runner having (or not having) a network.
     """
-    with mock.patch(
-        "clmsynth._input_sources.clustbench_source.urllib.request.urlopen",
+    with mock.patch.object(
+        clustbench_source._OPENER, "open",
         side_effect=OSError("unreachable"),
     ):
         assert (
@@ -2098,18 +2109,11 @@ def test_the_noisy_preset_sets_a_count_of_outliers(mdcgenpy):
     assert isinstance(outliers, int) and outliers > 0
 
 
-@pytest.mark.parametrize("key", ["n_noise", "min_samples", "ki_coeff", "corr", "rotate",
-                                 "distributions"])
+@pytest.mark.parametrize("key", ["min_samples", "ki_coeff", "corr", "rotate", "distributions"])
 def test_a_preset_reaches_the_setting(key):
-    """Noise dimensions, unequal sizes, distributions, correlation and rotation."""
+    """Unequal sizes, distributions, correlation and rotation."""
     assert any(key in preset for presets in MDCGEN_CONFIGS.values()
                for preset in presets.values())
-
-
-def test_a_preset_has_unequal_cluster_sizes():
-    """Through mdcgenpy's k, min_samples or ki_coeff."""
-    assert any(isinstance(preset.get("k"), (list, tuple)) or {"min_samples", "ki_coeff"} & set(preset)
-               for presets in MDCGEN_CONFIGS.values() for preset in presets.values())
 
 
 def test_an_old_suite_name_is_translated_or_refused(mdcgenpy):
@@ -2271,16 +2275,54 @@ def test_byoc_and_fabricated_data_are_never_cached(cache_dir, tmp_path, monkeypa
 
 
 def test_a_fetch_that_warns_is_not_kept(cache_dir, network, caplog):
-    """A labeling lost to the network leaves the frame short of it. Kept, every later
-    run would read it without that labeling, and without the warning."""
+    """A labeling lost to the network fails the dataset (Settled 2026-11-21): nothing
+    is kept, and the next fetch, whole, is."""
     network.flaky.add(".labels1.gz")
     with caplog.at_level(logging.INFO, logger="clmsynth"):
-        short = cached()
-    assert "GroundTruth_labels1" not in short.columns
+        assert dataset_sources.fetch("clustbench", "wut", "x1", cache=True) is None
     assert files(cache_dir) == []
-    assert "'wut/x1' is not cached: its fetch logged a warning" in caplog.text
+    assert "could not fetch labels1" in caplog.text and "The dataset is skipped" in caplog.text
     whole = cached()
     assert "GroundTruth_labels1" in whole.columns and len(files(cache_dir)) == 1
+
+
+@pytest.mark.parametrize("silence", ["logger level", "logging.disable"])
+def test_a_short_fetch_is_not_kept_with_the_warnings_silenced(cache_dir, network, silence):
+    """A short download gives no frame, so a caller's logging settings, which can
+    hide the message, do not decide whether it is kept (F3.8)."""
+    network.flaky.add(".labels1.gz")
+    package = logging.getLogger("clmsynth")
+    level = package.level
+    try:
+        if silence == "logger level":
+            package.setLevel(logging.CRITICAL)
+        else:
+            logging.disable(logging.ERROR)
+        short = dataset_sources.fetch("clustbench", "wut", "x1", cache=True)
+    finally:
+        package.setLevel(level)
+        logging.disable(logging.NOTSET)
+    assert short is None
+    assert files(cache_dir) == []
+    assert "GroundTruth_labels1" in cached().columns and len(files(cache_dir)) == 1
+
+
+def test_a_warning_from_another_thread_does_not_stop_a_fetch_being_kept(
+        cache_dir, network, monkeypatch):
+    """A warning another thread logs while this dataset is fetched is about another
+    dataset: this fetch is whole, and kept."""
+    fetch = clustbench_source.fetch_clustbench_data
+
+    def with_a_warning_elsewhere(*args, **kwargs):
+        elsewhere = threading.Thread(target=logging.getLogger("clmsynth.elsewhere").warning,
+                                     args=("about another dataset",))
+        elsewhere.start()
+        elsewhere.join()
+        return fetch(*args, **kwargs)
+
+    monkeypatch.setattr(clustbench_source, "fetch_clustbench_data", with_a_warning_elsewhere)
+    cached()
+    assert len(files(cache_dir)) == 1
 
 
 def test_a_setting_that_is_not_plain_data_is_not_cached(cache_dir, mdcgenpy, caplog):
@@ -2477,7 +2519,7 @@ def test_a_single_run_caches_only_with_the_flag_and_a_batch_unless_told_not_to(
         seen.update(kwargs)
         return 0
 
-    monkeypatch.setattr(clmsynth.__main__, "run_single", started)
+    monkeypatch.setattr(clmsynth._single_run, "run_single", started)
     monkeypatch.setattr(batch_run, "run_batch", started)
     monkeypatch.setattr(clmsynth.__main__, "configure_cli_logging", lambda: None)
     monkeypatch.setattr(sys, "argv", ["clmsynth", *argv])

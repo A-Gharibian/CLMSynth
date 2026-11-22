@@ -5,7 +5,72 @@ label generator behavior are additionally explained in the user manual.
 
 ---
 
-## [0.7.8] — 2026-11-17 (TestPyPI, private anaconda)
+## [0.7.9] — 2026-11-22
+
+Same as release [0.7.2]  (2026-10-04) this patch is an AI-only audit of the code,
+with more advanced models: GPT-6 Sol/Astra (OpenAI), Gemini 4 Carbon (Google), and Claude Fable 5.2 (Anthropic),
+Issues were categorized, triaged, and resolved (prompts and correctness data are available upon request).
+
+### Changed
+
+- On Windows, an `output_dir` or `byoc_suite.input_dir` naming a network share
+  (`\\server\share\...`) exits 2 before it
+  is opened; unless `--allow-network-paths.`SECURITY.md`
+  lists the exposure. *[Security improvement]*
+
+- A key the run does not read is refused with `[CLM-141]` before the first dataset (exit
+  2), A key with no value is still ignored. *[improvement]*
+
+- A config with more than 10,000 values, or whose text is
+  not valid Unicode, is refused as a file error (exit 2). A config section written as
+  `false`, `0`, `""` or `[]` is refused (exit 2 read as absent).*[improvement]*
+
+- `[CLM-305]` warns for a `competing_noise` entry placed by distance that does not get the
+  core or boundary it favors because of another setting *[improvement]*
+
+- A key written twice in one mapping of a config or a payload file is refused when the
+  file is read (exit 2). *[improvement]*
+
+- `assignment_matrix` rules on one label whose `recall_target` values add up past 1.0,
+  with no `target_metric`, are refused with `[CLM-153]` before the first dataset (exit 2), 
+  `clmsynth-config` refuses to write them. *[improvement]*
+
+- A key that is not text under `mdcgen_suite`, such as `1: 2`, is refused with
+  `[CLM-141]` before the first dataset (exit 2). *[improvement]*
+
+- `generate_clm_labels` and `generate_additional_labels` take a keyword-only `rng`
+  (Scientific Python SPEC 7). An int is the seed, so `rng=42` gives the labels `seed=42`
+  gave; a `numpy.random.Generator`, `SeedSequence` or any other value
+  `numpy.random.default_rng` takes gives one seed drawn from it. A call that passes
+  neither `rng` nor `seed` now draws a fresh seed from the operating system; it used 42.
+  `seed` still works but will be removed in 0.8.0; passing both raises `TypeError`. *[improvement]*
+
+### Fixed
+
+- byoc datasets spelled differently that name one file (`1` and `"1"`; on Windows also
+  `A` and `a`) run once, with a warning. *[fixed]*
+
+- A config file that exists but cannot be read exits 2 with a message naming it, where it
+  ended in a traceback. *[fixed]*
+
+- On Windows, a dataset-cache write refused because another process holds the entry is
+  tried again, as a read is, before it is given up with a warning. *[fixed]*
+
+- A dataset whose summary cannot be written, or a run stopped while it is written,
+  leaves a CSV and summary already under its names as they were, where it deleted the
+  CSV. *[fixed]*
+
+- The config a Python run saves (`config_out`) from numpy float32 `proportions`,
+  `recall_target`, `ratio`, `dominant_share` or `share` values replays the same label
+  counts, and one holding a numpy array gets the engine's code (`[CLM-101]`, `[CLM-141]`). *[fixed]*
+
+- `dataset_sources.fetch` refuses a `fabricated_data` battery other than `fabricated`, and
+  `get_datasets_for_battery` gives no dataset for a battery the source does not have;
+  both took what they were given. A clustbench labeling with more than one column is
+  dropped with a warning, where the whole dataset was lost. The centroid profile is
+  marked as not read under `random`. *[fixed]*
+
+## [0.7.8] — 2026-11-17 (TestPyPI, anaconda)
 
 ### Added
 

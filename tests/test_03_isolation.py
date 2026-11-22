@@ -18,7 +18,7 @@ What is checked, in order:
                        returns the same name twice. Finding N2 (check-then-act)
                        was closed in 0.6.3; both halves are now guarantees
                        rather than one guarantee and one characterization.
-  module-level state   Every registry (`CODES`, `FETCHERS`, `SOURCE_METADATA`,
+  module-level state   Every registry (`CODES`, `SOURCES`, `SOURCE_METADATA`,
                        `_METRIC_FUNCS`, ...) is byte-identical after a real run.
   logging ownership    Importing the package configures nothing. The console
                        scripts configure logging because they own the process;
@@ -52,8 +52,8 @@ import clmsynth.__main__
 import clmsynth._extras.visualization
 from clmsynth import dataset_sources, run_pipeline
 from clmsynth._input_sources import dataset_cache, fabricated_generator
+from clmsynth._run_folders import build_run_dir
 from clmsynth._utils.cli_logging import SingleLineFilter, configure_cli_logging
-from clmsynth._utils.write_files import build_run_dir
 
 # The folder this session imported clmsynth from. -I also ignores PYTHONPATH, which
 # is how an uninstalled checkout (src/ as an IDE source root) reaches the package,
@@ -62,14 +62,14 @@ from clmsynth._utils.write_files import build_run_dir
 IMPORT_ROOT = str(Path(clmsynth.__file__).resolve().parents[1])
 
 
-def run_isolated(code: str) -> subprocess.CompletedProcess:
+def run_isolated(code: str) -> subprocess.CompletedProcess[str]:
     prelude = f"import sys\nsys.path.insert(0, {IMPORT_ROOT!r})\n"
     return subprocess.run([sys.executable, "-I", "-c", prelude + code],
                           capture_output=True, text=True, check=False)
 
 
 def pipeline_config(output_dir):
-    """The plainest run that processes exactly one dataset.
+    """Create a minimal config that processes exactly one dataset.
 
     A factory rather than a constant because `output_dir` differs per test, and
     because a shared mutable dict is precisely what the two tests below exist to
@@ -200,7 +200,7 @@ def test_build_run_dir_never_hands_out_the_same_name_twice(tmp_path):
 def test_module_level_registries_survive_a_run_unchanged(tmp_path):
     """Nothing accumulates in module-level state across a pipeline run.
 
-    The package keeps a dozen module-level containers, `CODES`, `FETCHERS`,
+    The package keeps a dozen module-level containers, `CODES`, `SOURCES`,
     `SOURCE_METADATA`, `SOURCE_DATASETS`, `_METRIC_FUNCS`. All are
     lookup tables built once at import and typed read-only; mypy does not see a
     write below an `Any`, such as inside a `FABRICATED_CONFIGS` preset.
@@ -223,7 +223,7 @@ def test_module_level_registries_survive_a_run_unchanged(tmp_path):
         "dataset_sources.CLUSTBENCH_DATASETS": dataset_sources.CLUSTBENCH_DATASETS,
         "dataset_sources.FABRICATED_CONFIGS": dataset_sources.FABRICATED_CONFIGS,
         "dataset_sources.HEAVY_BATTERIES": dataset_sources.HEAVY_BATTERIES,
-        "_single_run.FETCHERS": _single_run.FETCHERS,
+        "dataset_sources.SOURCES": dataset_sources.SOURCES,
         "_single_run.SOURCE_DISPLAY": _single_run.SOURCE_DISPLAY,
     }
     before = {name: _copy.deepcopy(obj) for name, obj in watched.items()}
@@ -243,7 +243,7 @@ def test_module_level_registries_survive_a_run_unchanged(tmp_path):
         clusters,
         np.random.default_rng(0).normal(size=(200, 2)),
         {"num_classes": 4, "matching_mode": "perfect"},
-        seed=1,
+        rng=1,
     )
 
     changed = [name for name, obj in watched.items() if obj != before[name]]
@@ -394,11 +394,11 @@ def test_the_no_viz_flag_reaches_the_pipeline(tmp_path, monkeypatch, flags, rend
 NO_YAML = "sys.modules['yaml'] = None\n"
 
 
-def without_yaml(code: str) -> subprocess.CompletedProcess:
+def without_yaml(code: str) -> subprocess.CompletedProcess[str]:
     return run_isolated(NO_YAML + code)
 
 
-def run_cli_without_yaml(config_path) -> subprocess.CompletedProcess:
+def run_cli_without_yaml(config_path) -> subprocess.CompletedProcess[str]:
     return without_yaml(f"sys.argv = ['clmsynth', {str(config_path)!r}, '--no-viz']\n"
                         "from clmsynth.__main__ import main\nmain()\n")
 

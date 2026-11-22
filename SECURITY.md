@@ -4,13 +4,12 @@
 
 ## Supported Versions
 
-Security fixes land on the latest release of the current series. There is no
-long-term-support branch.
+Security fixes are patched on the latest release, there is no long-term-support branch.
 
-| Version    | Supported          |
-|------------|--------------------|
-| `0.7.x`    | :white_check_mark: |
-| < `0.7.0`  | :x:                |
+| Version   | Supported                           |
+|-----------|-------------------------------------|
+| > `0.7.5` | currently latest github commit only |
+| < `0.7.5` | no, not secure                      |
 
 
 ## Reporting a vulnerability
@@ -27,23 +26,20 @@ This document exists because the static analysis of CLMSynth raises findings tha
 
 **CLMSynth is a local, single-user command-line program and library.** It has no
 authentication, no authorization, no network service, and no
-persistent state shared between users.
+persistent state shared between users. However, configuration files are shareable artifacts.
 
 The consequence: **there is no privilege boundary between the person supplying
-input and the person running the program.** 
-However, **A configuration file is a shareable artifact.**
-Guards therefore apply to configuration
-values.
+input and the person running the program.** However, **A configuration file is a shareable artifact.**
+Guards therefore apply to configuration values.
 
 A secondary trajectory of shareable data is through the downloaded or provided files as
-source of clustering data, guards here apply to the values of the data since an infected 
+source of clustering data, guards here apply to the values of the data since an infected
 file can execute by other means as well.
 
 The dataset cache is the one state kept between runs. It is in the user's own cache folder,
 created `0700` on POSIX, or in the folder `CLMSYNTH_CACHE_DIR` names. Its files are read with
-`allow_pickle=False`, so an entry cannot run code, and a link under an entry's name is replaced,
-never read or written through. Whoever can write the folder can still change the data a run
-reads, so a shared folder is trusted like a shared input file.
+`allow_pickle=False`, so an entry cannot run code, and a link under an entry's name is replaced.
+Whoever can write the folder can still change the data a run reads, so a shared folder is trusted like a file.
 
 ## Standing findings and why they are accepted
 
@@ -77,6 +73,12 @@ Impact is nonetheless limited:
   BYOC import requirements: at least two clusters, at least three points each,
   numeric feature columns, no reserved column names. Anything it does read is
   written to the user's own output folder and sent nowhere.
+- On Windows, opening a network share (`\\host\share\...`) signs Windows in to that
+  host as the user, so a hostile `output_dir` or `byoc_suite.input_dir` naming one
+  could collect their credentials. The `clmsynth` command refuses such a path
+  (exit 2) before opening it, unless it is given `--allow-network-paths`; a share
+  mapped to a drive letter and WSL folders (`\\wsl.localhost\...`) run. A program
+  that calls `run_pipeline` itself is not checked.
 
 **Names are guarded; directories are deliberately not.** Battery and dataset
 names from the configuration are refused when path-shaped — `_is_plain_name` and
@@ -101,6 +103,5 @@ This alert therefore stays **dismissed** rather than becoming closeable.
 
 ## What would change this document
 
-The model above rests on CLMSynth being run locally by the person who supplied
-its input. It stops holding if the package is ever driven by a service that
-accepts configurations from untrusted submitters.
+The model above rests on CLMSynth being run locally by the person who supplied its input. It stops holding if the
+package is ever driven by a service that accepts configurations from untrusted submitters.

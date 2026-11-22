@@ -15,6 +15,7 @@ import re
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from collections.abc import Mapping
 from importlib import metadata
@@ -24,17 +25,16 @@ from typing import Any, Final
 import numpy as np
 import pandas as pd
 
-from . import Source
+from . import ENV_VAR, INCOMPLETE, NOT_CACHED, Source, engine_features
 
 __all__ = ["ENV_VAR", "NOT_CACHED", "cache_folder", "fetch", "is_cached", "ready"]
 
 log: logging.Logger = logging.getLogger(__name__)
 
-ENV_VAR: Final = "CLMSYNTH_CACHE_DIR"
-# byoc reads the user's own file, and fabricated_data is generated in milliseconds.
-NOT_CACHED: Final[frozenset[str]] = frozenset({"byoc", "fabricated_data"})
 # An entry of another format is fetched again and replaced.
 _FORMAT: Final = 1
+# Seconds between tries at an entry Windows refuses while another process swaps in a copy.
+_WAITS: Final = (0.05, 0.1, 0.2, 0.4)
 
 
 def cache_folder(environ: Mapping[str, str] | None = None,
@@ -207,9 +207,7 @@ def _frame(arrays: Mapping[str, np.ndarray], meta: Mapping[str, Any]) -> pd.Data
 def _feature_order(frame: pd.DataFrame) -> tuple[bool, bool]:
     """How the features the engine reads lie in memory. Summing rows in C or F order
     rounds differently, and a centroid moves a placement."""
-    from ..labeling import build_context
-
-    coords = build_context("cache", "cache", "cache", frame).features.to_numpy()
+    coords = engine_features(frame).to_numpy()
     return coords.flags.c_contiguous, coords.flags.f_contiguous
 
 
@@ -262,7 +260,7 @@ def _read(path: Path, key: str, source: Source, where: str) -> pd.DataFrame | No
             log.warning(f"'{path}' is a link, not a cache entry: '{where}' is fetched again "
                         "and the link replaced.")
             return None
-        with np.load(path, allow_pickle=False) as entry:
+        with _open(path) as entry:
             meta = json.loads(entry["meta"].item())
             if not _current(meta, key, source):
                 log.info(f"The cached '{where}' was kept by other versions; fetching it again.")
@@ -279,6 +277,29 @@ def _read(path: Path, key: str, source: Source, where: str) -> pd.DataFrame | No
     return frame
 
 
+def _open(path: Path) -> Any:
+    """The entry opened with np.load. On Windows, one refused while another process
+    swaps in a new copy is tried again before it counts as unreadable."""
+    try:
+        return np.load(path, allow_pickle=False)
+    except PermissionError:
+        if sys.platform == "win32":
+            return _open_when_free(path)
+        else:
+            raise
+
+
+def _open_when_free(path: Path) -> Any:
+    """np.load tried again after each pause in _WAITS, 0.75 s in all; the last refusal
+    is raised."""
+    for wait in _WAITS[:-1]:
+        time.sleep(wait)
+        with contextlib.suppress(PermissionError):
+            return np.load(path, allow_pickle=False)
+    time.sleep(_WAITS[-1])
+    return np.load(path, allow_pickle=False)
+
+
 def _replace(path: Path, members: Mapping[str, Any]) -> None:
     """Writes the entry to a new file beside `path` and swaps it in. The swap replaces
     a link at `path` itself: it never writes where a link points."""
@@ -288,11 +309,35 @@ def _replace(path: Path, members: Mapping[str, Any]) -> None:
             np.savez_compressed(file, **members)
             file.flush()
             os.fsync(file.fileno())
-        os.replace(tmp, path)
+        _swap(tmp, path)
     except BaseException:
         with contextlib.suppress(OSError):
             tmp.unlink(missing_ok=True)
         raise
+
+
+def _swap(tmp: Path, path: Path) -> None:
+    """os.replace. On Windows, one refused while another process reads or swaps the
+    entry is tried again before it counts as failed."""
+    try:
+        os.replace(tmp, path)
+    except PermissionError:
+        if sys.platform == "win32":
+            _swap_when_free(tmp, path)
+        else:
+            raise
+
+
+def _swap_when_free(tmp: Path, path: Path) -> None:
+    """os.replace tried again after each pause in _WAITS, 0.75 s in all; the last
+    refusal is raised."""
+    for wait in _WAITS[:-1]:
+        time.sleep(wait)
+        with contextlib.suppress(PermissionError):
+            os.replace(tmp, path)
+            return
+    time.sleep(_WAITS[-1])
+    os.replace(tmp, path)
 
 
 def _write(path: Path, key: str, source: Source, frame: pd.DataFrame, where: str) -> None:
@@ -335,10 +380,10 @@ class _Warnings(logging.Handler):
 def fetch(source: Source, battery: Any, dataset: Any, seed: Any,
           kwargs: Mapping[str, Any]) -> pd.DataFrame | None:
     """`source.fetch` through the cache: the dataset's entry when it is there and
-    current, otherwise fetched and kept. A fetch that logs a warning is not kept, such
-    as a clustbench download short of a labeling, so it is fetched, and warns, again.
-    A cache that cannot be read or written is reported, and the dataset is fetched as
-    without it."""
+    current, otherwise fetched and kept. A fetch that its source marks incomplete
+    (`INCOMPLETE`), or that logs a warning, is not kept, so it is fetched, and warns,
+    again. A cache that cannot be
+    read or written is reported, and the dataset is fetched as without it."""
     where = f"{battery}/{dataset}"
     entry = _entry(source, battery, dataset, seed, kwargs)
     if isinstance(entry, str):
@@ -355,7 +400,9 @@ def fetch(source: Source, battery: Any, dataset: Any, seed: Any,
         frame = source.fetch(battery, dataset, seed, **kwargs)
     finally:
         package.removeHandler(warnings)
-    if frame is not None and warnings.count:
+    if frame is not None and frame.attrs.get(INCOMPLETE):
+        log.info(f"'{where}' is not cached: its fetch is incomplete.")
+    elif frame is not None and warnings.count:
         log.info(f"'{where}' is not cached: its fetch logged a warning.")
     elif frame is not None:
         _write(path, key, source, frame, where)

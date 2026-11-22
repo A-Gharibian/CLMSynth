@@ -3,8 +3,9 @@
 """
 Central registry of CLM engine diagnostics: reference Manual/troubleshooting.tex.
 
-Bands:
-    1xx  ValueError:                invalid configuration / incompatible options
+Bands::
+
+    1xx ValueError:                invalid configuration / incompatible options
     15x  InfeasibleAllocationError: a ValueError subclass; valid config, counts don't fit
                                     or a strict target is missed
     2xx  MissingConfigKey:          a KeyError subclass; a required key is absent
@@ -283,10 +284,10 @@ def collect_codes() -> Generator[list[int], None, None]:
     regardless of the logging configuration visibility. Blocks nest. Errors are not collected:
     they carry their code on the exception (``exc.code``). A warning issued in a worker
     thread is collected only if the thread runs in the block's context: start its work
-    with ``contextvars.copy_context().run``.
+    with ``contextvars.copy_context().run``. For example::
 
         with collect_codes() as codes:
-            generate_clm_labels(cluster_ids, coords, clm_config, seed=1)
+            generate_clm_labels(cluster_ids, coords, clm_config, rng=1)
         if 306 in codes: ...
     """
     block = _Block()

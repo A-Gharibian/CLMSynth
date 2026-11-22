@@ -1,15 +1,16 @@
 """Regenerate the troubleshooting catalog.
 
-For every diagnostic in the troubleshooting reference, writes a config that
-triggers it, runs the pipeline, captures the log, and asserts the expected code
-actually appears. Output is grouped one folder per main table:
+For each diagnostic in the troubleshooting reference, write a config, run the
+pipeline, and verify the expected code in the captured log. Output is grouped
+by diagnostic band:
 
     troubleshooting_catalog/
         ValueError_1xx/            101..144   refused config (exit 2), except
                                               the codes in EXPECTED_EXIT_BY_CODE
-        InfeasibleAllocation_15x/  150..154   label left out, run incomplete (exit 3)
+        InfeasibleAllocation_15x/  150..154   label left out, run incomplete (exit 3),
+                                              except the codes in EXPECTED_EXIT_BY_CODE
         KeyError_2xx/              201..209   required key missing, run stops (exit 2)
-        Warnings_3xx/              301..311   non-fatal, run succeeds (exit 0)
+        Warnings_3xx/              301..312   non-fatal, run succeeds (exit 0)
         _data/                     byoc input CSVs for 127 and 133, kept so they rerun
 
 A shipped item is a reproducible case of the troubleshooting manual. The cases
@@ -19,20 +20,12 @@ are YAML, so running one, or this script, needs the yaml extra
     cd docs/troubleshooting_catalog
     python -m clmsynth InfeasibleAllocation_15x/CLM-150.yaml --no-viz
 
-Cases run with --no-viz: no diagnostic depends on a plot. Captured logs carry no
-timestamps, so they regenerate byte-identical whenever the behavior is unchanged,
-and a diff shows only what actually changed.
+Cases run with `--no-viz` because diagnostics do not depend on plots. Omitting
+timestamps keeps captured logs identical when behavior is unchanged.
 
 Usage (project interpreter, any working directory):
 
     python tools/CLM_catalog_gen.py [OUT_DIR] [--threaded]
-
-OUT_DIR defaults to docs/troubleshooting_catalog. Pass a different one to
-generate a candidate catalog for comparison before filing an issue. It must be
-absent, empty, or a catalog from an earlier run; anything else is refused before
-a file is touched.
---threaded runs the cases in a thread pool, one worker per CPU. Each case has its
-own folder, so the catalog and the report are the same as a serial run's.
 """
 
 import argparse
@@ -71,10 +64,11 @@ def _parse_args() -> argparse.Namespace:
 
 ARGS = _parse_args()
 OUT = ARGS.out_dir.resolve()
-DATA_REL = "_data"            # byoc inputs, relative to OUT
+BUILD = OUT.with_name(f".{OUT.name}.new")   # built here, then swapped into OUT
+DATA_REL = "_data"            # byoc inputs, relative to the catalog root
 SCRATCH_REL = "_scratch"      # per-case run output, folder deleted at the end
-DATA = OUT / DATA_REL
-SCRATCH = OUT / SCRATCH_REL
+DATA = BUILD / DATA_REL
+SCRATCH = BUILD / SCRATCH_REL
 
 TABLES = {
     "1xx": "ValueError_1xx",
@@ -100,8 +94,8 @@ def _checked_rmtree(target: Path) -> None:
     """Empty a catalog folder, keeping the folder itself. Refuse a non-catalog target."""
     if not target.exists():
         return
-    if target != OUT and OUT not in target.parents:
-        raise SystemExit(f"refusing to delete '{target}': it is outside '{OUT}'")
+    if not any(target == root or root in target.parents for root in (OUT, BUILD)):
+        raise SystemExit(f"refusing to delete '{target}': it is outside '{OUT}' and '{BUILD}'")
     if not target.is_dir():
         raise SystemExit(f"refusing to delete '{target}': it is not a directory")
     _check_out_dir()
@@ -110,6 +104,30 @@ def _checked_rmtree(target: Path) -> None:
             shutil.rmtree(child)
         else:
             child.unlink()
+
+
+def _clear_build() -> None:
+    """Remove a build folder an earlier run left; refuse one holding anything else."""
+    if not BUILD.exists():
+        return
+    ours = {*TABLES.values(), DATA_REL, SCRATCH_REL}
+    if not BUILD.is_dir() or any(child.name not in ours for child in BUILD.iterdir()):
+        raise SystemExit(f"refusing to delete '{BUILD}': it is not a catalog build folder")
+    _checked_rmtree(BUILD)
+    BUILD.rmdir()
+
+
+def _swap_in() -> None:
+    """Replace OUT's generated folders with the build's; anything else in OUT stays."""
+    OUT.mkdir(parents=True, exist_ok=True)
+    for name in (*TABLES.values(), DATA_REL):
+        built, shipped = BUILD / name, OUT / name
+        if shipped.exists():
+            _checked_rmtree(shipped)
+            shipped.rmdir()
+        if built.exists():
+            built.rename(shipped)
+    BUILD.rmdir()
 
 
 # --------------------------------------------------------------------------
@@ -436,8 +454,10 @@ CASES = [
 # leaves out only the label, as the 15x codes do. A 2xx key has no default, so it
 # stops the run (2). [CLM-133] comes from byoc's import checks, before labeling:
 # the source could not deliver the dataset, 1 as for a CSV that is not there.
+# [CLM-153] needs no dataset, so without a target_metric it refuses the config
+# before the first one (2); under a target_metric it is caught per probe instead.
 EXPECTED_EXIT = {"1xx": 2, "15x": 3, "2xx": 2, "3xx": 0}
-EXPECTED_EXIT_BY_CODE = {120: 3, 133: 1}
+EXPECTED_EXIT_BY_CODE = {120: 3, 133: 1, 153: 2}
 
 
 def expected_exit(table, code):
@@ -454,17 +474,17 @@ def normalise(log: str) -> str:
     log = _TIMESTAMP.sub("", log)
     log = _RUN_DIR.sub("{run}", log)
     log = log.replace("\\", "/")
-    # Absolute paths are machine-specific.
-    return log.replace(str(OUT).replace("\\", "/"), "{catalog}")
+    # Absolute paths are machine-specific; the cases run in the build folder.
+    return log.replace(str(BUILD).replace("\\", "/"), "{catalog}")
 
 
 def run_case(table, code, desc, builder, expect):
-    folder = OUT / TABLES[table]
+    folder = BUILD / TABLES[table]
     folder.mkdir(parents=True, exist_ok=True)
     cfg = builder()
 
-    # Relative to OUT, which is also the working directory below, so the shipped
-    # fixture is exactly what ran and a reader can rerun it by cd-ing here.
+    # Relative to the catalog root, the working directory below, so the shipped
+    # fixture is exactly what ran and a reader can rerun it by cd-ing there.
     run_dir = SCRATCH / f"CLM-{code}"
     _checked_rmtree(run_dir)
     cfg["global_settings"]["output_dir"] = f"{SCRATCH_REL}/CLM-{code}"
@@ -481,7 +501,7 @@ def run_case(table, code, desc, builder, expect):
 
     proc = subprocess.run(
         [sys.executable, "-m", "clmsynth", rel_cfg, "--no-viz"],
-        cwd=OUT, capture_output=True, text=True, check=False,
+        cwd=BUILD, capture_output=True, text=True, check=False,
     )
     log = normalise((proc.stdout or "") + (proc.stderr or ""))
     (folder / f"CLM-{code}.log").write_text(
@@ -499,8 +519,7 @@ def check_builder_coverage():
 
     Returns the codes with no builder, and the builders with no code.
 
-    Checked before anything is written, so a missing builder stops the run rather
-    than producing a catalog that is quietly short of a code.
+    A missing builder stops the run before any files are written.
     """
     built = {case[1] for case in CASES}
     built_without_code = {c for c in built if c not in CODES}
@@ -540,13 +559,9 @@ def main(threaded=False):
     # Before anything is written, not only before something is emptied: a
     # catalog generated into a non-empty folder scatters its files there.
     _check_out_dir()
-
-    # Only the generated folders: a handwritten file next to them must survive a
-    # regeneration.
-    for name in (*TABLES.values(), DATA_REL, SCRATCH_REL):
-        _checked_rmtree(OUT / name)
+    _clear_build()
     # Made once here, not by the first cases to run at the same time.
-    SCRATCH.mkdir(parents=True, exist_ok=True)
+    SCRATCH.mkdir(parents=True)
     # Each case has its own config, log and run folder, and its own input file
     # in _data/, so they can run at once. map keeps CASES order for the report.
     workers = (os.cpu_count() or 1) if threaded else 1
@@ -567,7 +582,12 @@ def main(threaded=False):
     print("-" * 84)
     print(f"{len(results) - miss}/{len(results)} produced their expected diagnostic "
           "with the expected exit code")
-    return 1 if miss else 0
+    if miss:
+        print(f"'{OUT}' is unchanged; this run's catalog is in '{BUILD}'.")
+        return 1
+    # Only the generated folders: a handwritten file next to them survives.
+    _swap_in()
+    return 0
 
 
 if __name__ == "__main__":

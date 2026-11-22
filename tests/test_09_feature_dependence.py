@@ -85,7 +85,7 @@ def entry(label=0, feature="f1", favors="high", profile="step", **extra):
 def label_frame(frame, clm, seed=1, n_labels=1):
     """The context of `frame` with `n_labels` columns generated under `clm`."""
     context = build_context("unit", "battery", "dataset", frame)
-    generate_additional_labels(context, n_labels=n_labels, clm_config=clm, seed=seed)
+    generate_additional_labels(context, n_labels=n_labels, clm_config=clm, rng=seed)
     return context
 
 
@@ -471,7 +471,7 @@ def test_a_direct_call_works_or_refuses_but_never_ignores_the_entry():
     coords = frame[["f1", "f2", "f3"]].to_numpy()
     clm = custom(feature_dependence=[entry()])
     try:
-        labels = generate_clm_labels(truth, coords, clm, seed=1).to_numpy()
+        labels = generate_clm_labels(truth, coords, clm, rng=1).to_numpy()
     except (ValueError, MissingConfigKey) as e:
         assert getattr(e, "code", None) is not None
         return
@@ -763,10 +763,13 @@ def test_a_preset_with_no_features_is_skipped(tmp_path):
 
 
 def test_a_malformed_entry_stops_the_run_before_any_fetch(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from clmsynth.dataset_sources import SOURCES
+
     fetched = []
-    monkeypatch.setitem(
-        __import__("clmsynth._single_run", fromlist=["FETCHERS"]).FETCHERS, "fabricated_data",
-        lambda *a, **k: fetched.append(a))
+    monkeypatch.setitem(SOURCES, "fabricated_data", replace(
+        SOURCES["fabricated_data"], fetch=lambda *a, **k: fetched.append(a)))
     clm = custom(M=4, feature_dependence=[entry(favors="middle")])
     with pytest.raises(ValueError) as caught:
         run("fabricated_data", fabricated_config(clm), tmp_path)
@@ -942,9 +945,9 @@ def test_the_wizard_leaves_it_out_after_centroid_was_enabled_but_asks_otherwise(
 
 
 def test_the_wizard_asks_for_the_profile_of_noise_placed_by_distance(monkeypatch):
-    """The run reads the profile for a competing_noise entry at the core or boundary
-    (config_tree_plan step 2); the wizard asked it only with centroid enabled. The
-    block it writes then is disabled, so a label may still follow a feature."""
+    """The run reads the profile for a competing_noise entry at the core or boundary,
+    so the wizard asks it there too, not only with centroid enabled. The block it
+    writes then is disabled, so a label may still follow a feature."""
     clm, asked, _ = drive(monkeypatch, {
         "clm_label.matching_mode": "custom", "clm_label.competing_noise._enabled": True,
         "clm_label.competing_noise.favors": "core",

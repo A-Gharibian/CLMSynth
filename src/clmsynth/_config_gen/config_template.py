@@ -12,7 +12,7 @@ __all__ = ["PERFECT_SIZING", "SIZING_TEMPLATE", "YAML_TEMPLATE"]
 
 YAML_TEMPLATE = """\
 global_settings:
-  data_source: "{data_source}"  # """ + " | ".join(SOURCES) + """
+  data_source: {data_source}  # """ + " | ".join(SOURCES) + """
   output_dir: {output_dir}    # base folder; created on the run, one timestamped subfolder per run
 
 # --- {data_source_suite_key} CONFIGURATION ---

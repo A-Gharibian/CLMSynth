@@ -10,6 +10,7 @@ Article/
 wizard_config.yaml
 ignore/
 /clmsynth/
+/recipe/
 
 # PyCharm/IntelliJ inspection exports.
 
@@ -70,6 +71,11 @@ cover/
 
 # Sphinx documentation
 docs/_build/
+docs/conf.py
+docs/index.md
+docs/readme.md
+docs/api/
+docs/requirements-docs.txt
 
 # Jupyter Notebook
 .ipynb_checkpoints

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clmsynth"
-version = "0.7.8"
-description = "Synthetic label generator with configurable cluster-label matching (CLM) against ground-truth clusters"
+version = "0.7.9"
+description = "Generate synthetic clustering datasets with controllable class–cluster agreement, target Adjusted Rand Index (ARI) and MCC, unequal class and cluster counts, for semi-supervised learning benchmarks."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
@@ -19,7 +19,11 @@ authors = [
 maintainers = [
     { name = "Arootin Gharibian", email = "arootin.gharibian@vsb.cz" },
 ]
-keywords = ["synthetic-data", "clustering", "benchmark", "cluster-label-matching", "evaluation"]
+keywords = [
+    "synthetic-data", "dataset-generator", "semi-supervised-learning", "ARI", "MCC",
+    "cluster-label-matching", "partition-agreement", "label-generation",
+    "benchmark-generator", "multiclass-cluster",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
@@ -137,6 +141,7 @@ enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 ignore_missing_imports = true
 files = ["src/clmsynth", "tools", "tests"]
 check_untyped_defs = true
+disallow_any_generics = true
 warn_return_any = true
 warn_unused_ignores = true
 warn_redundant_casts = true

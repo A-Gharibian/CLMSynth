@@ -1,8 +1,5 @@
 """Smoke test.
 
-Scope is deliberately narrow, and everything outside it belongs to another
-suite:
-
 Runs on every supported interpreter (3.12-3.15); nothing here uses syntax or
 stdlib newer than 3.12.
 

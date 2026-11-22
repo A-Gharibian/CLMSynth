@@ -15,16 +15,14 @@ recursive-include docs *.log
 recursive-include docs *.csv
 recursive-include docs *.pdf
 
-# Planning and design notes.
+# Engine design notes.
 include docs/engine_internals.md
-include docs/ROADMAP.md
 
 # What the test modules check.
 include docs/TESTING.md
 
 # Package source
 recursive-include src/clmsynth *.py
-recursive-include src/clmsynth *.json
 include src/clmsynth/py.typed
 
 # Never ship build/tooling

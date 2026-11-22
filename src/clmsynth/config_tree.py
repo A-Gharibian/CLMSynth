@@ -35,7 +35,10 @@ _PLACED_BY_DISTANCE: Final = frozenset({"core", "boundary"})
 
 def _profile_read(clm: Mapping[str, Any]) -> bool:
     """Whether the centroid profile is read: centroid_dependence is enabled, or a
-    competing_noise entry is placed by distance."""
+    competing_noise entry is placed by distance, and the mode is not random, which
+    places nothing ([CLM-311], [CLM-115])."""
+    if clm.get("matching_mode") == "random":
+        return False
     cd = clm.get("centroid_dependence")
     if isinstance(cd, Mapping) and cd.get("enabled"):
         return True

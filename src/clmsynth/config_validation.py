@@ -4,20 +4,24 @@
 The checks on a clm_label block, and what they build for the engine: the matching
 rules from single_match or assignment_matrix, and a competing_noise or
 feature_dependence entry with its defaults. clm_label_engine calls them, in its
-order.
+order; the stages its check before a dataset and generate_clm_labels share are
+`_checked_block`, `_check_sizing_cfg` and `_check_matching_cfg`. Also the run's
+check for keys it does not read in the rest of a config.
 """
 
+import difflib
 import logging
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Set
 from dataclasses import dataclass
+from fractions import Fraction
 from numbers import Real
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import numpy as np
 
-from .clm_errors import clm_error, clm_missing, clm_warn
-from .config_tree import SETTINGS, applies, choices, default, in_bounds
+from .clm_errors import clm_error, clm_infeasible, clm_missing, clm_warn
+from .config_tree import SETTINGS, applies, choices, default, drop_empty, in_bounds
 
 __all__ = [
     "BALANCE_VALUES",
@@ -35,6 +39,27 @@ MATCHING_MODES = choices("clm_label.matching_mode")
 BALANCE_VALUES = choices("clm_label.balance")
 
 _FEATURE_ENTRY_EXAMPLE = "{label: 0, feature: Feature_1, favors: high}"
+
+# The private clm_label key under which LabelGenerator.apply hands over the names of
+# the coords columns: the engine takes an array, and a feature_dependence entry names
+# its feature.
+_FEATURE_COLUMNS = "_feature_columns"
+
+_Number = Fraction | float | int
+
+
+def _exact(x: _Number) -> Fraction:
+    """A number as written: a float is its shortest decimal, so 0.7 is 7/10, not
+    the float nearest it. Counts are rounded from these, so 0.7 and 0.3 of 1435
+    points (1004.5 and 430.5) tie, and the tie rule decides, not float noise."""
+    if isinstance(x, Fraction):
+        return x
+    if isinstance(x, (int, np.integer)):
+        return Fraction(int(x))
+    # A numpy float prints the shortest decimal of its own precision: float() would
+    # widen np.float32(0.6) to 0.6000000238418579.
+    written: Any = x
+    return Fraction(str(written if isinstance(written, np.floating) else float(written)))
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +203,22 @@ def _rules(cfg: dict[str, Any], cluster_ids: list[int] | None,
         return rules
 
     raise clm_error(101, mode=mode)
+
+
+def _check_recall_sums(rules: list[Rule]) -> None:
+    """[CLM-153] without a dataset: one label's recall_target values add up past
+    1.0, so its rules claim more than its budget on every dataset. The claim is
+    named as a share of the budget, since the counts need the dataset's size."""
+    total: dict[int, Fraction] = {}
+    for rule in rules:
+        total[rule.label] = total.get(rule.label, Fraction(0)) + _exact(rule.recall_target)
+    for label, recall in total.items():
+        if recall > 1:
+            named = [rule for rule in rules if rule.label == label]
+            raise clm_infeasible(153, label=label, claimed=f"{float(recall) * 100:g}% of its",
+                                 budget="100%", n_rules=len(named),
+                                 breakdown="; ".join(f"clusters {rule.clusters} at recall "
+                                                     f"{rule.recall_target}" for rule in named))
 
 
 def validate_matching_ids(cfg: dict[str, Any], cluster_ids: list[int]) -> None:
@@ -338,7 +379,7 @@ def _spillover_rule(cfg: dict[str, Any]) -> Any:
 def _validate_spillover_cfg(cfg: dict[str, Any]) -> None:
     """
     [CLM-109] guard: spillover_rule must name a known rule.
-    [CLM-128] guard: concentrated_labels must name labels that actually exist.
+    [CLM-128] guard: concentrated_labels must name existing labels.
     """
     rule_name = _spillover_rule(cfg)
     if rule_name not in choices("clm_label.spillover_rule"):
@@ -365,8 +406,8 @@ def _validate_spillover_cfg(cfg: dict[str, Any]) -> None:
 
 
 def _is_real(value) -> bool:
-    """True for a real number, excluding bool (which is an int subclass and would
-    otherwise sail through every range check as 0/1)."""
+    """Return whether the value is real, excluding `bool` because it is an
+    `int` subclass."""
     return isinstance(value, Real) and not isinstance(value, bool)
 
 
@@ -406,6 +447,93 @@ def _check_cluster_id(k, key: str) -> None:
     """[CLM-141] One cluster id: an integer."""
     if not _is_int(k):
         raise clm_error(141, key=key, expected="one cluster id (an integer)", value=k)
+
+
+def _keys_under(prefix: str) -> frozenset[str]:
+    """The keys directly under `prefix` that the settings table names."""
+    return frozenset(path[len(prefix):].partition(".")[0]
+                     for path in SETTINGS if path.startswith(prefix))
+
+
+# The keys each block reads: the settings table's, and those it does not hold.
+_SECTION_KEYS: Final[Mapping[str, frozenset[str]]] = {
+    "global_settings": _keys_under("global_settings."),
+    "label_generation": _keys_under("label_generation.") | {"clm_label"},
+}
+_BLOCK_KEYS: Final[Mapping[str, frozenset[str]]] = {
+    "clm_label": _keys_under("clm_label.") | {"proportions", "concentrated_labels",
+                                              "single_match", "assignment_matrix"},
+    "skew_params": _keys_under("clm_label.skew_params."),
+    "single_match": frozenset({"cluster", "label"}),
+    "target_metric": _keys_under("clm_label.target_metric."),
+    "centroid_dependence": _keys_under("clm_label.centroid_dependence."),
+}
+_ENTRY_KEYS: Final[Mapping[str, tuple[str, frozenset[str]]]] = {
+    "assignment_matrix": ("row", frozenset({"label", "clusters", "recall_target"})),
+    "competing_noise": ("entry", _keys_under("clm_label.competing_noise.")
+                        | {"cluster", "label"}),
+    "feature_dependence": ("entry", _keys_under("clm_label.feature_dependence.")
+                           | {"label", "feature", "value"}),
+}
+# Keys a block takes without naming them in its messages.
+_UNNAMED: Final[Mapping[str, frozenset[str]]] = {
+    "label_generation": frozenset({"noise"}),
+    "clm_label": frozenset({_FEATURE_COLUMNS}),
+}
+
+
+def _refuse_unknown(block: Mapping[Any, Any], takes: Set[str], where: str,
+                    kind: str = "key") -> None:
+    """[CLM-141] for the first key of `block` that is not in `takes`, naming the
+    closest one that is. A key with no value is left alone, as an empty one it
+    reads is."""
+    unnamed = _UNNAMED.get(where, frozenset())
+    for key, value in block.items():
+        if value is None or key in takes or key in unnamed:
+            continue
+        known = sorted(takes)
+        close = difflib.get_close_matches(str(key), known, n=1)
+        if close:
+            others = ", ".join(k for k in known if k != close[0])
+            expected = f"'{close[0]}' or another {kind} it reads ({others})"
+        else:
+            expected = f"a {kind} it reads ({', '.join(known)})"
+        raise clm_error(141, key=f"a {kind} of {where}", expected=expected, value=key)
+
+
+def _check_config_keys(config: Mapping[Any, Any], suite: str,
+                       suite_takes: Set[str] | None) -> None:
+    """[CLM-141] for a key the run does not read, outside clm_label, which the engine
+    checks: the config's sections, global_settings, label_generation, and `suite`
+    when `suite_takes` lists its keys. Any `<name>_suite` is a section, read only
+    when it is the run's. A part of another shape is left to its own check."""
+    sections = {*_SECTION_KEYS, suite,
+                *(k for k in config if isinstance(k, str) and k.endswith("_suite"))}
+    _refuse_unknown(config, sections, "the config", "section")
+    for name, takes in _SECTION_KEYS.items():
+        block = config.get(name)
+        if isinstance(block, Mapping):
+            _refuse_unknown(block, takes, name)
+    block = config.get(suite)
+    if suite_takes is not None and isinstance(block, Mapping):
+        _refuse_unknown(block, suite_takes, suite)
+
+
+def _check_clm_keys(cfg: Mapping[Any, Any]) -> None:
+    """[CLM-141] for a key the clm_label block does not read, in the block and in
+    each block and entry inside it, whatever the mode. A part of another shape is
+    left to its own check."""
+    _refuse_unknown(cfg, _BLOCK_KEYS["clm_label"], "clm_label")
+    for name in ("skew_params", "single_match", "target_metric", "centroid_dependence"):
+        block = cfg.get(name)
+        if isinstance(block, Mapping):
+            _refuse_unknown(block, _BLOCK_KEYS[name], name)
+    for name, (item, takes) in _ENTRY_KEYS.items():
+        entries = cfg.get(name)
+        if isinstance(entries, (list, tuple)):
+            for i, entry in enumerate(entries):
+                if isinstance(entry, Mapping):
+                    _refuse_unknown(entry, takes, f"{name} {item} {i}")
 
 
 def _validate_balance_cfg(cfg: dict[str, Any]) -> None:
@@ -764,3 +892,42 @@ def _warn_recall_targets_ignored(cfg: dict[str, Any]) -> None:
     if any(isinstance(row, Mapping) and "recall_target" in row
            for row in (matrix if isinstance(matrix, (list, tuple)) else [])):
         clm_warn(log, 303)
+
+
+# ---------------------------------------------------------------------------
+# The stages the engine's check before a dataset (_check_config) and
+# generate_clm_labels share, each run by both in this order.
+# ---------------------------------------------------------------------------
+
+def _checked_block(cfg: Any) -> dict[str, Any]:
+    """The block itself: a mapping, its empty settings dropped as absent, no key it
+    does not read, then num_classes and matching_mode. Returns the block without
+    its empty settings."""
+    _check_mapping(cfg, "clm_label", "{num_classes: 4, matching_mode: perfect}")
+    block: dict[str, Any] = drop_empty(cfg)
+    _check_clm_keys(block)
+    _check_classes_and_mode(block)
+    return block
+
+
+def _check_sizing_cfg(cfg: dict[str, Any]) -> None:
+    """Outside 'perfect', before the label counts are resolved: balance, then
+    skew_rule and skew_params."""
+    _validate_balance_cfg(cfg)
+    _validate_skew_cfg(cfg)
+
+
+def _check_matching_cfg(cfg: dict[str, Any], cluster_ids: list[int] | None,
+                        warn: bool = True) -> None:
+    """Outside 'perfect' and 'random', before any rule is built: spillover,
+    centroid_dependence, target_metric (against `cluster_ids` when known), split,
+    competing_noise and feature_dependence, then [CLM-312] for a setting given
+    where it is not read, unless `warn` is False."""
+    _validate_spillover_cfg(cfg)
+    _validate_centroid_cfg(cfg)
+    _validate_target_metric_cfg(cfg, cluster_ids)
+    _validate_split_cfg(cfg)
+    _validate_competing_noise_cfg(cfg)
+    _validate_feature_dependence_cfg(cfg)
+    if warn:
+        _warn_unread(cfg)

@@ -1,12 +1,13 @@
 # Test modules
 
-[![Version](https://img.shields.io/badge/version-0.7.8-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
+[![Version](https://img.shields.io/badge/version-0.7.9-brightgreen)](https://github.com/A-Gharibian/CLMSynth/releases)
 
 <!-- 
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/{owner}/{repo}/badge)](https://scorecard.dev/viewer/?uri=github.com/{owner}/{repo})
 -->
 
 ## Main tests
+
 Located in the main tests directory; refer to README for instructions.
 
 | module                       | defends                                                                                     |
@@ -20,8 +21,9 @@ Located in the main tests directory; refer to README for instructions.
 | `test_05_config_safety`      | the defensive checks for configurations                                                     |
 | `test_06_diagnostics`        | the `[CLM-###]` registry safety net, synced with the catalog                                |
 | `test_07_text_wizard`        | the wizard's schema                                                                         |
-| `test_08_resolved_config`    | the running a folder's config reproduces the run                                            |
+| `test_08_resolved_config`    | running a folder's config reproduces the run                                                |
 | `test_09_feature_dependence` | labels that follow a feature: placement, refusals, warnings, the run                        |
+| `test_11_metric_health`      | a target metric is delivered within tolerance, or the miss is reported (will be added)      |
 
 The suite needs no network: downloads and mdcgenpy are stubbed where a case needs them,
 the suite is currently not shipped in the sdist. Install the package with the test extra and run the suite:
@@ -34,6 +36,18 @@ pip install -e ".[test]"
 pytest
 ```
 
+## CLM Catalogue
+
+62 CLM errors and warnings can be regenerated (reproduced) by this tool.
+OUT_DIR defaults to docs/troubleshooting_catalog. Pass a different one to
+generate a candidate catalog for comparison before filing an issue. It must be
+absent, empty, or a catalog from an earlier run; anything else is refused before
+a file is touched. The catalog is built beside it, in `.<OUT_DIR name>.new`, and
+its folders replace OUT_DIR's only when every case gives its diagnostic and exit
+code; otherwise, or when the run is stopped, OUT_DIR is as it was. Files in OUT_DIR
+outside the generated folders are never touched.
+--threaded runs the cases in a thread pool, one worker per CPU. Each case has its
+own folder, so the catalog and the report are the same as a serial run's.
 
 ## STATIC CI tests
 
@@ -80,7 +94,7 @@ CI runs the suite on Python 3.12–3.15, the static analysis above, and a
 packaging job that builds the distributions. The packaging job also runs
 `tools/check_release_metadata.py`, which checks that both shipped manuals declare the
 current package version. 
-
+-->
 
 ## Testing policy
 

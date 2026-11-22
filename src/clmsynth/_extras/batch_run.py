@@ -5,24 +5,26 @@ configs a command line names, folders included."""
 
 import logging
 import os
+import queue
+import signal
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 from pathlib import Path
+from typing import Any, Final
 
 from .._input_sources import dataset_cache
-from .._utils.cli_logging import run_named_in
-from .._utils.signals import Terminated, sigterm_raises
+from .._run_folders import is_run_folder
+from .._utils.cli_logging import run_named_in, run_removed_in
 
 __all__ = ["batch_configs", "run_batch"]
 
 log: logging.Logger = logging.getLogger(__name__)
 
 _CONFIG_FORMATS = {".json": "JSON", ".yaml": "YAML", ".yml": "YAML"}
-
-
-def _is_run_folder(path: Path) -> bool:
-    return all((path / sub).is_dir() for sub in ("csv", "png", "info"))
+# Seconds the batch waits for a run to end before it looks for a stop again: on
+# Windows, a wait may not see a Ctrl-C until it returns.
+_POLL: Final = 0.1
 
 
 def _folder_configs(folder: Path) -> list[str]:
@@ -30,7 +32,7 @@ def _folder_configs(folder: Path) -> list[str]:
     folder holding run folders, both JSON and YAML configs, or no config."""
     try:
         entries = sorted(folder.iterdir())
-        runs = [e.name for e in entries if e.is_dir() and _is_run_folder(e)]
+        runs = [e.name for e in entries if e.is_dir() and is_run_folder(e)]
         configs = [e for e in entries
                    if e.is_file() and e.suffix.lower() in _CONFIG_FORMATS]
     except OSError as e:
@@ -105,16 +107,40 @@ def _batch_status(codes: list[int]) -> int:
     return 1 if 1 in codes else 2
 
 
+class _StopOnSignal:
+    """Ctrl-C and SIGTERM while a batch runs. The first is recorded with its exit
+    status, so no further config starts, and puts back the handlers from before the
+    batch: a second one quits the batch without waiting for the running configs."""
+
+    def __init__(self) -> None:
+        self.status = 0
+        self._previous: dict[int, Any] = {}
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            self._previous[sig] = signal.signal(sig, self._record)
+
+    def _record(self, signum: int, frame: object) -> None:
+        self.status = 130 if signum == signal.SIGINT else 143
+        self.restore()
+
+    def restore(self) -> None:
+        for sig, handler in self._previous.items():
+            signal.signal(sig, handler)
+
+
 def run_batch(configs: list[str], jobs: int, render_plots: bool = False,
-              keep_failed: bool = False, cache: bool = True) -> int:
+              keep_failed: bool = False, cache: bool = True,
+              allow_network_paths: bool = False) -> int:
     """Each config in its own clmsynth process, `jobs` at a time, so each run keeps
     its own folder, log and exit status. A run's output is printed whole when it
-    ends. Returns the batch's exit status (`_batch_status`)."""
+    ends. A Ctrl-C or SIGTERM starts no further config and waits for the running
+    ones; a second one quits. Returns the batch's exit status (`_batch_status`)."""
     # Every run is told: a run started on its own draws plots by default and does
     # not cache.
     flags = ["--viz" if render_plots else "--no-viz", "--cache" if cache else "--no-cache"]
     if keep_failed:
         flags.append("--keep-failed")
+    if allow_network_paths:
+        flags.append("--allow-network-paths")
     env = dict(os.environ)
     if jobs > 1:
         # Otherwise each worker may start a BLAS thread per core.
@@ -130,44 +156,72 @@ def run_batch(configs: list[str], jobs: int, render_plots: bool = False,
         except RuntimeError as e:
             log.warning(f"Dataset cache: {e}. Set {dataset_cache.ENV_VAR} to a folder.")
 
-    results: dict[int, tuple[int, str]] = {}
+    # Each ended config: its exit status, its run folder's name and whether that
+    # folder was removed. Its output is printed when it ends and not kept.
+    results: dict[int, tuple[int, str | None, bool]] = {}
 
     def report(i: int, code: int, output: str) -> None:
-        results[i] = (code, output)
+        results[i] = (code, run_named_in(output), run_removed_in(output))
         log.info(f"Config {i + 1} of {n} ended with exit {code}: {configs[i]}")
         sys.stderr.write(output)
 
-    stopped = 0
-    pool = ThreadPoolExecutor(max_workers=jobs)
-    futures = {pool.submit(_run_config, config, flags, env): i
-               for i, config in enumerate(configs)}
-    # A scheduler or Ctrl-C signals every process of the job: each run stops and
-    # cleans up itself, and the batch starts nothing new.
-    with sigterm_raises():
+    ended: queue.Queue[tuple[int, int, str]] = queue.Queue()
+
+    def run_one(i: int) -> None:
+        ended.put((i, *_run_config(configs[i], flags, env)))
+
+    # Only this loop starts a config, so none starts once a stop is recorded. A
+    # scheduler or Ctrl-C signals every process of the job: each run stops and
+    # cleans up itself.
+    stop = _StopOnSignal()
+    next_config, running, failed, announced = 0, 0, False, False
+
+    def schedule() -> None:
+        nonlocal next_config, running, announced
+        while True:
+            while not (stop.status or failed) and next_config < n and running < jobs:
+                # Daemon threads: a second signal quits without waiting for them.
+                threading.Thread(target=run_one, args=(next_config,), daemon=True).start()
+                next_config += 1
+                running += 1
+            if stop.status and not announced:
+                log.warning("Stopping: no further config starts; waiting for the running ones.")
+                announced = True
+            if not running:
+                return
+            try:
+                i, code, output = ended.get(timeout=_POLL)
+            except queue.Empty:
+                continue
+            running -= 1
+            report(i, code, output)
+
+    try:
         try:
-            for future in as_completed(futures):
-                report(futures[future], *future.result())
-        except KeyboardInterrupt:
-            stopped = 130
-        except Terminated:
-            stopped = 143
-    if stopped:
-        log.warning("Stopping: no further config starts; waiting for the running ones.")
-    pool.shutdown(wait=True, cancel_futures=True)
-    for future, i in futures.items():
-        if i not in results and future.done() and not future.cancelled():
-            report(i, *future.result())
+            schedule()
+        except Exception:
+            log.critical("Unexpected error in the batch: no further config starts; "
+                         "waiting for the running ones.", exc_info=True)
+            failed = True
+            schedule()
+            raise
+    finally:
+        stop.restore()
 
     for i, config in enumerate(configs):
         if i not in results:
             log.warning(f"{config}: not started")
             continue
-        code, output = results[i]
-        run = run_named_in(output)
-        where = f"run {run}" if run else "no run folder"
+        code, run, removed = results[i]
+        if run is None:
+            where = "no run folder"
+        elif removed:
+            where = f"run {run}, folder removed"
+        else:
+            where = f"run {run}"
         (log.info if code == 0 else log.warning)(f"{config}: exit {code}, {where}")
-    codes = [code for code, _ in results.values()]
-    status = _batch_status([*codes, stopped] if stopped else codes)
+    codes = [code for code, _, _ in results.values()]
+    status = _batch_status([*codes, stop.status] if stop.status else codes)
     n_ok = codes.count(0)
     log.info(f"Batch: {n_ok} of {n} config(s) exited 0; exit status {status}.")
     return status

@@ -29,7 +29,7 @@ def cache_dir(tmp_path, monkeypatch):
     return folder
 
 
-class Network(list):
+class Network(list[str]):
     """Every clustbench URL requested, in order. Clearing `up` takes the network down;
     a URL ending in one of `flaky` times out once. Each dataset has `rows` points."""
 
@@ -68,7 +68,7 @@ def network(monkeypatch):
             return _gz(str(i % 2) for i in range(n))
         raise urllib.error.HTTPError(url, 404, "not found", Message(), None)
 
-    monkeypatch.setattr(clustbench_source.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(clustbench_source._OPENER, "open", urlopen)
     return calls
 
 

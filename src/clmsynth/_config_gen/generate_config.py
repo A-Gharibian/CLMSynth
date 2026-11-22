@@ -9,6 +9,7 @@ import difflib
 import json
 import logging
 import os
+import re
 import sys
 from collections.abc import Iterable
 from pathlib import Path
@@ -16,6 +17,7 @@ from typing import Any
 
 from .._utils.cli_logging import configure_cli_logging
 from .._utils.compat import import_optional_dependency
+from .._utils.config_files import UnusableDocument, parse_yaml
 from .._utils.write_files import write_text_atomic
 from ..clm_errors import MissingConfigKey
 from ..config_tree import default as setting_default
@@ -53,6 +55,15 @@ class UnknownPayloadKeys(ValueError):
     """A payload names a key the renderer does not read."""
 
 
+class UnrenderablePayload(ValueError):
+    """A payload value the template cannot hold: the rendered config is not valid YAML."""
+
+
+class RefusedSettings(ValueError):
+    """A rendered config the run would refuse before its first dataset: a setting
+    outside clm_label of the wrong kind or out of its bounds."""
+
+
 def format_yaml_snippet(data: dict[str, Any] | list[Any], indent_level: int = 6) -> str:
     """Converts a dict/list into a formatted YAML string for injection.
     indent_level=6 matches single_match/assignment_matrix sitting two
@@ -75,10 +86,10 @@ def format_list_or_all(value: str | Iterable[object]) -> str:
 
 
 def _yaml_scalar(value) -> str:
-    """Renders one payload value as a YAML scalar: bools lowercased, strings
-    quoted, None as null, numbers as-is. Booleans are checked first, since bool
-    is a subclass of int and would otherwise render as True/False rather than
-    true/false."""
+    """Renders one payload value as YAML that reads back as the same value: bools
+    lowercased, strings quoted, None as null, numbers as-is, lists and mappings as
+    flow collections. Booleans are checked first, since bool is a subclass of int
+    and would otherwise render as True/False rather than true/false."""
     if isinstance(value, bool):
         return "true" if value else "false"
     if value is None:
@@ -91,10 +102,27 @@ def _yaml_scalar(value) -> str:
         for line_break in ("\x85", chr(0x2028), chr(0x2029)):
             quoted = quoted.replace(line_break, f"\\u{ord(line_break):04x}")
         return quoted
+    if isinstance(value, (list, tuple)):
+        return f"[{', '.join(_yaml_scalar(v) for v in value)}]"
+    if isinstance(value, dict):
+        return f"{{{', '.join(f'{_yaml_key(k)}: {_yaml_scalar(v)}' for k, v in value.items())}}}"
     text = str(value)
     if isinstance(value, float) and "e" in text and "." not in text:
         return _dotted_exponent(text)
     return text
+
+
+_PLAIN_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _yaml_key(key) -> str:
+    """Renders one payload key: plain when YAML reads it back as the same text
+    (not `yes` or `null`), quoted as a scalar otherwise."""
+    import yaml
+
+    if isinstance(key, str) and _PLAIN_KEY.fullmatch(key) and yaml.safe_load(key) == key:
+        return key
+    return _yaml_scalar(key)
 
 
 def _dotted_exponent(text: str) -> str:
@@ -111,10 +139,8 @@ def _yaml_list(value) -> str:
 
 
 def _optional_block(lines: list[str]) -> str:
-    """Joins one optional clm_label block, or returns '' when there is nothing
-    to emit. Each block supplies its own leading newline so an omitted one
-    leaves no blank line in the rendered YAML, the same trick `byoc_extra` uses
-    for the byoc-only suite keys."""
+    """Join an optional `clm_label` block with a leading newline.
+    Return an empty string for an omitted block to avoid a blank line in the YAML."""
     return ("\n" + "\n".join(lines)) if lines else ""
 
 
@@ -124,9 +150,15 @@ def generate_base_config(upstream_data: dict[str, Any],
     output path, YAML otherwise. The clm_label block is written as given and
     checked as generate_clm_labels checks it, without a dataset; a refusal is
     raised with its [CLM-###] code (ValueError or MissingConfigKey) and nothing
-    is written. A payload key outside PAYLOAD_KEYS raises UnknownPayloadKeys."""
+    is written. The settings outside clm_label are checked first, as the run checks
+    them before its first dataset (kinds and bounds); a refusal raises
+    RefusedSettings. A payload key outside PAYLOAD_KEYS raises UnknownPayloadKeys, a
+    value the template cannot hold UnrenderablePayload, an output_dir or
+    source_labeling that is not text TypeError, and a file that cannot be
+    written OSError, the path left unchanged."""
     import yaml
 
+    from .._single_run import _config_type_problems
     from ..clm_label_engine import _check_config
 
     unknown = [key for key in upstream_data if key not in PAYLOAD_KEYS]
@@ -159,7 +191,7 @@ def generate_base_config(upstream_data: dict[str, Any],
             skew_rule=_yaml_scalar(pick("skew_rule", SCHEMA["clm_label.skew_rule"].default)),
             skew_params=_optional_block(
                 ["    skew_params:"]
-                + [f"      {k}: {_yaml_scalar(v)}" for k, v in skew_params.items()]
+                + [f"      {_yaml_key(k)}: {_yaml_scalar(v)}" for k, v in skew_params.items()]
                 if skew_params else []),
         )
 
@@ -184,8 +216,7 @@ def generate_base_config(upstream_data: dict[str, Any],
             "    competing_noise:",
         ]
         for entry in competing_noise:
-            inner = ", ".join(f"{k}: {_yaml_scalar(v)}" for k, v in entry.items())
-            competing_lines.append(f"      - {{{inner}}}")
+            competing_lines.append(f"      - {_yaml_scalar(entry)}")
     competing_block = _optional_block(competing_lines)
 
     target_lines: list[str] = []
@@ -201,7 +232,7 @@ def generate_base_config(upstream_data: dict[str, Any],
         # Rendered generically: an unrecognised key stays visible.
         for key, value in target_metric.items():
             if value is not None:
-                target_lines.append(f"      {key}: {_yaml_scalar(value)}")
+                target_lines.append(f"      {_yaml_key(key)}: {_yaml_scalar(value)}")
     target_block = _optional_block(target_lines)
 
     steepness = pick("centroid_steepness", None)
@@ -224,8 +255,7 @@ def generate_base_config(upstream_data: dict[str, Any],
             "    feature_dependence:",
         ]
         for entry in feature_dependence:
-            inner = ", ".join(f"{k}: {_yaml_scalar(v)}" for k, v in entry.items())
-            follow_lines.append(f"      - {{{inner}}}")
+            follow_lines.append(f"      - {_yaml_scalar(entry)}")
     follow_block = _optional_block(follow_lines)
 
     single_match_yaml = format_yaml_snippet(pick("single_match", {}))
@@ -247,20 +277,26 @@ def generate_base_config(upstream_data: dict[str, Any],
     else:
         byoc_extra = ""
 
+    output_dir = pick("output_dir", setting_default("global_settings.output_dir"))
+    source_labeling = pick("source_labeling", setting_default("label_generation.source_labeling"))
+    for key, value in (("output_dir", output_dir), ("source_labeling", source_labeling)):
+        if not isinstance(value, str):
+            raise TypeError(f"'{key}' must be text, got {value!r}")
+
+    # Every payload value and key is rendered by _yaml_scalar or _yaml_key, so none can
+    # add a line or turn text into a number.
     rendered_yaml = YAML_TEMPLATE.format(
-        data_source=data_source,
-        output_dir=_yaml_scalar(str(pick("output_dir",
-                                         setting_default("global_settings.output_dir")))),
+        data_source=_yaml_scalar(data_source),
+        output_dir=_yaml_scalar(output_dir),
         byoc_extra=byoc_extra,
-        data_source_suite_key=f"{data_source}_suite",
+        data_source_suite_key=_yaml_key(f"{data_source}_suite"),
         batteries=format_list_or_all(pick("batteries", "all")),
         datasets=format_list_or_all(pick("datasets", "all")),
-        source_seed=pick("source_seed", 42),
+        source_seed=_yaml_scalar(pick("source_seed", 42)),
 
-        n_labels=pick("n_labels", setting_default("label_generation.n_labels")),
-        source_labeling=_yaml_scalar(str(pick(
-            "source_labeling", setting_default("label_generation.source_labeling")))),
-        label_seed=pick("label_seed", setting_default("label_generation.seed")),
+        n_labels=_yaml_scalar(pick("n_labels", setting_default("label_generation.n_labels"))),
+        source_labeling=_yaml_scalar(source_labeling),
+        label_seed=_yaml_scalar(pick("label_seed", setting_default("label_generation.seed"))),
 
         num_classes=_yaml_scalar(pick("num_classes", SCHEMA["clm_label.num_classes"].default)),
         sizing=sizing,
@@ -288,23 +324,19 @@ def generate_base_config(upstream_data: dict[str, Any],
     try:
         config = yaml.safe_load(rendered_yaml)
     except yaml.YAMLError as e:
-        # A payload value the template cannot hold: a bad payload, as any other.
-        log.critical(f"Rendered configuration is not valid YAML: {e}")
-        sys.exit(2)
+        raise UnrenderablePayload(f"Rendered configuration is not valid YAML: {e}") from None
+    problems = _config_type_problems(config, data_source)
+    if problems:
+        raise RefusedSettings(" ".join(problems))
     _check_config(config["label_generation"]["clm_label"])
 
     # The suffix picks the format, as clmsynth reads it. JSON has no comments, so
     # the template's stay behind.
     text = (json.dumps(config, indent=2, ensure_ascii=False) + "\n"
             if Path(output_path).suffix.lower() == ".json" else rendered_yaml)
-    try:
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        write_text_atomic(output_path, text)
-        log.info(f"Test data configuration successfully written to '{output_path}'")
-    except OSError as e:
-        log.critical(f"Failed to write configuration file: {e}. "
-                     f"'{output_path}' was left unchanged.")
-        sys.exit(1)
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    write_text_atomic(output_path, text)
+    log.info(f"Test data configuration successfully written to '{output_path}'")
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -348,7 +380,10 @@ def main() -> None:
 
     try:
         with open(payload_path, encoding="utf-8") as file:
-            payload = yaml.safe_load(file)
+            payload = parse_yaml(file.read(), yaml)
+    except UnusableDocument as e:
+        log.critical(f"Payload file '{payload_path}': {e}. Nothing was written.")
+        sys.exit(2)
     except FileNotFoundError:
         log.critical(f"Payload file '{payload_path}' not found. Pass a payload path, "
                      f"or run clmsynth-wizard instead.")
@@ -384,6 +419,17 @@ def main() -> None:
     except UnknownPayloadKeys as e:
         log.critical(f"Payload file '{payload_path}': {e} Nothing was written.")
         sys.exit(2)
+    except UnrenderablePayload as e:
+        log.critical(str(e))
+        sys.exit(2)
+    except RefusedSettings as e:
+        log.critical(f"Payload file '{payload_path}': {e} The run would refuse it. "
+                     "Nothing was written.")
+        sys.exit(2)
+    except OSError as e:
+        log.critical(f"Failed to write configuration file: {e}. "
+                     f"'{output_path}' was left unchanged.")
+        sys.exit(1)
     except (AttributeError, TypeError) as e:
         # Raised while rendering, before anything is written.
         log.critical(f"Payload file '{payload_path}': a value has the wrong shape "
